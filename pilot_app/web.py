@@ -1847,6 +1847,21 @@ def serve_background(request: Request) -> Response:
 def save_mailbox(request: Request) -> Response:
     user = _require_user(request)
     payload = request.json_object()
+    # The authorization gate: a user may only start reading their mail once they
+    # have asserted that they are entitled to forward and process it (terms §3).
+    # Same reasoning as `accepted_terms` in `register` -- a checkbox the server
+    # never checks is decoration, and this is the assertion the whole service
+    # rests on. It is required only on the transition from "no mailbox" to
+    # "mailbox" so that an existing account editing its host or port is not
+    # asked to re-assert something it already asserted.
+    database = get_db()
+    is_first_setup = database.get_mailbox(user["id"]) is None
+    if is_first_setup and not _boolean(payload, "accepted_terms", False):
+        raise ApiError(
+            400,
+            "请先确认你有权把这部分邮件转发给本服务并允许处理"
+            "（《服务条款》第 3 条），再保存邮箱设置。",
+        )
     mailbox_email = _email(_string(payload, "email", maximum=254))
     # The form promises "leave blank = send back to the same mailbox", so
     # honour that here instead of running "" through email validation.

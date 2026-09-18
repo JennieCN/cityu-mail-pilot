@@ -52,7 +52,15 @@ def _int_env(name: str, default: int, low: int, high: int) -> int:
 # How long a copy is worth keeping. Age rather than count: one function produces
 # both the daily backups and the pre-upgrade ones, and a count cannot tell "a week
 # of daily copies" apart from "one afternoon of deploys".
-BACKUP_KEEP_DAYS = _int_env("INFE_PILOT_BACKUP_KEEP_DAYS", 14, 1, 3650)
+#
+# 7 days rather than 14 (2026-09-18): the backups hold AES-GCM payloads, so they
+# are **incompressible** (measured: gzip gets 1.0x), and the backup directory is
+# therefore `copies x live size` -- the single largest consumer of disk on a small
+# VPS. On a 40 GB disk with 100 accounts this moves "full in 26 months" to "full in
+# 46 months" (`tools/disk_budget.py`). The window is a *recovery* window, not a
+# retention promise about user data: the live database is never pruned, and the
+# privacy policy now states 7 days in all three places that name it.
+BACKUP_KEEP_DAYS = _int_env("INFE_PILOT_BACKUP_KEEP_DAYS", 7, 1, 3650)
 # ...but never fewer than this, even when none are inside the window (a clock
 # jump, or a database that is only written once a month).
 BACKUP_KEEP_MIN = _int_env("INFE_PILOT_BACKUP_KEEP_MIN", 7, 1, 10_000)

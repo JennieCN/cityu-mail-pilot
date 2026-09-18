@@ -1199,6 +1199,21 @@
         <label for="mail-password">把授权码粘贴到这里</label>
         <input id="mail-password" type="password" autocomplete="new-password">
         <div class="help">不是你的邮箱登录密码。<span id="mail-password-help"></span>出于安全考虑，已保存的授权码不会回显，每次保存都要重新填写。</div>
+        <!-- 这一栏是服务端强制的授权确认（《服务条款》第 3 条）。放在「保存」之前、
+             授权码之后：它是开通前的最后一道门，而勾选必须由人做一次。
+             默认不勾选——默认勾上等于替用户作了这个陈述。 -->
+        <div class="consent" id="rights-row">
+          <label class="check">
+            <input type="checkbox" id="accept-rights">
+            <span>我确认：我<strong>有权</strong>把这里登记的邮箱里、属于我本校来信的那部分邮件
+            <strong>转发给本服务并允许它读取与处理</strong>，也有权把内容发送给第三方大模型服务商；
+            学校或他人若有保密要求，我已经取得所需许可。详见<a href="/terms" target="_blank" rel="noopener">《服务条款》</a>第 3 条。</span>
+          </label>
+          <div class="help">
+            本服务<strong>不是城大官方服务</strong>，与学校无隶属或授权关系。没有确认这一点就<strong>不能保存邮箱设置</strong>。
+            不确定自己有没有这个权利时，<strong>请不要开通</strong>，先去问清楚。
+          </div>
+        </div>
       </div>
 
       <div class="setup-step" id="step-4">

@@ -118,7 +118,12 @@ sudo systemctl start cityu-mail-pilot-web cityu-mail-pilot-worker
 
 - **只备份数据库**，不含：`pilot.env`（主密钥）、邮件正文（发完即清空，本来就不留）、
   背景图与图标（在代码包里，可重新部署）
-- **保留 7 份**，按文件名倒序删除更旧的。每天一份 → **最多覆盖 7 天**。
-  要更长的历史就得改 `pilot_app/backup.py` 的 `copies[7:]`
+- **保留按时间，不按份数**：`pilot_app/backup.py` 的 `prune()` 删的是
+  `(now - made).days > BACKUP_KEEP_DAYS`（默认 **7 天**，2026-09-18 从 14 改）且有下限
+  `BACKUP_KEEP_MIN=7` 份、上限 `BACKUP_KEEP_MAX=60` 份。每天一份 → 稳定在
+  **8 份、最多覆盖约 7 天**。要更长的历史就调 `INFE_PILOT_BACKUP_KEEP_DAYS`，
+  不要改代码——这个值也是隐私政策里写明的那个窗口。
+  （这段原本写的是「保留 7 份，按文件名倒序删除」和 `copies[7:]`，
+  那是 v0.40.0 之前按**数量**保留时的实现，早已不存在。）
 - 备份文件权限 `0600`、属主 `cityumail`，与数据库同级敏感——**它能解密出所有用户的邮箱授权码**
 - 备份与数据库在**同一台机器**上。机器没了就都没了——异地副本目前**没有做**

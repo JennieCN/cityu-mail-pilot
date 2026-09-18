@@ -12,6 +12,7 @@ import http.cookiejar
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import tempfile
 import threading
@@ -171,10 +172,38 @@ class LegalPageTests(ComplianceTests):
         # away from the code had frozen the drift in place, because it pinned the
         # sentence instead of the rule. The window is now read out of the code,
         # the same way the terms assertion below does it.
+        #
+        # 2026-09-18: the window went 14 -> 7 days. The page text is written by
+        # hand (deliberately, rather than templated), which means this assertion
+        # is the *only* thing that will notice if the constant moves again -- so
+        # it must keep reading `BACKUP_KEEP_DAYS` and must never be rewritten as
+        # a literal, or it becomes a tautology that always passes.
         from pilot_app import backup
         self.assertIn(f"{backup.BACKUP_KEEP_DAYS} 天", body, "备份保留期必须写明")
         self.assertNotIn("保留最近 7 份", body, "保留期已按时间计，不应再写「保留最近 7 份」")
-        self.assertNotIn("7 天滚动窗口", body, "保留期是 14 天窗口，旧说法会少报留存时间")
+        # Every statement that names a *number of days* for the backup rotation must
+        # name the current one. Written structurally rather than by splitting on "。":
+        # an earlier version of this assertion did that and the "sentences" it
+        # produced were 200-character runs spanning `</td></tr><tr><td>` boundaries,
+        # so it matched or missed by accident. Python's `re` has no lookbehind for a
+        # variable-length terminator, which is why this walks the matches instead.
+        window_statements = []
+        for match in re.finditer(r"滚动保留|滚动窗口|留存最近", body):
+            start = body.rfind("。", 0, match.start())
+            end = body.find("。", match.end())
+            window_statements.append(
+                body[start + 1: end if end != -1 else len(body)])
+        self.assertTrue(window_statements, "政策里应当有讲备份滚动窗口的句子")
+        for statement in window_statements:
+            days = re.findall(r"(\d+)\s*天", statement)
+            if not days:
+                # A sentence with no number is a *reference* to the window stated
+                # elsewhere ("its data disappears with the same rolling window"),
+                # which is exactly how the page is written -- not a violation.
+                continue
+            self.assertEqual(
+                days, [str(backup.BACKUP_KEEP_DAYS)],
+                f"这句写的是 {days} 天，代码是 {backup.BACKUP_KEEP_DAYS} 天：{statement.strip()[:90]}")
 
     def test_privacy_policy_covers_the_visitor_counter(self):
         """A counter that reads addresses is exactly where a policy goes vague.
@@ -266,6 +295,89 @@ class LegalPageTests(ComplianceTests):
         self.assertIn("不构成学校或任何机构的官方通知", body)
         self.assertIn("14 天", body, "停服必须提前通知并给导出窗口")
         self.assertIn("AGPL-3.0", body)
+
+    def test_terms_say_the_service_is_not_the_universitys(self):
+        """The single sentence that costs nothing and prevents the worst misreading.
+
+        A tool named after a university, run by a student on a server they own, is
+        exactly the shape that gets mistaken for an official service -- by users,
+        and by the university. The disclaimer has to be on the terms page and it
+        has to say the specific things: no authorization, no affiliation, and do
+        not take the problem to the school's IT.
+        """
+        _, body, _ = self.client.get("/terms")
+        self.assertIn("不是城大的官方服务", body)
+        self.assertIn("授权", body)
+        self.assertIn("隶属", body)
+        self.assertIn("IT", body, "要明说出了问题不要找学校 IT")
+
+    def test_terms_make_authorization_the_precondition_for_setup(self):
+        """Users must assert their own right before any mail is read.
+
+        The point is not decorative: the app's whole lawful basis is that the
+        person configuring it is entitled to forward and process those messages.
+        So the terms have to state the assertion, and the server has to enforce
+        it (see `MailAuthorizationGateTests`).
+        """
+        _, body, _ = self.client.get("/terms")
+        self.assertIn("邮件处理授权", body)
+        self.assertIn("有权", body)
+        self.assertRegex(body, r"陈述与保证", "授权必须是用户的陈述与保证，不是一句提醒")
+        self.assertIn("第三方大模型服务商", body, "授权里必须点名模型服务商这一环")
+        self.assertIn("不是你的", body, "必须写明不得处理他人的邮箱")
+
+    def test_the_rights_confirmation_sits_where_the_mailbox_is_configured(self):
+        """`terms §4.8` promises a checkbox before saving; this is that checkbox.
+
+        It belongs next to the app password, not only inside the registration
+        form: the registration tick covers the documents, while this one is the
+        specific assertion about *these* messages.
+        """
+        _, page, _ = self.client.get("/app")
+        self.assertIn('id="accept-rights"', page)
+        self.assertIn("不是城大官方服务", page)
+
+    def test_the_policy_does_not_claim_a_data_protection_role_for_either_side(self):
+        """The policy used to declare "you are the data user, we are the processor".
+
+        That is a legal conclusion, and stating it was worse than saying nothing:
+        a reader could take it as "the compliance question is already settled",
+        and it was not even reliably true -- an instance running on the
+        operator's own model key is not obviously a mere processor. The page now
+        states facts and leaves the characterisation to the facts and the law.
+        """
+        _, body, _ = self.client.get("/privacy")
+        self.assertNotIn("你是资料使用者", body, "角色定性已经删掉")
+        self.assertNotIn("代你处理资料的处理者", body)
+        self.assertIn("按你的设置处理", body, "事实本身要留下")
+        self.assertIn("不为你以外的目的使用", body)
+
+    def test_the_policy_says_there_is_no_processing_agreement_with_the_university(self):
+        """Silence here is the dangerous version: a reader could assume the tool
+        sits inside a university-blessed compliance arrangement. It does not, and
+        the privacy policy is where someone looks to check."""
+        _, body, _ = self.client.get("/privacy")
+        self.assertIn("数据处理协议", body)
+        self.assertIn("DPA", body)
+        self.assertRegex(body, r"不存在[^。]{0,40}数据处理协议",
+                         "要正面写明「不存在」，不能只是提到这个词")
+        self.assertIn("香港城市大学", body)
+
+    def test_the_section_numbering_has_no_gaps_or_duplicates(self):
+        """Inserting a section is how a document ends up with two "7." headings.
+
+        Nothing else notices: the text reads fine, every keyword is present, and
+        the only reader who finds out is someone counting sections while looking
+        for one. A wrong cross-reference ("see clause 10" pointing at "open
+        source") is the same failure wearing a different hat, so the numbering is
+        asserted here rather than trusted.
+        """
+        for path in ("/terms", "/privacy"):
+            _, body, _ = self.client.get(path)
+            numbers = [int(match) for match in re.findall(r"<h2>(\d+)\.", body)]
+            self.assertTrue(numbers, f"{path} 没有任何编号章节")
+            self.assertEqual(numbers, list(range(1, len(numbers) + 1)),
+                             f"{path} 的章节编号有重复或断号")
 
     def test_contact_address_comes_from_configuration_not_from_the_template(self):
         """A self-hoster must not publish our address, and we must not publish
@@ -562,6 +674,11 @@ class BackupRetentionDisclosureTests(ComplianceTests):
     window, and the terms page went on saying "7 天的滚动窗口" -- a policy that
     understates how long data actually stays is the kind of drift nobody notices
     until someone asks. So the number is now read out of the code.
+
+    2026-09-18: the window went 14 -> 7 days. Both pages now say 7, and the
+    assertions below still read `backup.BACKUP_KEEP_DAYS` rather than the literal
+    -- that is the whole mechanism, and writing "7 天" into the assertion would
+    quietly disable it.
     """
 
     def test_the_terms_state_the_window_the_code_uses(self):
@@ -616,3 +733,95 @@ class BackupRetentionDisclosureTests(ComplianceTests):
         # something to find. Saying so beats an assertion that cannot fail.
         if key_bytes.strip(b"\x00"):
             self.assertFalse(key_bytes in raw, "数据库里出现了主密钥的原始字节")
+
+
+class MailAuthorizationGateTests(ComplianceTests):
+    """terms §3 is the lawful basis, §4.8 is the checkbox, and this is the server.
+
+    The registration tick already covers "I read the two documents". This is a
+    second, narrower assertion -- "I am entitled to forward *these* messages and
+    have it process them" -- and it covers the step that actually starts the
+    reading. It is enforced first-setup-only on purpose: an account that already
+    asserted it should be able to fix its IMAP host without re-asserting.
+
+    One shared account for the whole class, following the lesson recorded in
+    test_appearance.py: every module here shares one database and one
+    `INFE_PILOT_MAX_USERS` (50), so a registration per test spends a resource
+    that belongs to the whole suite. The first version of this class registered
+    four accounts and pushed test_background_photo over the cap, which surfaces
+    as "当前试点名额已满" in a file this change never touched.
+    """
+
+    ACCOUNT = {"email": "mail-auth-gate@example.com", "password": "a-long-enough-password"}
+    MAILBOX = {
+        "email": "gate@qq.com", "report_to": "gate@qq.com", "imap_host": "imap.qq.com",
+        "imap_port": 993, "smtp_host": "smtp.qq.com", "smtp_port": 465,
+        "app_password": "gate-secret",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        code = "mail-auth-gate-invite"
+        expiry = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
+        with db.connect() as connection:
+            connection.execute("INSERT OR IGNORE INTO invites(code_hash,expires_at) VALUES(?,?)",
+                               (token_hash(code), expiry))
+        status, user, _ = Client(cls.base).post("/api/auth/register", {
+            **cls.ACCOUNT, "invite_code": code, "accepted_terms": True})
+        assert status == 200, user
+        cls.user_id = user["id"]
+
+    @classmethod
+    def tearDownClass(cls):
+        # Hand the pilot slot back. Sharing one account is already the fix for
+        # "cheap tests that cost a scarce resource" (test_appearance.py), but the
+        # slot itself is still worth returning: this class runs early, and the
+        # modules after it were the ones failing with "当前试点名额已满".
+        with db.connect() as connection:
+            connection.execute("DELETE FROM users WHERE id=?", (cls.user_id,))
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        # Every test starts from "this account has no mailbox", which is the state
+        # the gate is about. Resetting here instead of trusting execution order
+        # keeps the tests independent without paying for a registration each time.
+        with db.connect() as connection:
+            connection.execute("DELETE FROM mailboxes WHERE user_id=?", (self.user_id,))
+        status, user, _ = self.client.post("/api/auth/login", dict(self.ACCOUNT))
+        self.assertEqual(status, 200, user)
+
+    def test_first_setup_without_the_assertion_is_refused(self):
+        status, body, _ = self.client.put("/api/mailbox", dict(self.MAILBOX))
+        self.assertEqual(status, 400, body)
+        self.assertIn("第 3 条", body["detail"])
+        # And nothing was stored: a refused save must not leave a half-configured
+        # mailbox behind, or the refusal would only be cosmetic.
+        _, me, _ = self.client.get("/api/me")
+        self.assertIsNone(me["mailbox"])
+
+    def test_a_non_boolean_assertion_is_not_an_assertion(self):
+        """Same rule as registration: JSON lets a client send "yes"."""
+        status, _, _ = self.client.put("/api/mailbox", {**self.MAILBOX, "accepted_terms": "yes"})
+        self.assertEqual(status, 422)
+
+    def test_first_setup_with_the_assertion_succeeds(self):
+        status, body, _ = self.client.put("/api/mailbox", {**self.MAILBOX, "accepted_terms": True})
+        self.assertEqual(status, 200, body)
+        _, me, _ = self.client.get("/api/me")
+        self.assertEqual(me["mailbox"]["email"], "gate@qq.com")
+
+    def test_editing_an_existing_mailbox_does_not_demand_it_again(self):
+        """The assertion is about starting, not about correcting a typo.
+
+        Demanding it on every save would also punish an account whose first save
+        predates this clause, for a statement it cannot retroactively make.
+        """
+        self.assertEqual(
+            self.client.put("/api/mailbox", {**self.MAILBOX, "accepted_terms": True})[0], 200)
+        status, body, _ = self.client.put(
+            "/api/mailbox", {**self.MAILBOX, "imap_host": "imap.exmail.qq.com"})
+        self.assertEqual(status, 200, body)
+        _, me, _ = self.client.get("/api/me")
+        self.assertEqual(me["mailbox"]["imap_host"], "imap.exmail.qq.com")

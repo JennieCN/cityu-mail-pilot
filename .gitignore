@@ -13,4 +13,8 @@ __pycache__/
 *.pyc
 dist/
 preview/
+# Scratch output from running the app locally (`run.ps1` writes a throwaway
+# database here). Never committed — it is a working directory, not source, and
+# the database in it is exactly the kind of file the header above is about.
+local-run/
 .DS_Store

@@ -5,114 +5,147 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>服务条款 · CityU Mail Pilot</title>
 <style>
-  :root{--navy:#123b63;--blue:#1769aa;--ink:#172b3a;--muted:#64748b;--line:#dbe3eb;
-        --bg:#f3f6f9;--card:#ffffff;--ok-bg:#e8f5ef;--ok:#087a55;--warn-bg:#fff8e8;--warn:#8a6100;
-        --stop-bg:#fdeced;--stop:#a1262c;--radius:12px}
+  :root{--ink:#172b3a;--navy:#123b63;--blue:#1769aa;--muted:#64748b;--line:#dbe3eb;--bg:#ffffff}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.7;
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.75;
        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
-  main{max-width:760px;margin:0 auto;padding:24px 16px 64px}
-  h1{font-size:24px;margin:0 0 4px}
-  h2{font-size:18px;color:var(--navy);margin:32px 0 10px;padding-top:16px;border-top:1px solid var(--line)}
-  .meta{color:var(--muted);font-size:13px;margin-bottom:20px}
+  main{max-width:760px;margin:0 auto;padding:32px 20px 72px}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px;letter-spacing:.01em}
+  h2{font-size:17px;font-weight:600;color:var(--navy);margin:34px 0 10px;padding-top:18px;
+     border-top:1px solid var(--line)}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:26px}
+  p{margin:10px 0}
   a{color:var(--blue)}
-  ul,ol{padding-left:22px}
-  li{margin:6px 0}
-  .callout{background:var(--warn-bg);color:var(--warn);border-radius:var(--radius);
-           padding:14px 16px;margin:16px 0}
-  .stop{background:var(--stop-bg);color:var(--stop);border-radius:var(--radius);padding:14px 16px;margin:16px 0}
-  .note{background:var(--ok-bg);color:var(--ok);border-radius:var(--radius);padding:14px 16px;margin:16px 0}
-  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:#eef2f6;padding:1px 5px;border-radius:4px}
-  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  ul,ol{padding-left:24px;margin:10px 0}
+  li{margin:7px 0}
+  strong{font-weight:600}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:#f1f4f7;padding:1px 5px;border-radius:3px}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
 <main>
 
 <h1>服务条款</h1>
-<div class="meta">版本 1.0 · 生效日期 2026-09-14 · 适用服务：CityU Mail Pilot</div>
+<div class="meta">版本 1.1 · 生效日期 2026-09-18 · 适用服务：CityU Mail Pilot</div>
 
-<p><strong>一句话：</strong>这是一个<strong>内测中的</strong>免费邮件摘要工具。它帮你把学校邮箱的来信变成一份中文报告，
-但它<strong>会出错</strong>，<strong>不是官方通知</strong>，<strong>随时可能停</strong>。用它之前请先读完下面几条。</p>
+<p>本服务条款（下称"本条款"）是你与 CityU Mail Pilot（下称"本服务"）运营者之间就使用本服务达成的协议。
+请在使用前完整阅读本条款。你注册、配置或使用本服务，即表示你已阅读、理解并同意接受本条款全部内容的约束。</p>
 
-<h2>1. 这是什么服务</h2>
-<p>CityU Mail Pilot（下称"本服务"）读取你转发到私人邮箱的<strong>本校来信</strong>，用大模型生成中文摘要报告，
-再发回你的邮箱。本服务<strong>只读</strong>你的邮箱，不回复、不删除、不转发你的邮件给任何人（大模型服务商除外，见 <a href="/privacy">隐私政策</a> 第 3 节）。</p>
+<h2>1. 服务说明</h2>
+<p>本服务读取你转发至私人邮箱的<strong>本校来信</strong>，调用大语言模型生成中文摘要报告，并以电子邮件方式发送至你指定的邮箱。
+本服务对你的邮箱仅执行<strong>只读</strong>访问，不回复、不删除、不转发你的邮件给任何第三方，但下列第三方大模型服务商除外（见
+<a href="/privacy">隐私政策</a> 第 3 节）。</p>
+<p><strong>本服务不是城大的官方服务。</strong>本服务由个人独立开发和维护，未获得香港城市大学（CityU）的授权、认可、委托或背书，
+不是学校的信息系统或官方通知渠道，亦不代表学校立场。</p>
+<p>本服务名称中的"CityU"仅用于说明所处理的来信来源，属事实描述，不构成任何形式的授权、合作或隶属关系。
+本服务的域名、服务器、经费、数据、模型调用及全部技术决定均由运营者自行负责，与香港城市大学无关。
+本服务出现问题时应向运营者提出，<strong>不应</strong>联系香港城市大学的 IT 支持部门，该部门不负责本服务。</p>
 
-<h2>2. 关于 AI 生成的报告 —— 请务必理解</h2>
-<div class="callout">
-  <p><strong>报告由大语言模型自动生成，可能遗漏、误解或凭空出错（"幻觉"）。</strong></p>
-</div>
-<ul>
-  <li>报告<strong>仅供参考</strong>，<strong>不构成学校或任何机构的官方通知</strong>。</li>
-  <li><strong>一切以原始邮件为准。</strong>涉及选课、考试、缴费、报名、签证、毕业、处罚等任何有后果的决定前，
-      请<strong>务必自己打开原始邮件核对</strong>。</li>
-  <li>因依赖报告内容而造成的任何损失，本服务不承担责任。</li>
-</ul>
-
-<h2>3. 你的账号与你的责任</h2>
+<h2>2. 人工智能生成内容的性质与风险</h2>
+<p><strong>报告由大语言模型自动生成，可能存在遗漏、误解或与事实不符的情形。</strong></p>
 <ol>
-  <li>你只能用<strong>你自己的</strong>邮箱。不要用它处理他人的邮箱。</li>
-  <li>你要保管好登录密码、邮箱授权码和 API key。<strong>账号下的操作视为你本人的操作。</strong></li>
-  <li><strong>内测期间默认使用管理员提供的模型 key，费用由管理员承担</strong>，你不必自备 key，也不必付任何费用。管理员可以随时结束内测或调整这一点，届时会提前通知。</li>
-  <li>联网搜索同样内置了一把管理员提供的 key：开启联网核实时，从邮件主题提取的检索词会发给搜索服务商，<strong>查询记录落在管理员账号下</strong>。你可以填自己的搜索 key 覆盖它。</li>
-  <li>你也可以<strong>改用你自己的 API key</strong>（在「AI 模型」里填写）。此后调用费用由你直接付给服务商，调用记录也只在你自己名下。</li>
-  <li>用管理员的 key 时，<strong>你的邮件正文会经由管理员的模型服务商账号处理</strong>；不接受这一点的话，请填自己的 key，或者改为自托管。</li>
-  <li>你需要确保自己有权限把邮箱里的邮件内容发送给第三方大模型服务商。若学校或他人对你有保密要求，请先确认清楚。</li>
+  <li>报告仅供参考，<strong>不构成学校或任何机构的官方通知</strong>。</li>
+  <li><strong>一切以原始邮件为准。</strong>在涉及选课、考试、缴费、报名、签证、毕业、纪律处分等任何产生后果的决定前，
+  你应自行查阅并核对原始邮件。</li>
+  <li>因依赖报告内容而产生的任何损失，本服务不承担责任。</li>
 </ol>
 
-<h2>4. 不可以做的事</h2>
-<div class="stop">
-  <p>以下行为会导致账号被立即停用：</p>
-  <ul>
-    <li>用本服务处理<strong>不是你的</strong>邮箱，或未经授权获取他人邮件</li>
-    <li>把本服务用于任何违法用途，或试图用它绕过学校的信息系统规则</li>
-    <li>故意用超大流量、异常请求或其他方式<strong>压垮服务</strong>，影响其他用户</li>
-    <li>试探、扫描、攻击本服务或其服务器，或试图读取其他用户的数据</li>
-    <li>绕过内测人数上限或邀请机制批量注册</li>
-  </ul>
-</div>
+<h2>3. 邮件处理授权</h2>
+<p><strong>你须自行确认有权实施下列处理行为，方可使用本服务。</strong>
+本服务以<strong>你本人</strong>的授权为基础，不得用于规避任何适用的限制。</p>
+<p>你开通本服务（包括在城大邮箱中设置自动转发、在「邮箱设置」中保存邮箱授权码、启用收信与报告生成）时，
+<strong>即向运营者作出下列陈述与保证</strong>：</p>
+<ol>
+  <li>你<strong>有权</strong>将该邮箱中的邮件<strong>转发或复制</strong>至你在本服务中登记的私人邮箱；</li>
+  <li>你<strong>有权</strong>允许本服务<strong>读取、存储、解密与处理</strong>其中符合本校发件域的来信；</li>
+  <li>你<strong>有权</strong>将邮件内容<strong>发送给第三方大模型服务商</strong>（详见 <a href="/privacy">隐私政策</a> 第 3 节与第 13.1 节）；</li>
+  <li>如学校、雇主或任何他人对你有<strong>保密或不得外传</strong>的要求，你<strong>已取得</strong>所需许可，
+  或已确认该要求不适用于你交由本服务处理的邮件；</li>
+  <li>你<strong>不会</strong>使用本服务处理<strong>不是你的</strong>邮箱，亦不会处理你无权处理的邮件。</li>
+</ol>
+<p><strong>未确认上述各项者，不得开通或继续使用本服务。</strong>
+界面上的授权确认勾选框即上述确认（见第 4 条第 8 项），勾选即表示你已逐项确认。</p>
+<p><strong>运营者无法代你作出上述判断。</strong>运营者不知悉你与学校之间的约定，亦无法判断每一封邮件是否包含第三人的个人资料。
+授权由<strong>你本人</strong>确认并承担相应责任。如你不确定是否享有该项权利，请勿使用本服务，或先行取得明确许可；
+你亦可仅使用自有 API key 并自行部署（见第 11 条），使邮件不经过运营者一侧。</p>
 
-<h2>5. 服务是"内测"，没有保证</h2>
+<h2>4. 账号与用户责任</h2>
+<ol>
+  <li>你仅可使用<strong>你本人</strong>的邮箱，不得使用本服务处理他人的邮箱。</li>
+  <li>你应妥善保管登录密码、邮箱授权码及 API key。<strong>该账号下的一切操作均视为你本人的行为。</strong></li>
+  <li><strong>内测期间默认使用管理员提供的模型 key，相关费用由管理员承担</strong>，你无需自备 key，亦无需支付任何费用。
+  管理员可随时终止内测或调整上述安排，并将提前通知。</li>
+  <li>联网核实功能同样默认使用管理员提供的搜索 key。启用该功能时，自邮件主题提取的检索词将发送至搜索服务商，
+  <strong>查询记录归属于管理员账号</strong>。你可填写自有搜索 key 予以覆盖。</li>
+  <li>你亦可<strong>改用自有 API key</strong>（于「AI 模型」中填写）。此后调用费用由你直接向服务商支付，调用记录仅归属于你本人。</li>
+  <li>使用管理员提供的 key 时，<strong>你的邮件正文将经由管理员的模型服务商账号处理</strong>。如不接受该安排，
+  请填写自有 key，或改用自托管部署。</li>
+  <li>你应确保自身有权将邮箱中的邮件内容发送给第三方大模型服务商。如学校或他人对你有保密要求，应先行确认。
+  <strong>此为使用本服务的前提，具体见第 3 条；运营者不代你作出判断，亦不承担代你取得授权的义务。</strong></li>
+  <li><strong>开通本服务前，你须在界面上勾选确认第 3 条的授权陈述与保证</strong>（于「邮箱设置」保存之前）。
+  未勾选者，服务端将<strong>拒绝保存邮箱设置，收信功能亦不会启动</strong>。</li>
+</ol>
+
+<h2>5. 禁止行为</h2>
+<p>存在下列行为之一的，账号将被立即停用：</p>
 <ul>
-  <li>本服务<strong>免费</strong>，<strong>处于内测阶段</strong>，由个人在业余维护。</li>
-  <li><strong>没有可用性承诺（无 SLA）</strong>：可能随时中断、延迟、丢信或出错。</li>
-  <li>功能可能随时变更或移除。内测人数上限由运营者调整。</li>
-  <li>我们会努力，但<strong>不保证</strong>你的报告一定按时送达，也不保证你<strong>不会漏掉重要邮件</strong>。
-      <strong>请不要把本服务当作你唯一的通知渠道。</strong></li>
+  <li>使用本服务处理<strong>不是你的</strong>邮箱，或未经授权获取他人邮件；</li>
+  <li>将本服务用于任何违法用途，或试图借本服务规避学校信息系统的管理规则；</li>
+  <li>以异常流量、异常请求或其他方式<strong>致使服务无法正常提供</strong>，影响其他用户；</li>
+  <li>探测、扫描或攻击本服务及其服务器，或试图读取其他用户的数据；</li>
+  <li>绕过内测人数上限或邀请机制进行批量注册。</li>
 </ul>
 
-<h2>6. 如果我们决定停止服务</h2>
-<div class="note">
-  <p>如果本服务要停止或要清空数据，我们会：</p>
-  <ol>
-    <li>至少提前 <strong>14 天</strong>通过你注册的邮箱通知你；</li>
-    <li>在通知里给出一段<strong>至少 14 天的数据导出窗口</strong>，你可以在这段时间里把报告与数据导出带走；</li>
-    <li>窗口结束后删除服务器上的用户数据，包含备份。<strong>备份按时间滚动保留：服务器上留存最近 14 天</strong>，期外副本会自动删除；如果运营者启用了异地备份，同一窗口也会覆盖到异地副本。</li>
-  </ol>
-  <p>你随时可以自己提前导出或删除，不必等我们。</p>
-</div>
+<h2>6. 内测阶段的免责声明</h2>
+<ol>
+  <li>本服务<strong>免费</strong>提供，处于<strong>内测阶段</strong>，由个人在业余时间维护。</li>
+  <li><strong>本服务不作任何可用性承诺（无 SLA）</strong>，可能随时中断、延迟、丢失邮件或发生错误。</li>
+  <li>本服务功能可能随时变更或移除；内测人数上限由运营者调整。</li>
+  <li>运营者将尽合理努力，但<strong>不保证</strong>报告按时送达，亦<strong>不保证</strong>你<strong>不会漏收重要邮件</strong>。
+  <strong>请勿将本服务作为你唯一的通知渠道。</strong></li>
+</ol>
 
-<h2>7. 你随时可以离开</h2>
-<p>在「报告与账户」里可以<strong>一键导出</strong>或<strong>一键删除</strong>你的账号。删除后数据不可恢复。
-你也可以直接写信给 {{CONTACT_LINK}} 要求删除。</p>
+<h2>7. 服务终止与数据处理</h2>
+<p>如本服务终止运营或需清空数据，运营者将：</p>
+<ol>
+  <li>至少提前 <strong>14 天</strong>通过你注册的邮箱发出通知；</li>
+  <li>在通知中提供<strong>不少于 14 天</strong>的数据导出窗口，你可在该期间内导出并留存报告与数据；</li>
+  <li>于窗口届满后删除服务器上的用户数据（含备份）。<strong>备份按时间滚动保留，服务器上留存最近 7 天</strong>，
+  超出该期间的副本将自动删除；如运营者启用异地备份，同一时间窗口同样适用于异地副本。</li>
+</ol>
+<p>你亦可随时自行提前导出或删除数据，无需等待上述通知。</p>
 
-<h2>8. 我们也可以停用你的账号</h2>
-<p>如果你违反第 4 条，或你的使用明显危及服务或其他用户，我们可以在不事先通知的情况下停用你的账号。
-在不是紧急情况时，我们会先说明原因。</p>
+<h2>8. 用户终止使用</h2>
+<p>你可在「报告与账户」中<strong>一键导出</strong>或<strong>一键删除</strong>你的账号。账号删除后数据不可恢复。
+你亦可发送邮件至 {{CONTACT_LINK}} 要求删除。</p>
 
-<h2>9. 责任限制</h2>
-<p>在适用法律允许的最大范围内，本服务按"现状"提供，不对任何间接损失、数据丢失、漏读邮件造成的后果承担责任。
-本条不排除法律不允许排除的责任。</p>
+<h2>9. 账号停用</h2>
+<p>如你违反第 5 条，或你的使用明显危及本服务或其他用户，运营者可在不事先通知的情况下停用你的账号。
+非紧急情形下，运营者将先行说明理由。</p>
 
-<h2>10. 开源与版权</h2>
-<p>本服务的源码以 <strong>AGPL-3.0</strong> 许可发布，版权人 <strong>余剑篪</strong>。你可以自行部署一份给自己用——
-那样你的邮件只经过你自己的服务器。许可条款以仓库中的 <code>LICENSE</code> 文件为准。</p>
+<h2>10. 责任限制与赔偿</h2>
+<ol>
+  <li>在适用法律允许的最大范围内，本服务按"现状"提供，运营者不对任何间接损失、数据丢失或因漏读邮件造成的后果承担责任。
+  本条不排除依法不得排除的责任。</li>
+  <li><strong>与学校的关系</strong>：本服务与城大之间不存在任何隶属、合作或授权关系，双方之间亦<strong>不存在数据处理协议（DPA）</strong>
+  或任何委托关系（详见 <a href="/privacy">隐私政策</a> 第 13.1 节）。城大无维护本服务的义务，亦不因本服务对你承担任何责任。
+  因本服务产生的任何争议，<strong>应向运营者提出，不应向学校提出</strong>；学校并非本服务的提供者，对学生不因本服务负有义务。</li>
+  <li><strong>用户赔偿</strong>：如你违反第 3 条的授权陈述与保证（例如你实际无权转发或处理相关邮件，
+  或你交由本服务处理的邮件含他人资料且无权外传），并因此引起第三方（包括学校、发件人或邮件涉及的他人）
+  向你或向运营者主张权利，你同意<strong>自行承担</strong>该主张及其后果；运营者因同一事项被主张权利时，
+  你应赔偿运营者因此发生的合理费用。运营者不主张超出法律允许范围的权利。</li>
+</ol>
 
-<h2>11. 条款的变更</h2>
-<p>本条款如有变更，会在本页更新并修改顶部的版本与日期。重大变更会另发邮件通知。继续使用即视为接受更新后的条款。</p>
+<h2>11. 开源许可与版权</h2>
+<p>本服务源码以 <strong>AGPL-3.0</strong> 许可发布，版权人为<strong>余剑篪</strong>。你可自行部署一份供本人使用，
+在此情形下你的邮件仅经过你自己的服务器。许可条款以仓库中的 <code>LICENSE</code> 文件为准。</p>
 
-<h2>12. 适用法律</h2>
+<h2>12. 条款变更</h2>
+<p>本条款如有变更，将在本页更新并同步修改顶部的版本号与生效日期。重大变更将另行以邮件通知。
+你于变更后继续使用本服务，即视为接受更新后的条款。</p>
+
+<h2>13. 适用法律</h2>
 <p>本条款适用香港特别行政区法律。</p>
 
 <footer>

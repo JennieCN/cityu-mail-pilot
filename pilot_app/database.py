@@ -649,6 +649,134 @@ GUEST_LINK_LIMIT = 2
 # 提醒，其「之后」没有任何人在看——那时候说「他没回来」是拿一个没有数据的时段当证据。
 LAST_SEEN_SINCE_KEY = "last_seen_tracking_since"
 
+# ---------------------------------------------------------------------------
+# Connection-level settings, and why each one is where it is
+# ---------------------------------------------------------------------------
+#
+# These are not tuning knobs for a benchmark: each is a decision about what a
+# *single* request is allowed to do to every other request. Measured values come
+# from `tools/sqlite_settings_probe.py` and `tools/sqlite_profile_calls.py` on a
+# 100-account database; the numbers quoted here are from that run.
+
+# How long SQLite waits for a competing writer before raising "database is
+# locked". The previous value came from `sqlite3.connect(timeout=20)`, which is
+# the same thing -- it is named here so it can be *seen*, because 20 s is the
+# length of the web service's whole request budget (`MemoryMax=350M`,
+# `TasksMax=96`): a request that waits the full 20 s has stopped being a page and
+# become an outage. Under WAL a writer only blocks another writer, so this is the
+# ceiling on the queue behind the nightly checkpoint, not on readers.
+BUSY_TIMEOUT_MS = 20_000
+BUSY_TIMEOUT_SECONDS = BUSY_TIMEOUT_MS / 1000
+
+# 32 MiB of page cache instead of SQLite's 2 MiB default, and 256 MiB of address
+# space mapped over the file instead of copying pages into the heap. Per
+# connection, which is affordable only because this process runs one connection
+# per operation rather than per thread. The reason it matters: the `messages`
+# table is the largest object in the database and every operator screen scans
+# part of it, so on the default cache each such query re-reads from disk.
+# `mmap_size` is address space, not resident memory -- pages are faulted in on
+# demand and are shared with the page cache the kernel already holds.
+CACHE_KIB = -32_000  # negative means KiB, not pages
+MMAP_BYTES = 268_435_456
+
+# The schema this build expects. Bumping it is what makes the one expensive
+# migration (the `messages` table rebuild) run again; a database already at this
+# version skips it. **Bump it in the same commit as any change to `SCHEMA` or to
+# `RETIRED_INDEXES`.**
+SCHEMA_VERSION = 3
+SCHEMA_VERSION_KEY = "schema_version"
+
+# Indexes that were **measured** to earn their keep, and the query each one was
+# measured against (`tools/sqlite_index_audit.py` drops each index and re-runs its
+# query, so the number is the index's entire effect).
+#
+# `messages` had no index on `user_id` at all -- its only unique key is
+# (mailbox_id, uid_validity, imap_uid), and `mailbox_id` already implies the user.
+# Every per-user read therefore scanned the whole table.
+#
+# Only two indexes cleared the bar. The gains quoted are from a 30 000-message
+# database with 20 users sampled:
+LATE_INDEXES = (
+    # `COUNT(*) ... WHERE user_id=? AND status!='skipped'` -- the dashboard's "how
+    # many mails have been analysed" (on **every** page load) and the console's
+    # queue-depth counts. Measured across 20 users, as a page render pays it:
+    #
+    #     shipped 0.022 ms (covering index)  vs  0.183 ms without   = 8.3x
+    #
+    # The ratio understates it: with this dropped, SQLite falls back to another
+    # index that this change *rejects*, so the real "before" is what the profiler
+    # measured with no usable index at all -- **176 ms per call, a full scan of
+    # `messages`**, against 1.8 ms here. Being a *covering* index is what makes it
+    # an index-only scan: the count never touches a table page.
+    ("idx_messages_user_status", "messages(user_id, status)"),
+    # `list_messages_overview` -- the operator console's "every mail, newest first",
+    # where the ordering must come from an index over the whole table rather than
+    # from each user's slice:
+    #
+    #     shipped 0.028 ms  vs  6.642 ms without   = 237x
+    #
+    # The largest single win in this change, and it exists only because the console
+    # sorts the *fleet*, not one user -- a per-user index cannot serve that ORDER BY.
+    ("idx_messages_received", "messages(received_at DESC)"),
+)
+
+# Indexes that were added, measured, **and found not to be worth their keep**.
+# They are not created. The list is kept because the reasoning is the valuable
+# part: both looked obviously right, and both were wrong.
+#
+# **This list is the point of `tools/sqlite_index_audit.py`.** An index costs disk,
+# backup size and a write on every `INSERT INTO messages`; "it cannot hurt" is not
+# true, and the only way to know is to drop it and re-measure.
+REJECTED_INDEXES = (
+    # `messages(user_id, received_at DESC)`, for `messages_between` (the daily
+    # digest's window read).
+    #
+    #     shipped 0.155 ms  vs  0.166 ms without   = 1.07x
+    #
+    # With it dropped, SQLite uses `idx_messages_user_status` and sorts the (small,
+    # per-user, date-filtered) result in a temp B-tree -- and costs 4% more. There
+    # is no size of database in which a per-user window read needs help here: the
+    # `user_id` prefix is already doing all the work, and the sort is over that
+    # user's rows only. Kept out rather than kept "just in case".
+    "idx_messages_user_received",
+    # `reports(message_id, kind)`, for `report_for_message` ("is there already a
+    # report for this mail").
+    #
+    #     shipped 0.042 ms  vs  0.041 ms without   = 0.98x -- i.e. none
+    #
+    # The reason is visible in the plans: **the index already existed**.
+    # `idx_report_per_message` is a pre-existing partial unique index on
+    # `(message_id, kind) WHERE message_id IS NOT NULL`, and it serves this query
+    # exactly. In both states SQLite used it. Adding the second one cost writes and
+    # changed nothing -- the mistake was not checking what was already there before
+    # writing `CREATE INDEX`.
+    "idx_reports_message_kind",
+)
+
+# Indexes a previous build created, that measurement then retired. Dropped rather
+# than merely removed from the lists above, because a database that already ran the
+# version which created them would otherwise keep paying for them forever.
+#
+# `idx_messages_queue` was `messages(status, next_attempt_at, created_at)`, added on
+# the theory that it could supply the worker's `ORDER BY created_at` as well as its
+# filter, where the pre-existing `(status, next_attempt_at)` forces a temp B-tree.
+# The theory was wrong twice over:
+#
+# * SQLite never chose it. With a 10 000-row backlog the plan still read
+#   `idx_messages_due` + `USE TEMP B-TREE FOR ORDER BY`, and the same query with
+#   every index disabled (`NOT INDEXED`) cost the same as the indexed plan -- the
+#   sort is not where the query's ~345 ms goes.
+# * Dropping it changed the query time by -0.61 ms, i.e. nothing.
+#
+# The one-off script that measured this (`tools/sqlite_queue_plan.py`) has been
+# deleted, because the question is settled: the numbers above are the whole
+# finding, and keeping an executable for a hypothesis that was disproved invites
+# somebody to re-run it instead of reading the answer.
+#
+# Both of the others above are here too, because the version that shipped them in
+# `LATE_INDEXES` may already have run on a real install.
+RETIRED_INDEXES = ("idx_messages_queue",) + REJECTED_INDEXES
+
 
 class Database:
     def __init__(self, path: str | Path):
@@ -656,11 +784,39 @@ class Database:
 
     @contextlib.contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=20)
+        """One short-lived connection for one operation.
+
+        **What is deliberately not here.** `PRAGMA journal_mode = WAL` used to run
+        on every connection -- fifteen times per dashboard request, once per queue
+        pass, once per page view. Two things were wrong with that. The mode is a
+        property of the *file*: it persists across connections and restarts, so on
+        a database already in WAL the statement is a header read that cannot change
+        anything. And it is not free to *ask*: it is answered through SQLite's lock
+        table, so it is the one statement a **reader** executes that can be made to
+        wait on a **writer**. Confirming an unchanged setting is worth neither.
+
+        Note what the measurement did *and did not* show
+        (`tools/sqlite_settings_probe.py`, every variant on its own fresh copy of
+        the database, random order, median of three): single-threaded, keeping the
+        PRAGMA per connection costs nothing measurable (~1.8 ms vs ~2.0 ms p50,
+        inside the noise), because on a WAL database it is a header read. So the
+        case for moving it is the **lock ordering** above and the fact that it
+        cannot ever help -- not a 0.7 ms saving. Do not re-add it as a "speed fix";
+        it was already measured.
+
+        It now lives in `initialize()`, which every entry point calls before
+        anything else and which warns loudly if the mode does not stick.
+
+        `busy_timeout`, in contrast, *is* per connection, and so are the page
+        cache and the mmap window. See the constants above for why these values.
+        """
+        connection = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         try:
+            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA cache_size = {CACHE_KIB}")
+            connection.execute(f"PRAGMA mmap_size = {MMAP_BYTES}")
             yield connection
             connection.commit()
         except Exception:
@@ -670,7 +826,130 @@ class Database:
             connection.close()
 
     def initialize(self) -> None:
+        """Bring the file up to date and set the settings that belong to the file.
+
+        Runs once per process, at startup, before any request is served. Three
+        jobs, in an order that is load-bearing:
+
+        1. `_apply_file_settings` -- settings that are properties of the database
+           rather than of a connection (`journal_mode`), plus the assertion that
+           they took. If WAL did not stick, say so at startup rather than meeting
+           it later as a mystery 20-second request.
+        2. `migrate` -- create what is missing, add the columns older databases
+           lack, create the late indexes.
+        3. `_apply_data_fixups` -- idempotent corrections to *rows*, run on every
+           start rather than behind the version gate (which exists to skip
+           expensive *schema* work, not to skip a compliance-relevant cleanup).
+
+        **A first version of this gated everything on `SCHEMA_VERSION` and broke
+        the upgrade path.** A database created by an older build reports version
+        0, migrates, and is stamped -- fine. But a database that was already
+        stamped while still missing an additive column (`token_usage.on_platform`,
+        in the test that caught it) would then skip the very migration that adds
+        it and fail at read time with "no such column". The gate now sits only in
+        front of the one genuinely expensive operation, the `messages` table
+        rebuild; the `ALTER TABLE ADD COLUMN` statements it used to guard are
+        cheap, self-checking (`PRAGMA table_info`), and racing against them is
+        harmless because they are idempotent.
+        """
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._apply_file_settings()
+        self.migrate()
+        self._apply_data_fixups()
+        # Uploaded-but-never-published broadcast images. Outside the migration
+        # entirely: this is daily housekeeping, and a failure here must not stop
+        # the process from starting.
+        try:
+            dropped = self.purge_draft_announcement_images()
+            if dropped:
+                logging.info("清理了 %s 张没发布的广播配图", dropped)
+        except Exception:  # noqa: BLE001 - 清理失败不该拦住启动
+            logging.warning("清理草稿配图失败", exc_info=True)
+
+    def _apply_file_settings(self) -> None:
+        """Settings that belong to the database *file*, applied exactly once.
+
+        `journal_mode` is the one that matters, and it is the reason this method
+        exists at all: it used to be set on every connection, which made every
+        reader take a write lock to re-confirm a setting that cannot have changed.
+        Re-asserting it here is enough -- it persists in the file header across
+        connections and across restarts, so the only way it becomes unset is a
+        deliberate external change (`sqlite3` on the CLI, a restore of an older
+        copy), and the warning below is how that gets noticed.
+        """
+        connection = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS)
+        try:
+            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+            mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+            mode = str(mode[0]).lower() if mode else ""
+            if mode != "wal":
+                # Not fatal -- SQLite refuses WAL on some network filesystems,
+                # and a self-hoster's NFS mount should still run, just slower.
+                logging.warning(
+                    "journal_mode is %r, not 'wal': write concurrency will be much "
+                    "worse and readers will block writers. If this database lives on "
+                    "a network mount, move it to local storage.", mode)
+            # Only local to this connection and to any connection that follows it
+            # on a database already checkpointed this way, but harmless to assert.
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA wal_autocheckpoint = 1000")
+        finally:
+            connection.close()
+
+    def _apply_data_fixups(self) -> None:
+        """Idempotent data corrections, run on **every** start, not behind the gate.
+
+        These are deliberately outside `migrate()`'s `SCHEMA_VERSION` gate. That
+        gate exists to skip *expensive schema work*, and using it for data would
+        be a correctness bug with a compliance flavour: the body purge below is
+        what makes the published privacy promise ("a skipped mail keeps its
+        metadata only") true, and a database that reports the current schema
+        version while still holding skipped bodies would be one the policy lies
+        about. Cheap when there is nothing to do, and there is nothing to do on a
+        healthy install.
+        """
+        with self.connect() as connection:
+            # Bodies of mail that was deliberately never analysed. Versions before
+            # v0.40 stored the encrypted body first and only then applied the
+            # sender filter, so skipped rows held a body nobody would ever read.
+            # X'' (not '') keeps the column a BLOB, matching what the ingestion
+            # path writes for a skipped mail.
+            #
+            # The table may not exist yet -- on a brand-new file the first call
+            # happens before `migrate()` has created anything -- so "no such
+            # table" is the expected answer there and not a failure.
+            if self._has_table(connection, "messages"):
+                connection.execute(
+                    "UPDATE messages SET body=X'' WHERE status='skipped' AND body!=X''")
+            # **这一列从什么时候开始记的**，和列一起落库。它决定面板能不能下结论：
+            # 一条比它更早的提醒，其「之后」根本没人看着——那时说「他没回来」是拿
+            # 一个没有数据的时间段当证据。空着就补一次，补过就不再动。
+            if self._has_table(connection, "app_settings") and not connection.execute(
+                    "SELECT 1 FROM app_settings WHERE key=?", (LAST_SEEN_SINCE_KEY,)).fetchone():
+                connection.execute(
+                    "INSERT INTO app_settings(key,value,updated_at,updated_by) VALUES(?,?,?,'')",
+                    (LAST_SEEN_SINCE_KEY, utc_now(), utc_now()))
+
+    @staticmethod
+    def _has_table(connection: sqlite3.Connection, name: str) -> bool:
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+    def migrate(self) -> None:
+        """Create what is missing, add the columns, build the late indexes.
+
+        Everything here is idempotent and self-checking, which is why it is not
+        behind the `SCHEMA_VERSION` gate: the gate exists for the one expensive
+        rebuild below, and putting the `ALTER TABLE` statements behind it made a
+        database that was stamped while missing a column unable to ever gain it.
+
+        The gate is still worth having for its own sake, and what it buys is now
+        measured rather than assumed: on a 984 MiB / 30 000-message database the
+        full pass takes ~0.2 s, and the second start of the same process takes
+        0.03 s because the rebuild is skipped. Neither is large, which is the
+        point -- this is startup work in front of the first request, and it should
+        not grow with the size of the table it is not touching.
+        """
         with self.connect() as connection:
             # Additive migrations MUST run before executescript(SCHEMA): the
             # schema contains an index on messages.message_key, and on a
@@ -775,31 +1054,70 @@ class Database:
             usage_columns = {row[1] for row in connection.execute("PRAGMA table_info(token_usage)")}
             if "on_platform" not in usage_columns:
                 connection.execute("ALTER TABLE token_usage ADD COLUMN on_platform INTEGER")
-            self._relax_message_status_check(connection)
-            # 3) Now that the columns exist, enforce same-mail uniqueness per user.
+            # 3) The one genuinely expensive step, and the only thing the
+            #    `SCHEMA_VERSION` gate guards. Rewriting `messages` copies every
+            #    row and drops every index on it, so it must not run on a start
+            #    that does not need it. `_relax_message_status_check` decides for
+            #    itself whether the rebuild is needed (it reads the table's own
+            #    `sqlite_master` definition), so the gate here is only about not
+            #    paying for that decision's *consequences* twice.
+            version = self._stored_schema_version(connection)
+            if version < SCHEMA_VERSION:
+                self._relax_message_status_check(connection)
+            # 4) Now that the columns exist, enforce same-mail uniqueness per user.
             #    Two forwarding rules deliver one mail twice under different IMAP
             #    UIDs; without this the user gets two AI reports for one email.
+            #    Created after the rebuild above, which drops what is on the table.
             connection.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_message_same_mail
                    ON messages(user_id, message_key) WHERE message_key IS NOT NULL"""
             )
-            # 4) Purge bodies of mail that was deliberately never analysed.
-            #    Versions before this one stored the encrypted body first and
-            #    only then applied the sender filter, so skipped rows held a
-            #    body nobody would ever read. The privacy policy now states
-            #    that a skipped mail keeps its metadata only, so old rows must
-            #    be brought in line instead of quietly contradicting the text.
-            #    X'' (not '') keeps the column a BLOB, matching what the
-            #    ingestion path writes for a skipped mail.
-            connection.execute("UPDATE messages SET body=X'' WHERE status='skipped' AND body!=X''")
-        # 5) 上传了却没发布的广播配图。放在事务外面（它自己开一个连接）：这一步不是
-        #    迁移，是日常清理，失败了也不该让整个 initialize 失败。
+            # 5) The indexes that make per-user reads a seek instead of a scan.
+            for name, target in LATE_INDEXES:
+                connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            # ...and the ones a previous build added that measurement then retired.
+            # `REJECTED_INDEXES` are never created, so on a fresh database this is a
+            # no-op; on one that already ran the earlier version it is the cleanup.
+            for name in RETIRED_INDEXES:
+                connection.execute(f"DROP INDEX IF EXISTS {name}")
+            self._record_schema_version(connection)
+
+    @staticmethod
+    def _stored_schema_version(connection: sqlite3.Connection) -> int:
+        """The version this file reports, or 0 for "never migrated by this code".
+
+        A file with no `app_settings` table at all is the first run; a file that
+        has one but no version row predates the gate, and 0 sends it through the
+        schema rebuild once. Anything unparseable is also treated as 0, because
+        re-running an idempotent migration is cheap and skipping a needed one is
+        not.
+        """
         try:
-            dropped = self.purge_draft_announcement_images()
-            if dropped:
-                logging.info("清理了 %s 张没发布的广播配图", dropped)
-        except Exception:  # noqa: BLE001 - 清理失败不该拦住启动
-            logging.warning("清理草稿配图失败", exc_info=True)
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE key=?", (SCHEMA_VERSION_KEY,)).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        if not row:
+            return 0
+        try:
+            return int(str(row[0]))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _record_schema_version(connection: sqlite3.Connection) -> None:
+        """Stamp the version **last**, so a half-finished migration is retried.
+
+        Ordering is the whole point: if an index build fails, the file must not
+        claim to be at a version whose migrations never completed.
+        """
+        connection.execute(
+            """INSERT INTO app_settings(key,value,updated_at,updated_by) VALUES(?,?,?,'migration')
+               ON CONFLICT(key) DO UPDATE SET
+                 value=excluded.value, updated_at=excluded.updated_at,
+                 updated_by=excluded.updated_by""",
+            (SCHEMA_VERSION_KEY, str(SCHEMA_VERSION), utc_now()))
 
     @staticmethod
     def _relax_message_status_check(connection: sqlite3.Connection) -> None:

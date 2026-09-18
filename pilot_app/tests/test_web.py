@@ -116,6 +116,7 @@ class WebTests(unittest.TestCase):
         status, body, _ = self.client.put("/api/mailbox", {
             "email": "pilot@qq.com", "report_to": "reports@qq.com", "imap_host": "imap.qq.com",
             "imap_port": 993, "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "mail-secret",
+            "accepted_terms": True,
         })
         self.assertEqual(status, 200, body)
 
@@ -307,6 +308,7 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.client.put("/api/mailbox", {
             "email": "a@qq.com", "report_to": "b@qq.com", "imap_host": "imap.qq.com", "imap_port": 0,
             "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "x",
+            "accepted_terms": True,
         })
         self.assertEqual(status, 422)
 
@@ -357,6 +359,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.client.put("/api/mailbox", {
             "email": "purge@qq.com", "report_to": "purge@qq.com", "imap_host": "imap.qq.com",
             "imap_port": 993, "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "purge-secret",
+            "accepted_terms": True,
         })[0], 200)
         self.assertEqual(self.client.put("/api/connections/model", {
             "provider": "openai", "model": "gpt-test", "api_key": "purge-key"})[0], 200)
@@ -418,6 +421,7 @@ class WebTests(unittest.TestCase):
         status, body, _ = self.client.put("/api/mailbox", {
             "email": "report@qq.com", "report_to": "", "imap_host": "imap.qq.com", "imap_port": 993,
             "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "mail-secret",
+            "accepted_terms": True,
         })
         self.assertEqual(status, 200, body)
         self.assertEqual(self.client.get("/api/me")[1]["mailbox"]["report_to"], "report@qq.com")
@@ -426,6 +430,7 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.client.put("/api/mailbox", {
             "email": "report@qq.com", "report_to": "other@qq.com", "imap_host": "imap.qq.com",
             "imap_port": 993, "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "mail-secret",
+            "accepted_terms": True,
         })
         self.assertEqual(status, 200)
         self.assertEqual(self.client.get("/api/me")[1]["mailbox"]["report_to"], "other@qq.com")
@@ -439,9 +444,13 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 422)
         self.assertIn("CityU", body["detail"])
 
+        # `accepted_terms` is here so this reaches the address check at all: the
+        # authorization gate in front of it answers 400 for a first-time save
+        # (see `MailAuthorizationGateTests` in test_compliance).
         status, body, _ = self.client.put("/api/mailbox", {
             "email": "report@qq.com", "report_to": "not-an-address", "imap_host": "imap.qq.com",
             "imap_port": 993, "smtp_host": "smtp.qq.com", "smtp_port": 465, "app_password": "mail-secret",
+            "accepted_terms": True,
         })
         self.assertEqual(status, 422)
         self.assertIn("邮箱地址格式不正确", body["detail"])

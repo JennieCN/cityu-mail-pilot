@@ -1878,6 +1878,12 @@ $('save-profile').addEventListener('click', async () => {
 });
 
 $('save-mailbox').addEventListener('click', async () => {
+  // Ask here as well so the refusal is instant and readable, but the server
+  // checks it too: without that this would be decoration (terms §3, §4.8).
+  if (!$('accept-rights').checked) {
+    setStatus('mailbox-status', '请先勾选上面的授权确认（《服务条款》第 3 条），再保存。', 'error');
+    return;
+  }
   try {
     await api('/api/profile', { method: 'PUT', body: JSON.stringify({ school_email: $('school-email-mailbox').value }) });
     await api('/api/mailbox', {
@@ -1890,6 +1896,7 @@ $('save-mailbox').addEventListener('click', async () => {
         smtp_host: $('smtp-host').value,
         smtp_port: +$('smtp-port').value,
         app_password: $('mail-password').value,
+        accepted_terms: true,
       }),
     });
     $('mail-password').value = '';
