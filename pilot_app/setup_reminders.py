@@ -95,6 +95,24 @@ def app_url() -> str:
     return f"{origin}/app" if origin else "/app"
 
 
+#: 提醒信里的 ``{link}`` 指向哪个板块（`app.js` 的 `NAV` 键）。
+LINK_SECTION = "mailbox"
+
+
+def step_url() -> str:
+    """``{link}`` 该填什么：**设置向导那一页**，不是首页。
+
+    这四封信都指向同一个板块，而且这不是图省事——向导的 1–4 步（填这两个邮箱、
+    让 CityU 转过来、拿授权码、保存并检查）**全都住在「邮箱设置」这一页**，
+    四格进度就钉在它顶上：收信人一眼能看出自己灰着的是哪一格、下面哪一步还没做。
+    指到首页只会让他再找一次「设置向导在哪」——那正是这封信想省掉的那一次。
+
+    （"他卡在哪一步"的判据仍在 `group_for`/`setup_gap` 那一处；这里只负责把
+    收信人送到那一步所在的地方。）
+    """
+    return f"{app_url()}#/{LINK_SECTION}"
+
+
 def contact_wechat() -> str:
     """The operator's WeChat id, if this instance publishes one.
 
@@ -338,7 +356,7 @@ def render_body(db: Database | None, group: str, mailbox_email: str = "") -> str
         steps = _switch_mailbox_steps()
     else:
         steps = _provider_steps(mailbox_email)
-    return (text.replace("{link}", app_url())
+    return (text.replace("{link}", step_url())
                 .replace("{wechat}", _contact_lines())
                 .replace("{steps}", steps)
                 .replace("{mailbox}", mailbox_email or "你的私人邮箱"))
@@ -625,6 +643,7 @@ def whats_left(db: Database) -> dict[str, int]:
 
 __all__ = ["REMINDER_KEY", "MIN_AGE_HOURS", "NO_MAIL_HOURS", "BATCH_LIMIT", "GROUPS",
            "GAP_NEVER", "GAP_REFUSED", "GAP_NO_MAIL", "GAP_PROVIDER", "app_url",
+           "step_url", "LINK_SECTION",
            "contact_wechat", "never_configured_body", "refused_login_body", "message_for",
            "group_for", "needs_notice", "collect", "panel_rows", "preview", "send_pending",
            "whats_left", "TEMPLATE_KEYS", "PLACEHOLDERS", "TemplateError", "check_template",

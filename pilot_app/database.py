@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS messages (
     importance TEXT NOT NULL DEFAULT 'normal',
     message_key TEXT,
     body BLOB NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','sent','failed','skipped')),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','processing','sent','failed','skipped','held')),
     skip_reason TEXT NOT NULL DEFAULT '',
     attempts INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TEXT,
@@ -915,12 +916,18 @@ class Database:
             # X'' (not '') keeps the column a BLOB, matching what the ingestion
             # path writes for a skipped mail.
             #
+            # ``held`` 是同一件事的另一半：处理完、报告也生成了，但主人关掉了报告
+            # 邮件。正文同样不许留——"服务器不留正文"不因为不发邮件而改变。
+            # （这一行来自远端 v0.63.84；合并时它与本函数的重构撞在一起，
+            # 两个意图都保留：状态列表取远端的，位置取重构后的这里。）
+            #
             # The table may not exist yet -- on a brand-new file the first call
             # happens before `migrate()` has created anything -- so "no such
             # table" is the expected answer there and not a failure.
             if self._has_table(connection, "messages"):
                 connection.execute(
-                    "UPDATE messages SET body=X'' WHERE status='skipped' AND body!=X''")
+                    "UPDATE messages SET body=X''"
+                    " WHERE status IN ('skipped','held') AND body!=X''")
             # **这一列从什么时候开始记的**，和列一起落库。它决定面板能不能下结论：
             # 一条比它更早的提醒，其「之后」根本没人看着——那时说「他没回来」是拿
             # 一个没有数据的时间段当证据。空着就补一次，补过就不再动。
@@ -1121,18 +1128,27 @@ class Database:
 
     @staticmethod
     def _relax_message_status_check(connection: sqlite3.Connection) -> None:
-        """Allow the ``skipped`` status on databases created before it existed.
+        """Widen the ``messages.status`` CHECK to the values this version writes.
 
         SQLite cannot ALTER a CHECK constraint, so an older database whose
-        ``messages.status`` only permits pending/processing/sent/failed must be
-        rebuilt. Rows are copied verbatim, indexes recreated, and the operation
-        is idempotent: it only runs when the constraint is actually too narrow.
+        definition does not yet allow a status must be rebuilt. Rows are copied
+        verbatim, indexes recreated, and the operation is idempotent: it only
+        runs when the constraint is actually too narrow.
+
+        Two widenings so far:
+
+        * ``skipped`` -- mail from a sender we deliberately do not analyse;
+        * ``held`` -- processed and summarised, but **not sent**, because the
+          owner turned report mail off. That state has to exist and has to be
+          distinct: ``sent`` would be a lie, ``failed`` would raise alerts, and
+          ``skipped`` means "not our mail" (it feeds the digest's "other mail"
+          list and the "has the forwarding rule ever worked" evidence).
         """
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
         ).fetchone()
         definition = str(row[0]) if row else ""
-        if "skipped" in definition:
+        if "skipped" in definition and "held" in definition:
             return
 
         connection.execute("PRAGMA foreign_keys=OFF")
@@ -1147,7 +1163,7 @@ class Database:
                        importance TEXT NOT NULL DEFAULT 'normal', message_key TEXT,
                        body BLOB NOT NULL,
                        status TEXT NOT NULL DEFAULT 'pending'
-                           CHECK(status IN ('pending','processing','sent','failed','skipped')),
+                           CHECK(status IN ('pending','processing','sent','failed','skipped','held')),
                        skip_reason TEXT NOT NULL DEFAULT '',
                        attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
                        last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
@@ -2393,10 +2409,15 @@ class Database:
         "sent": "(m.status='sent' OR r.status='sent')",
         "failed": "(m.status='failed' OR r.status='failed')",
         "skipped": "m.status='skipped'",
+        # 处理成功、报告也生成了，但主人关掉了报告邮件：**不是"没送到"**。
+        # 它必须能从 `undelivered` 里排除掉，否则"一键安静"的用户会在运营者面板上
+        # 永远挂着一条看起来像故障的记录。
+        "held": "m.status='held'",
         "pending": "m.status IN ('pending','processing')",
         # Everything that has neither reached the user nor been deliberately
-        # skipped: failures plus anything still in flight.
-        "undelivered": "m.status NOT IN ('skipped','sent') AND (r.status IS NULL OR r.status!='sent')",
+        # skipped or held back: failures plus anything still in flight.
+        "undelivered": ("m.status NOT IN ('skipped','sent','held')"
+                        " AND (r.status IS NULL OR r.status!='sent')"),
     }
 
     # ----------------------------------------------------------- announcements
@@ -3619,13 +3640,35 @@ class Database:
         return cursor.rowcount or 0
 
     def active_mailboxes(self) -> list[dict[str, Any]]:
+        """Mailboxes we should be reading: enabled, owned by an active account.
+
+        **``immediate_enabled`` deliberately does NOT appear here.** It used to,
+        and that made the switch a trap: turning off "send me a summary for each
+        new mail" silently stopped us from reading the mailbox at all, so the
+        user lost their task list, the daily digest's evidence and the whole
+        point of the app -- while the setting was worded as a mail preference.
+        Whether we deliver mail and whether we read mail are separate questions;
+        "stop reading my mailbox" is ``mailboxes.enabled``.
+        """
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT m.* FROM mailboxes m JOIN users u ON u.id=m.user_id
-                   JOIN profiles p ON p.user_id=u.id
-                   WHERE m.enabled=1 AND u.status='active' AND p.immediate_enabled=1"""
+                   WHERE m.enabled=1 AND u.status='active'"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def report_delivery(self, user_id: str) -> dict[str, bool]:
+        """这个账号要不要收我们的邮件：``immediate``（随信发出）与 ``daily``（简报）。
+
+        一处定义，发信路径与界面都读它。缺 profile 时**默认发**（保持现状）——
+        新增的开关不许在升级当天改变任何人的邮件。
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT immediate_enabled,daily_enabled FROM profiles WHERE user_id=?", (user_id,)
+            ).fetchone()
+        return {"immediate": bool(row["immediate_enabled"]) if row else True,
+                "daily": bool(row["daily_enabled"]) if row else True}
 
     def update_mailbox_poll(self, mailbox_id: str, *, last_uid: int, uid_validity: str, error: str = "") -> None:
         with self.connect() as connection:
@@ -3769,6 +3812,28 @@ class Database:
                 (now, now, limit),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def message_for_user(self, user_id: str, message_id: str) -> dict[str, Any] | None:
+        """One message row, plus the mailbox settings needed to re-read it.
+
+        Scoped by ``user_id`` **in SQL**, not by a caller-side comparison: this
+        backs a route that takes an id straight from the browser, and "no such
+        message" and "somebody else's message" must be indistinguishable — both
+        come back as ``None`` so the route can answer 404 to either.
+
+        The join is safe to make because ``mailboxes.user_id`` is UNIQUE (one
+        mailbox per account), so it cannot multiply the row.
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT m.id, m.user_id, m.mailbox_id, m.uid_validity, m.imap_uid, m.subject,
+                          m.sender_name, m.sender_address, m.received_at, m.status, m.message_key,
+                          b.imap_host, b.imap_port, b.email AS mailbox_email, b.encrypted_password
+                     FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+                    WHERE m.id=? AND m.user_id=?""",
+                (message_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
 
     def setup_progress(self, user_id: str) -> dict[str, Any]:
         """The four things a new user has to get right, and which of them are done.
@@ -3962,9 +4027,28 @@ class Database:
     def finish_message(self, message_id: str) -> None:
         # Raw body is no longer needed after delivery. Keeping metadata and the
         # derived report allows daily summaries without retaining full mail.
+        self._finish_message_with(message_id, "sent")
+
+    def hold_message(self, message_id: str) -> None:
+        """The mail is done -- report generated -- but nothing was sent.
+
+        The owner turned report mail off. This must be its own status rather
+        than ``sent`` (nothing was sent), ``failed`` (nothing went wrong) or
+        ``skipped`` (that one means "not our mail" and is counted as such in
+        the digest and in the evidence that forwarding ever worked).
+
+        The body is wiped exactly as on delivery: not sending a report is a
+        delivery preference, never a reason to keep someone's mail.
+        """
+        self._finish_message_with(message_id, "held")
+
+    def _finish_message_with(self, message_id: str, status: str) -> None:
+        if status not in {"sent", "held"}:
+            raise ValueError("状态只能是 sent 或 held。")
         with self.connect() as connection:
             connection.execute(
-                "UPDATE messages SET status='sent',body='',next_attempt_at=NULL,last_error='' WHERE id=?", (message_id,)
+                "UPDATE messages SET status=?,body='',next_attempt_at=NULL,last_error='' WHERE id=?",
+                (status, message_id),
             )
 
     def create_report(self, *, user_id: str, message_id: str | None, kind: str, subject: str,
@@ -4059,6 +4143,38 @@ class Database:
                    JOIN profiles p ON p.user_id=u.id JOIN mailboxes m ON m.user_id=u.id
                    WHERE u.status='active' AND p.daily_enabled=1 AND m.enabled=1"""
             ).fetchall()
+        return [dict(row) for row in rows]
+
+    def failed_reports_summary(self) -> dict[str, int]:
+        """失败的报告拆成两个数：**逐封邮件的** 与 **每日简报的**。
+
+        为什么要拆：2026-09-18 用户报「后台显示 5 个报告失败，但我刷新下发情况又没有」。
+        两个数字都是对的，错的是它们被当成一回事——「下发情况」是一行一封**邮件**，
+        而每日简报按设计没有 `message_id`（它汇总一整天），所以简报失败永远不可能出现在
+        那张表里。一个数字里混着两种东西，就必然有人对不上账。
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total,"
+                " SUM(CASE WHEN kind='daily' THEN 1 ELSE 0 END) AS digests"
+                " FROM reports WHERE status='failed'").fetchone()
+        total = int(row["total"] or 0)
+        digests = int(row["digests"] or 0)
+        return {"total": total, "digests": digests, "per_mail": total - digests}
+
+    def failed_digests(self, limit: int = 20) -> list[dict[str, Any]]:
+        """失败的那几封每日简报：日期、收件地址、错误——给「下发情况」一个交代。
+
+        没有这些行，运营者能看到的只有健康卡上那个数字和一个空的列表——那正是这一轮
+        用户报上来的困惑。地址是运营者自己管的账号，缩到域名之外的完整地址只出现在
+        管理端（和邮件面板其它行一样）。
+        """
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT r.report_date, r.sent_to, r.last_error, r.created_at
+                     FROM reports r WHERE r.status='failed' AND r.kind='daily'
+                    ORDER BY r.created_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 100)),)).fetchall()
         return [dict(row) for row in rows]
 
     def daily_report_exists(self, user_id: str, report_date: str) -> bool:

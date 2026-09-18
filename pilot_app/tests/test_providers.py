@@ -32,6 +32,33 @@ class ProviderTests(unittest.TestCase):
             results = providers.web_search("tavily", "secret", "CityU communication engineering")
         self.assertEqual([item["title"] for item in results], ["good"])
 
+    # -- 「答案是被砍断的」要能从返回值里看出来 ------------------------------
+
+    def test_a_chat_answer_cut_off_at_the_cap_reports_length(self):
+        """文本本身看不出「写完了」和「被砍了」——半句译文和短信长得一样。
+
+        「看原信」的翻译要么把这件事说出来，要么用户以为信就到这里。所以
+        `Generation.finish` 把各家自己的说法归一到 `"length"`。
+        """
+        response = {"choices": [{"finish_reason": "length", "message": {"content": "半句话"}}]}
+        with mock.patch.object(providers, "_json_request", return_value=response):
+            result = providers.generate(provider="deepseek", model="deepseek-flash",
+                                        api_key="k", prompt="hello")
+        self.assertEqual(result.finish, "length")
+
+    def test_the_responses_protocol_says_it_differently(self):
+        response = {"output_text": "半句话", "incomplete_details": {"reason": "max_output_tokens"}}
+        with mock.patch.object(providers, "_json_request", return_value=response):
+            result = providers.generate(provider="openai", model="gpt-test", api_key="k", prompt="hello")
+        self.assertEqual(result.finish, "length")
+
+    def test_a_normal_stop_is_not_mistaken_for_truncation(self):
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": "完整"}}]}
+        with mock.patch.object(providers, "_json_request", return_value=response):
+            result = providers.generate(provider="deepseek", model="deepseek-flash",
+                                        api_key="k", prompt="hello")
+        self.assertEqual(result.finish, "stop")
+
 
     # -- an empty answer is a failure, not a blank report ------------------
 

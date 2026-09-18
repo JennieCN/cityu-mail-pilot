@@ -271,5 +271,188 @@ class FilenameTests(unittest.TestCase):
         self.assertTrue(re.fullmatch(r"DTSTAMP:\d{8}T\d{6}Z", stamps[0]))
 
 
+class KindAndTitleTests(unittest.TestCase):
+    def test_kind_covers_the_common_actions(self):
+        cases = {
+            "提交作业到 Canvas": "assignment",
+            "归还《计算机网络》": "library",
+            "缴纳学费": "payment",
+            "参加简历工作坊": "event",
+            "回复导师的邮件": "reply",
+            "在选课系统确认三门课": "registration",
+        }
+        for action, kind in cases.items():
+            with self.subTest(action=action):
+                self.assertEqual(tx.task_kind(task(action=action)), kind)
+
+    def test_an_unknown_action_is_other_never_invented(self):
+        self.assertEqual(tx.task_kind(task(action="做一件没法归类的事情呀")), "other")
+
+    def test_the_subject_is_a_weaker_signal_than_the_action(self):
+        self.assertEqual(tx.task_kind(task(action="阅读第 2 章", subject="图书馆逾期通知")),
+                         "other", "subject 命中而 action 不命中时，kind 不应来自 subject")
+
+    def test_pretty_title_uses_emoji_and_a_short_date(self):
+        title = tx.pretty_title(task(action="提交作业到 Canvas", deadline="9/18/2026 23:59"))
+        self.assertTrue(title.startswith("📝 "), title)
+        self.assertIn("9/18 23:59", title, "年份应当被省略")
+        self.assertNotIn("2026", title)
+
+    def test_pretty_title_keeps_the_full_text_when_the_year_is_far(self):
+        title = tx.pretty_title(task(action="提交作业", deadline="2031/9/18"))
+        self.assertIn("2031/9/18", title)
+
+    def test_pretty_title_drops_the_tag_when_the_action_states_the_deadline(self):
+        title = tx.pretty_title(task(action="阅读第 6 章（截止：2026-10-06 23:59）",
+                                     deadline="2026/10/6 23:59"))
+        self.assertEqual(title.count("截止"), 1, title)
+        self.assertNotIn("⏰", title, "已经写明截止时间的动作不再加第二份")
+
+    def test_pretty_title_still_says_the_priority(self):
+        title = tx.pretty_title(task(user_priority="high"))
+        self.assertTrue(title.startswith("📝 【急】"), title)
+
+    def test_an_unrecognised_task_gets_no_symbol_at_all(self):
+        """✅ 挂在一条**还没做完**的待办前面，读起来是「已完成」。
+
+        Production measurement (2026-09-19, 304 tasks over 7 days) put **52%** of
+        real tasks in `other`, so this is the majority case, not an edge one.
+        """
+        plain = task(action="做一件没法归类的事情呀", deadline="")
+        title = tx.pretty_title(plain)
+        self.assertFalse(title.startswith("✅"), title)
+        self.assertEqual(title, tx.line_for(plain), "认不出类型时，标题就该是那一行原文")
+
+    def test_an_unrecognised_task_is_mathematically_the_worst_case(self):
+        """The measurement behind the decision above lives here, not in a comment."""
+        definite = {kind for kind, _emoji, _keys in tx._KIND_DEFS}
+        self.assertNotIn("other", definite, "`other` 是兜底，不是词表里的一类")
+        self.assertEqual(tx._KIND_EMOJI["other"], "")
+
+    def test_only_a_recognised_kind_wears_a_hat(self):
+        self.assertTrue(tx.pretty_title(task(action="提交作业")).startswith("📝 "))
+        self.assertFalse(tx.pretty_title(task(action="随便写点什么")).startswith(" "))
+
+
+class ZoneHonestyTests(unittest.TestCase):
+    """``TZID`` 是要写进文件的结构，写错不会报错，只会让提醒差一小时。"""
+
+    def test_the_last_clock_in_the_line_wins(self):
+        """和 `reports.deadline_of` 取同一个时刻，否则 App 说 23:59、日历在中午响。"""
+        from pilot_app import reports
+
+        line = "请在 12:00 前提交，最晚 23:59 截止"
+        self.assertIn("23:59", reports.deadline_of(line))
+        self.assertEqual(tx._deadline_clock(line), (23, 59))
+
+    def test_a_dst_zone_degrades_to_all_day_instead_of_lying(self):
+        """America/New_York 在夏天比冬天早一小时；固定的 VTIMEZONE 是假话。
+
+        时区是 `index.html` 里的**自由文本输入框**（不是选项列表），所以
+        「只可能是亚洲无夏令时的时区」这个前提从来不成立。宁可退回全天事件。
+        """
+        raw = tx.build_ics([task(deadline="9/18/2026 23:59")],
+                           today=dt.date(2026, 9, 16), timezone="America/New_York")
+        lines = unfold(raw)
+        self.assertNotIn("BEGIN:VTIMEZONE", lines)
+        self.assertTrue(any(line.startswith("DTSTART;VALUE=DATE:") for line in lines), lines)
+        self.assertFalse(any(line.startswith("DTSTART;TZID=") for line in lines), lines)
+
+    def test_a_zone_that_does_not_move_still_gets_its_timed_event(self):
+        for zone in ("Asia/Hong_Kong", "Asia/Shanghai", "Asia/Tokyo"):
+            with self.subTest(zone=zone):
+                self.assertEqual(tx._safe_zone(zone), zone)
+
+
+class PublicSurfaceTests(unittest.TestCase):
+    def test_every_name_in___all___really_exists(self):
+        """`__all__` 里写错一个名字，`from … import *` 会当场 AttributeError。
+
+        第一版写了不存在的 `kind_of`，1878 条测试没有一条发现——因为没人从
+        `__all__` 那一侧读这个模块。这条测试就是那个缺口。
+        """
+        missing = [name for name in tx.__all__ if not hasattr(tx, name)]
+        self.assertEqual(missing, [], f"__all__ 里有不存在的名字：{missing}")
+
+
+class TimedEventTests(unittest.TestCase):
+    """A deadline with an explicit clock time deserves a real alarm, not a
+    badge on an all-day block -- that is the single biggest "美观" win."""
+
+    def test_a_clocked_deadline_becomes_a_timed_event_in_the_given_zone(self):
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16),
+                           timezone="Asia/Hong_Kong")
+        lines = unfold(raw)
+        self.assertIn("DTSTART;TZID=Asia/Hong_Kong:20260918T235900", lines)
+        # One hour long, same zone, same file.
+        self.assertIn("DTEND;TZID=Asia/Hong_Kong:20260919T005900", lines)
+        self.assertIn("BEGIN:VTIMEZONE", lines)
+        self.assertIn("TZID:Asia/Hong_Kong", lines)
+
+    def test_no_zone_or_no_clock_stays_all_day(self):
+        cases = [
+            ({}, "9/18/2026 23:59"),
+            ({"timezone": "Asia/Hong_Kong"}, "9月18日"),
+        ]
+        for kwargs, deadline in cases:
+            with self.subTest(kwargs=kwargs, deadline=deadline):
+                raw = tx.build_ics([task(deadline=deadline)], today=dt.date(2026, 9, 16),
+                                   **kwargs)
+                lines = unfold(raw)
+                self.assertIn("DTSTART;VALUE=DATE:20260918", lines)
+                self.assertIn("DTEND;VALUE=DATE:20260919", lines)
+
+    def test_a_bad_zone_string_degrades_to_all_day(self):
+        """A mistyped or hostile zone must neither inject structure nor 500."""
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16),
+                           timezone="Not/AZone")
+        lines = unfold(raw)
+        self.assertIn("DTSTART;VALUE=DATE:20260918", lines)
+        self.assertNotIn("BEGIN:VTIMEZONE", lines)
+
+    def test_a_deadline_without_numbers_is_never_timed(self):
+        raw = tx.build_ics([task(deadline="以邮件为准", task_day="2026-09-16")],
+                           today=dt.date(2026, 9, 16), timezone="Asia/Hong_Kong")
+        self.assertIn("DTSTART;VALUE=DATE:20260916", unfold(raw))
+
+    def test_vtimezone_is_omitted_when_nothing_is_timed(self):
+        raw = tx.build_ics([task(deadline="本周")], today=dt.date(2026, 9, 16),
+                           timezone="Asia/Hong_Kong")
+        self.assertNotIn("BEGIN:VTIMEZONE", unfold(raw))
+
+    def test_the_summary_uses_the_pretty_title(self):
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16),
+                           timezone="Asia/Hong_Kong")
+        summary = [line for line in unfold(raw) if line.startswith("SUMMARY:")][0]
+        self.assertIn("📝", summary)
+        self.assertIn("9/18 23:59", summary)
+
+    def test_categories_carry_the_kind(self):
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16))
+        categories = [line for line in unfold(raw) if line.startswith("CATEGORIES:")][0]
+        self.assertIn("作业", categories)
+        self.assertIn(tx.CALENDAR_NAME, categories)
+
+    def test_categories_is_two_values_not_one_escaped_string(self):
+        """`CATEGORIES` 的**分隔符是真逗号**，值里的逗号才转义。
+
+        第一版把拼好的整串丢进 `_escape`，于是分隔符也被转义成 `\\,`，客户端
+        只看到**一个**名字里带逗号的分类——「按类型筛选」那个卖点当场落空，
+        而 `assertIn` 式的断言两种写法都过。所以这里数**值的个数**。
+        """
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16))
+        line = [item for item in unfold(raw) if item.startswith("CATEGORIES:")][0]
+        raw_value = line.split(":", 1)[1]
+        self.assertNotIn("\\,", raw_value, f"分隔符不该被转义：{raw_value}")
+        values = [piece.strip() for piece in raw_value.split(",")]
+        self.assertEqual(values, [tx.CALENDAR_NAME, "作业"])
+
+    def test_a_hostile_zone_string_cannot_inject_structure(self):
+        hostile = "X\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nSUMMARY:evil"
+        raw = tx.build_ics([task()], today=dt.date(2026, 9, 16), timezone=hostile)
+        self.assertEqual(unfold(raw).count("BEGIN:VEVENT"), 1)
+        self.assertNotIn("SUMMARY:evil", unfold(raw))
+
+
 if __name__ == "__main__":
     unittest.main()

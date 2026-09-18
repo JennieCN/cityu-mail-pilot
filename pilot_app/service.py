@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import socket
 import time
 from typing import Any, Optional
@@ -26,9 +27,36 @@ INITIAL_LOOKBACK_HOURS = max(1, int(os.environ.get("INFE_PILOT_INITIAL_LOOKBACK_
 # making it explicit and tunable is what lets the latency work bound the
 # worst-case generation time. Raise it with INFE_PILOT_REPORT_MAX_TOKENS.
 REPORT_MAX_TOKENS = max(600, int(os.environ.get("INFE_PILOT_REPORT_MAX_TOKENS", "4000")))
+
+# 每日简报失败之后的重试节奏（秒），以及"今天最多试几次"。
+#
+# 为什么要这道闸门：2026-09-18 用户报「后台显示 5 个报告失败，但刷新下发情况又没有」，
+# 查下去发现底下压着真问题——`run_daily_due` 由主循环每 15 秒调一次，而
+# `daily_report_exists` 只认 `status='sent'`，所以一封发不出去的简报会被**每 15 秒
+# 重发一次**，一直到当天结束：一个授权码坏掉的账号，一晚上 **1185 次** SMTP 尝试
+# （而 163 回给我们的原话里就写着「IP is rejected」——我们可能正在自己把这条路走坏）。
+# 邮件那条路有重试与退避，简报这条路当时什么都没有。
+#
+# 一次失败几乎总是"这个账号自己的设置不对"（授权码错、服务商停用授权码），重试救不了它；
+# 但网络抖动值得再试。所以：5 分钟、30 分钟、2 小时，之后当天不再试，第二天日期一变
+# 就重新开始。
+DIGEST_RETRY_BACKOFF = (300, 1800, 7200)
 # The condensed first report is deliberately small; a short cap keeps a chatty
 # model from turning "brief" into another long generation.
 BRIEF_MAX_TOKENS = max(300, int(os.environ.get("INFE_PILOT_BRIEF_MAX_TOKENS", "1200")))
+# 「看原信」里的翻译/总结：预算按下限给，翻译再按原文字数放大。
+# 为什么不是固定 1500：一处真机实测——一封 6374 字的信，1500 的预算下模型
+# finish_reason=length（译文被砍在半路），按原文字数给（6374）就 finish=stop。
+# 中文译文大约是英文字数的 0.4–0.5 倍，而一个中文字≈一个 token，所以「原文字数」
+# 这个预算有一倍余量。上限是可配的：它是按次计费里最贵的一项。
+ASSIST_MIN_TOKENS = max(400, int(os.environ.get("INFE_PILOT_ASSIST_MIN_TOKENS", "1500")))
+ASSIST_MAX_TOKENS = max(ASSIST_MIN_TOKENS, int(os.environ.get("INFE_PILOT_ASSIST_MAX_TOKENS", "8000")))
+
+# 一次「翻译」最多分几段重来。超出这个数就不再切了——宁可如实说没翻出来，
+# 也不要让一次点击变成二十次模型调用。
+ASSIST_MAX_CHUNKS = 8
+# 分段翻译时每段的目标长度。
+ASSIST_CHUNK_CHARS = 1200
 
 # Only mail from these sender domains becomes a report. The user's private
 # mailbox also receives their personal mail (shopping, banks, newsletters);
@@ -128,6 +156,10 @@ class PilotService:
     def __init__(self, database: Database, secrets: SecretBox):
         self.db = database
         self.secrets = secrets
+        # (user_id, 简报日期) → (已试次数, 下次可试的 monotonic 时刻)。
+        # 存在内存里而不是库里：它只是"别把同一个错误每 15 秒重发一遍"的节流，
+        # 进程重启后多试一次无害；写进库反而要多一次迁移与一张会过期的表。
+        self._digest_retry: dict[tuple[str, str], tuple[int, float]] = {}
 
     @staticmethod
     def _model_attempts() -> int:
@@ -618,9 +650,18 @@ class PilotService:
             if not mailbox:
                 raise mailio.MailError("邮箱配置已不存在。")
             profile = self.db.get_profile(message["user_id"])
+            # 这个账号要不要收我们的邮件（一处定义：`Database.report_delivery`）。
+            # 关掉的是**投递**，不是处理：报告照生成、待办照出现、看原信与翻译总结照用，
+            # 只是不往他邮箱里发东西，收尾记 `held` 而不是 `sent`（没发就是没发）。
+            deliver = self.db.report_delivery(message["user_id"]).get("immediate", True)
             existing = self.db.report_for_message(message["id"])
             if existing and existing["status"] == "sent":
                 self.db.finish_message(message["id"])
+                return True
+            if existing and not deliver:
+                # 上一轮可能是在开关打开时生成的、还没发出去就走了。现在关掉了，
+                # 直接收尾成 held，不必再花一次模型钱。
+                self.db.hold_message(message["id"])
                 return True
             brief_mode = False
             # The user's own choice, if they made one. '' means "follow the
@@ -657,9 +698,12 @@ class PilotService:
                             timezone=(profile or {}).get("timezone"),
                         )
                         try:
-                            mailio.send_report(mailbox, self.mailbox_password(mailbox), brief_subject, brief,
-                                               html_body=brief_rendered["html"], text_body=brief_rendered["text"])
-                            logging.info("brief report sent for message %s", message["id"])
+                            if deliver:
+                                mailio.send_report(mailbox, self.mailbox_password(mailbox), brief_subject, brief,
+                                                   html_body=brief_rendered["html"], text_body=brief_rendered["text"])
+                                logging.info("brief report sent for message %s", message["id"])
+                            else:
+                                logging.info("brief report held for message %s (报告邮件已关闭)", message["id"])
                         except Exception as exc:
                             # A failed brief send must not stop the full report.
                             logging.warning("brief report failed for message %s: %s", message["id"], exc)
@@ -668,7 +712,9 @@ class PilotService:
                         brief_mode = False
                 else:
                     # Single-stage: instant rule alert, then the full report.
-                    self._send_arrival_alert(mailbox, self.mailbox_password(mailbox), message)
+                    # The alert is mail like any other, so the switch covers it.
+                    if deliver:
+                        self._send_arrival_alert(mailbox, self.mailbox_password(mailbox), message)
                     report = self._analyse(message["user_id"], payload)
                 subject = f"【AI邮件摘要】{message['subject'][:120]}"
                 report_id = self.db.create_report(
@@ -681,6 +727,12 @@ class PilotService:
             else:
                 rendered = reports.render_immediate(report, message, subject=subject,
                                                     timezone=(profile or {}).get("timezone"))
+            if not deliver:
+                # 报告已经生成（App 里的待办、按天回看、看原信都要用它），
+                # 只是按主人的选择不发邮件。收尾记 held —— 不是 sent，也不是 failed。
+                self.db.hold_message(message["id"])
+                logging.info("report held for message %s (报告邮件已关闭)", message["id"])
+                return True
             password = self.mailbox_password(mailbox)
             mailio.send_report(mailbox, password, subject, report,
                                html_body=rendered["html"], text_body=rendered["text"])
@@ -802,18 +854,44 @@ class PilotService:
             raise
 
     def run_daily_due(self) -> tuple[int, list[str]]:
+        """Send the digests that are due this pass -- with a retry budget per day.
+
+        The budget is the point (see ``DIGEST_RETRY_BACKOFF``): without it a digest
+        that cannot be delivered is retried every 15 seconds until midnight.
+        """
         sent = 0
         errors: list[str] = []
+        now = time.monotonic()
         for user in self.db.daily_users():
             due, report_date = self.daily_due(user)
             if not due:
                 continue
+            key = (user["id"], report_date)
+            attempts, ready_at = self._digest_retry.get(key, (0, 0.0))
+            if attempts > len(DIGEST_RETRY_BACKOFF) or now < ready_at:
+                continue          # 今天已经试够了，或者还在退避窗口里
             try:
                 sent += int(self.send_daily(user, report_date))
             except Exception as exc:
-                logging.exception("daily report failed for %s", user["id"])
+                # 与其它任务同一个口径：账号自己的设置不对是一行 WARNING，
+                # 想不到的才留堆栈（`log_job_failure` 是这条规则的唯一定义）。
+                log_job_failure("daily report", user["id"], exc)
                 errors.append(f"{user['id']}: {exc}")
+                delay = DIGEST_RETRY_BACKOFF[min(attempts, len(DIGEST_RETRY_BACKOFF) - 1)]
+                self._digest_retry[key] = (attempts + 1, now + delay)
+                self._prune_digest_retries(report_date)
+            else:
+                self._digest_retry.pop(key, None)
         return sent, errors
+
+    def _prune_digest_retries(self, today: str) -> None:
+        """Drop entries from older days so the map cannot grow without bound."""
+        try:
+            cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=2)).isoformat()
+        except ValueError:
+            return
+        for key in [key for key in self._digest_retry if key[1] < cutoff]:
+            self._digest_retry.pop(key, None)
 
     def test_model(self, user_id: str) -> str:
         connection = self.model_connection(user_id)
@@ -846,3 +924,164 @@ class PilotService:
         # the UI, avoiding an unexpected outbound email from a connection test.
         validity, _, _ = mailio.fetch_new_messages({**mailbox, "last_uid": 2**31 - 1}, self.mailbox_password(mailbox))
         return {"imap": "ok", "uid_validity": validity}
+
+    def read_original(self, user_id: str, message_id: str) -> dict[str, Any]:
+        """Read one original mail back from the mailbox, read-only, on demand.
+
+        The body was wiped when the report went out (the privacy policy says so,
+        and ``Database.finish_message`` is where it happens), so this cannot be
+        answered from our own tables — it goes back to the mailbox for that one
+        message and keeps nothing.
+
+        **This method is the one place that could quietly make the privacy
+        promise untrue.** Nothing here may write: no cache, no copy in the row,
+        no body in a log line. If a future change wants to "speed this up by
+        caching it", that is a privacy decision, not an optimisation.
+        """
+        row = self.db.message_for_user(user_id, message_id)
+        if not row:
+            raise KeyError(message_id)
+        config = {"imap_host": row["imap_host"], "imap_port": row["imap_port"], "email": row["mailbox_email"]}
+        return mailio.fetch_message_by_uid(config, self.mailbox_password(row), int(row["imap_uid"]),
+                                           uid_validity=row.get("uid_validity") or "")
+
+    ASSIST_KINDS = ("translate", "summary")
+
+    # 中文（含中日韩标点之外的字）在整段文字里的占比。用来判断「模型到底说中文了没有」。
+    _CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+    @classmethod
+    def _cjk_ratio(cls, text: str) -> float:
+        value = str(text or "")
+        return len(cls._CJK.findall(value)) / len(value) if value else 0.0
+
+    @classmethod
+    def _assist_unanswered(cls, body: str, answer: str) -> bool:
+        """模型是不是**没回答这个任务**（把原文抄了回来，或者用英文写了一段）。
+
+        这不是杞人忧天：真机上抓到过整整 5 封里的 2 封——「翻译」原样返回英文原文，
+        「总结」返回一段英文摘录。两种情况下界面都会显示得像成功，用户点开一看是英文，
+        那就是**用成功的样子骗人**。判据只用两个比值，不猜内容：
+
+        * 原文本身就是中文（占比 ≥ 0.10）时**不判**——抄回来在那种情况下是对的；
+        * 其余情况：答案里的中文占比要 ≥ 0.20，或者明显比原文高（+0.10），
+          否则算没回答。第二条是给「原文大半是链接/表格」那种信留的余地。
+        """
+        source_ratio = cls._cjk_ratio(body)
+        if source_ratio >= 0.10:
+            return False
+        answer_ratio = cls._cjk_ratio(answer)
+        if answer_ratio >= 0.20:
+            return False
+        if answer.strip() and answer.strip() != body.strip() and answer_ratio >= source_ratio + 0.10:
+            return False
+        return True
+
+    @staticmethod
+    def _assist_budget(kind: str, body: str) -> int:
+        """这一次要给模型多少输出预算（见 ASSIST_MIN_TOKENS 上面那段实测）。"""
+        if kind != "translate":
+            return ASSIST_MIN_TOKENS
+        return max(ASSIST_MIN_TOKENS, min(ASSIST_MAX_TOKENS, len(body)))
+
+    @staticmethod
+    def _assist_chunks(body: str, size: int = ASSIST_CHUNK_CHARS) -> list[str]:
+        """按空行把正文切成几段（不切断段落），每段约 ``size`` 字。
+
+        这是「整封翻不动」时的最后一招：同一段文字，整封发过去模型会照抄，
+        拆成小段它就翻（真机上 2 封顽固的信、13 段全部翻出来了）。
+        """
+        pieces: list[str] = []
+        current = ""
+        for block in str(body or "").split("\n\n"):
+            block = block.strip("\n")
+            if not block:
+                continue
+            while len(block) > size * 2:            # 单个超长段落只能硬切
+                pieces.append(block[:size])
+                block = block[size:]
+            if current and len(current) + len(block) + 2 > size:
+                pieces.append(current)
+                current = block
+            else:
+                current = f"{current}\n\n{block}" if current else block
+        if current:
+            pieces.append(current)
+        return pieces
+
+    def _assist_call(self, user_id: str, message_id: str, model: dict, kind: str, body: str,
+                     *, plain: bool = False, budget: int | None = None) -> tuple[str, str, bool]:
+        """调一次模型，记一次用量。返回（文本, finish_reason, 是否截断）。"""
+        result = self._generate_with_retry(
+            user_id,
+            provider=model["provider"], model=model["model"], base_url=model["base_url"],
+            api_key=self.connection_key(model),
+            prompt=prompts.assist_prompt(kind, body, plain=plain),
+            config=json.loads(model.get("config_json") or "{}"),
+            max_output_tokens=budget or self._assist_budget(kind, body), native_search=False,
+        )
+        self._record_usage(user_id, f"assist-{kind}", model, result.usage, message_id=message_id)
+        return (result.text or "").strip(), str(getattr(result, "finish", "") or ""), getattr(result, "finish", "") == "length"
+
+    def assist(self, user_id: str, message_id: str, kind: str) -> dict[str, Any]:
+        """翻译 / 总结**这一封原信**，按需、不保存。
+
+        和「看原信」共用同一条取信路径（`read_original`：只读、核 UIDVALIDITY、不落库），
+        多出来的一步是把正文发给模型。这一步**用户点一次才发生一次**，而且它有两重代价：
+        钱（走平台 key 时是运营者出）和正文离开我们的服务器（隐私政策里「正文会发给模型
+        服务商」那一段同样适用）。所以三条规矩：
+
+        ① **结果不写库**——只回给这一次请求，关掉就没了；正文也不写进任何一行；
+        ② 走**同一个**连接选择（用户自己的 key 优先）与**同一个**熔断器，不另开一条通道；
+        ③ 用量照记（`_record_usage`），否则「我用了多少」那个面板会开始说假话。
+
+        另外两条是从真机上学的（第一版没有，于是「翻译」把英文原文抄回来还报成功）：
+
+        * **答复要检查**（`_assist_unanswered`）：没翻出来就换一种说法再问一次，
+          再不行就分小段翻，都不行就如实说「这次没翻出来」——**绝不把原文当译文递给用户**；
+        * **译文被砍了要说**：预算不够时模型会 `finish_reason=length`，界面要写清
+          「可能被截断」，而不是让用户以为信就到这里。
+        """
+        if kind not in self.ASSIST_KINDS:
+            raise ValueError("不支持的助手动作。")
+        # 取不到就照实把状态（gone/moved）交回给路由，和「看原信」说一样的话。
+        fetched = self.read_original(user_id, message_id)
+        if fetched.get("state") != "ok":
+            return fetched
+        body = prompts.assist_body(fetched.get("message") or {})
+        model = self.model_connection(user_id)
+        if not model:
+            raise providers.ProviderError("还没有配置 AI 模型——先在「设置」里选一个，或让管理员配平台 key。")
+        where = f'{model["provider"]} / {model["model"]}'
+
+        text, finish, clipped = self._assist_call(user_id, message_id, model, kind, body)
+        note = ""
+        if self._assist_unanswered(body, text):
+            # 第二种说法：不提「邮件」，只当一段文字。实测这一换能把顽固的信翻出来。
+            text, finish, clipped = self._assist_call(user_id, message_id, model, kind, body, plain=True)
+            if self._assist_unanswered(body, text) and kind == "translate":
+                # 最后一招：分段翻再拼起来。整封翻不动时，小段是翻得动的。
+                pieces = self._assist_chunks(body)[:ASSIST_MAX_CHUNKS]
+                translated, failed = [], 0
+                for piece in pieces:
+                    part, _, part_clipped = self._assist_call(
+                        user_id, message_id, model, kind, piece, plain=True)
+                    if self._assist_unanswered(piece, part):
+                        failed += 1
+                    translated.append(part)
+                    clipped = clipped or part_clipped
+                if len(pieces) > 1 and failed < len(pieces):
+                    text = "\n\n".join(translated)
+                    note = "这封信太长，是分段翻译后拼起来的。"
+                    if failed:
+                        note = f"这封信太长，是分段翻译后拼起来的；有 {failed} 段没翻出来。"
+                else:
+                    text = ""
+            if self._assist_unanswered(body, text):
+                # 三种说法都没换来中文。**不把原文当译文**：说清这次没成，原文就在上面。
+                return {"state": "unanswered", "kind": kind, "text": "", "model": where,
+                        "note": "这次没翻出来：模型把原文抄了回来。可以再点一次，或者直接看上面的原文。"}
+        if clipped:
+            note = (note + " " if note else "") + "译文可能被截断（模型输出到了上限），再点一次通常能拿全。"
+        return {"state": "partial" if note else "ok", "kind": kind, "text": text,
+                "model": where, "note": note}

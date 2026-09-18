@@ -305,12 +305,20 @@ class Generation:
     ``usage`` carries whatever token accounting the provider returned, so the
     latency work can tell "the model is thinking" apart from "the model is
     writing a very long answer" without guessing.
+
+    ``finish`` is the provider's own stop reason when it gave one. It is here
+    because "the answer ended" and "the answer was cut off at the output cap"
+    look identical in the text alone -- a translation that stops mid-sentence
+    reads like a short mail. ``length`` is the one value callers act on: the
+    budget ran out, which is worth saying out loud instead of quietly handing
+    the user half a translation.
     """
 
     text: str
     sources: list[dict[str, str]]
     search_mode: str = "none"
     usage: dict[str, Any] | None = None
+    finish: str = ""
 
 
 _USAGE_KEYS = (
@@ -548,7 +556,11 @@ def generate(
         )
         text = _openai_text(response)
         if text:
-            return Generation(text, _openai_sources(response) if use_search else [], mode, extract_usage(response))
+            # Responses 协议没有 finish_reason，只有「为什么这轮没做完」。
+            stop = str((response.get("incomplete_details") or {}).get("reason") or "")
+            return Generation(text, _openai_sources(response) if use_search else [], mode,
+                              extract_usage(response),
+                              "length" if stop == "max_output_tokens" else stop)
     elif preset.protocol in {"openai_chat", "azure_openai"}:
         if preset.protocol == "azure_openai":
             api_version = str(config.get("api_version") or "2024-10-21")
@@ -610,7 +622,7 @@ def generate(
                 "请求里要带 thinking: {\"type\": \"disabled\"}；或大幅提高输出上限。不换模型也能修。"
             )
         if text:
-            return Generation(text, [], "none", extract_usage(response))
+            return Generation(text, [], "none", extract_usage(response), str(choice.get("finish_reason") or ""))
         raise ProviderError(
             f"模型返回了空正文（finish_reason={choice.get('finish_reason')!r}）；"
             "请检查模型名是否与供应商提供的名称一致。"
@@ -630,7 +642,10 @@ def generate(
         response = _json_request(url, headers=headers, payload=payload, timeout=MODEL_TIMEOUT_SECONDS)
         text = _anthropic_text(response)
         if text:
-            return Generation(text, _anthropic_sources(response) if use_search else [], mode, extract_usage(response))
+            # 各家把「撞到输出上限」叫得不一样，这里统一成 "length"——调用方只认这一个值。
+            stop = response.get("stop_reason")
+            return Generation(text, _anthropic_sources(response) if use_search else [], mode,
+                              extract_usage(response), "length" if stop == "max_tokens" else str(stop or ""))
     elif preset.protocol == "gemini":
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -646,7 +661,9 @@ def generate(
         )
         text = _gemini_text(response)
         if text:
-            return Generation(text, _gemini_sources(response) if use_search else [], mode, extract_usage(response))
+            stop = ((response.get("candidates") or [{}])[0].get("finishReason"))
+            return Generation(text, _gemini_sources(response) if use_search else [], mode,
+                              extract_usage(response), "length" if stop == "MAX_TOKENS" else str(stop or ""))
     raise ProviderError("模型 API 没有返回可用文本；请检查模型名和接口类型。")
 
 

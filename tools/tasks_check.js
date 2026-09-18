@@ -64,6 +64,30 @@ const doneTexts = (page) => page.$$eval('#tasks-done li .task-action', (nodes) =
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(overflow <= 1, '360px 无横向溢出', `溢出 ${overflow}px`);
+
+  // -- 看原信：当场回邮箱取一封 -------------------------------------------
+  // 这个夹具的邮箱是假的（`imap_host='h'`、授权码是占位字节），所以这里**取不到是应该的**。
+  // 要验的正是「取不到时也不许难看」：面板要打开、要说清为什么、要给出下一步，
+  // 而且不能假装成功——真取到正文的那条路在 demo_check 里（演示夹具带示例原文）。
+  const original = page.locator('#tasks li button', { hasText: '看原信' }).first();
+  check(await original.count() === 1, '任务上还有一颗「看原信」', `${await original.count()} 颗`);
+  if (await original.count()) {
+    // 主按钮必须还是原来那颗：看原信是次要入口，不能把它挤走（用户每天点的是它）。
+    check((await button.innerText()).includes('处理好了'), '「看原信」没有把主按钮挤走');
+    await original.click();
+    await page.waitForSelector('#original:not(.hidden)', { timeout: 10000 });
+    await page.waitForFunction(
+      () => !/正在/.test(document.getElementById('original-title').textContent || ''),
+      null, { timeout: 30000 }).catch(() => {});
+    const panel = await page.innerText('#original');
+    check(/取不到|出错/.test(panel), '邮箱连不上时，面板照实说取不到（不是一直转圈）',
+      (panel.match(/[^\n]*(取不到|出错)[^\n]*/) || [''])[0].slice(0, 70));
+    check(!/HTTP \d/.test(panel), '给的是人话，不是一个 HTTP 码', panel.slice(0, 60).replace(/\n/g, ' '));
+    check(/从我们服务器上删掉/.test(panel), '并且说明为什么只能现取（正文不在我们这儿）');
+    await page.click('#original-close');
+    await page.waitForTimeout(200);
+    check(await page.locator('#original').isHidden(), '关闭按钮能关掉面板');
+  }
   // 让这个夹具变成「一个配好了、今天有事要做的人」：顶部那张卡（「你的下一步」）
   // 也是一张**按配置递进**的卡 —— 资料没填就显示「先补充个人资料」，于是这里永远
   // 量不到「今天有 N 件事要处理」那一支。填上资料与模型（邮箱在种子里已经验证过），
@@ -283,6 +307,10 @@ const doneTexts = (page) => page.$$eval('#tasks-done li .task-action', (nodes) =
   const lines = copied.split('\n').filter(Boolean);
   check(lines.length === selected && lines.every((line) => line.startsWith('- [ ] ')),
     '「复制成清单」给出的是每行一条、可以直接粘进提醒事项的文本', copied.slice(0, 60));
+  // 日历标题里有 emoji 和 ⏰，**清单里不该有**：这一行会被粘进别人的提醒事项，
+  // 而 `export_title` 曾经指到美化标题上（2026-09-19 评审发现）。emoji 只属于日历。
+  check(!/\p{Extended_Pictographic}|\u23F0/u.test(copied),
+    '复制出来的清单是纯文本，不带日历标题的 emoji / 闹钟', copied.slice(0, 60));
 
   await page.reload({ waitUntil: 'load' });
   await page.waitForSelector('#dashboard:not(.hidden)', { timeout: 15000 });

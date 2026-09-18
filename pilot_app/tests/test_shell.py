@@ -414,6 +414,73 @@ class ShellMarkupTests(unittest.TestCase):
                              f"{token} 应该在 5 个主题里各定义一次")
 
 
+class MailPathBlockTests(unittest.TestCase):
+    """「你的邮件走这条路」——把三段链路各自的**主人**写在用户看得见的地方。
+
+    这一屏是从真实的客服对话里长出来的：用户问「为什么两个邮箱都收到」「关了会怎样」
+    「不用收那么多邮件还要有提醒」，其实都是同一件事——这条链路是隐形的。所以每一段
+    都必须写出**谁决定**，而且指向的控件要真的存在（说"你决定"却在界面上找不到按钮，
+    比不说更糟）。开关本身在别的测试里；这里钉的是"话与控件对得上"。
+    """
+
+    def _block(self) -> str:
+        """这一块 HTML（从 id 到它后面第一排按钮为止）。"""
+        start = INDEX.index('id="mail-path"')
+        return INDEX[start:INDEX.index('<div class="actions">', start)]
+
+    def test_it_lives_in_the_same_section_as_the_switches_it_points_at(self):
+        block = self._block()
+        section = INDEX[INDEX.index('id="section-reports"'):]
+        for anchor in ('id="pause"', 'id="resume"', 'id="panel-report-mail"'):
+            self.assertIn(anchor, section, anchor)
+        self.assertIn("暂停服务", block)
+        self.assertIn("要不要收到报告邮件", block)
+
+    def test_every_segment_says_who_decides(self):
+        block = self._block()
+        self.assertEqual(block.count('class="who'), 3, "三段链路，每段一个「谁决定」")
+        self.assertEqual(block.count("这一段由你决定"), 2, "转发规则与报告邮件都由用户决定")
+        self.assertIn("这一段由这个 App 决定", block, "只看邮箱这一段是我们的开关")
+
+    def test_it_says_out_loud_that_we_cannot_change_the_forwarding_rule(self):
+        block = self._block()
+        self.assertIn("我们改不了它", block)
+        self.assertIn("也读不到学校邮箱", block)
+
+    def test_it_says_where_the_reminder_comes_from(self):
+        """用户最容易被误导的一句：以为关掉收信还能收到提醒。"""
+        self.assertIn("学校不转发，我们就看不见，也就没有提醒", self._block())
+
+    def test_it_keeps_the_two_promises_the_reader_panel_also_makes(self):
+        block = self._block()
+        self.assertIn("只读", block)
+        self.assertIn("从不删信", block)
+
+    def test_it_uses_theme_variables_not_hardcoded_colours(self):
+        """主题是变量块，组件规则里写死颜色会在另外两个主题下变成看不见的字。"""
+        style = INDEX[INDEX.index(".mailpath{"):INDEX.index(".mailpath .foot")]
+        self.assertIn("var(--", style)
+        self.assertNotRegex(style, r"#[0-9a-fA-F]{3,6}", style)
+
+    def test_the_tag_colour_means_one_thing_only(self):
+        """强调色只用来标「你能改的」两段。
+
+        第一版给「这一段由你决定」上了绿色（`--ok`）——截图上一眼就能看出问题：
+        绿在这里会被读成「这样是好的」，而它其实只是在说「这个开关在你手里」。
+        所以：`mine`（你决定）用强调色，`ours`（我们的开关）保持中性、不加底色。
+        """
+        style = INDEX[INDEX.index(".mailpath .who{"):INDEX.index(".mailpath .foot")]
+        self.assertIn(".mailpath .who.mine{color:var(--blue)", style)
+        self.assertNotIn("--ok", style, "标签不用「正常/成功」那种颜色表示「谁决定」")
+        self.assertNotIn(".who.ours{color:var(--blue)", style)
+
+    def test_the_demo_shows_the_same_block(self):
+        """只读演示用的是同一个外壳与同一个 index.html —— 这一屏没有接口依赖，
+        所以它在演示里必须原样出现（演示少一块就会让人以为正式版也没有）。"""
+        self.assertIn('id="mail-path"', INDEX)
+        self.assertNotIn('api(', self._block(), "静态说明不该发请求")
+
+
 class AnnouncementModalPlacementTests(unittest.TestCase):
     """广播对话框住在哪一层 —— 这个「住在哪里」是一个功能。
 

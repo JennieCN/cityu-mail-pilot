@@ -2094,6 +2094,27 @@ class AdminTests(unittest.TestCase):
         self.assertIn("ok=1", entries[0]["detail"])
 
 
+class FailedReportWordingTests(unittest.TestCase):
+    """面板上的两个数必须能对上账（用户报过一次对不上）。
+
+    「失败报告 5 份」与「下发情况」是两张不同的表：前者含每日简报，后者一行一封邮件。
+    测试钉的是**话有没有说清**——数字本身由 `test_service.FailedReportAccountingTests` 管。
+    """
+
+    def test_the_health_card_separates_the_two_kinds_of_failure(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        app_js = (root / "pilot_app" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("failed_reports_digests", app_js)
+        self.assertIn("逐封邮件", app_js)
+        self.assertIn("每日简报", app_js)
+
+    def test_the_mail_list_says_why_a_digest_failure_is_not_in_it(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        app_js = (root / "pilot_app" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("failed_digests", app_js)
+        self.assertIn("不对应某一封邮件，所以不在上面的列表里", app_js)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -33,6 +33,15 @@ CAPTURED_ON = "2026-09-16"
 # guessed: a section that cannot be shown honestly is not shown at all.
 PATHS: tuple[str, ...] = ['/api/me', '/api/catalog', '/api/dashboard', '/api/tasks', '/api/reports']
 
+# 「看原信」是**按邮件 id 取**的接口，没法写成一个固定路径。真接口要回用户邮箱现取一封，
+# 而演示既没有邮箱、也不该联网——所以这里给演示任务里出现过的每个 id 造一份**示例原文**
+# （见 `originals()`）：主题与发件人跟任务对得上，正文里明说这是演示数据。
+ORIGINAL_PREFIX = "/api/messages/"
+ORIGINAL_SUFFIX = "/original"
+
+# 真实使用时这句是「实时从你的邮箱读取，服务器不留存」；演示里必须换成实话。
+ORIGINAL_DEMO_NOTE = "（演示数据：这里显示的是一封示例来信。真实使用时，它是你邮箱里那一封的正文。）"
+
 # The sections whose data is in the fixture. The console hides the rest in demo
 # mode instead of opening a screen that would render an error.
 SECTIONS: tuple[str, ...] = ("dashboard", "reports")
@@ -82,14 +91,74 @@ def shift(text: str, delta: int) -> str:
 
 def payload(now: dt.datetime | None = None) -> dict[str, Any]:
     """The whole fixture, dated as of ``now``."""
-    return json.loads(shift(_FIXTURE_JSON, days_since_capture(now)))
+    fixture = json.loads(shift(_FIXTURE_JSON, days_since_capture(now)))
+    return _with_report_mail_channel(fixture)
+
+
+# 首页那张卡的「报告邮件」一格是 v0.63.85 加的，而夹具是**冻结的**（CAPTURED_ON 那天
+# 抓的），所以它里面没有这一格。两个选择：把这一个字段塞进那一大块 JSON，或者从夹具里
+# **推**出来——和 `originals()` 同一个理由：手抄的第二份迟早跟源数据对不上（这里就是
+# 把开关的两个值抄两遍）。所以按夹具自己的 immediate/daily 算出来。
+# 真的接口算同一件事的地方是 `web.build_dashboard`；`test_demo` 有一条测试盯着
+# 「前端渲染的每一格，夹具里都得有」，防止下次再加一格时演示默默少一块。
+def _with_report_mail_channel(fixture: dict[str, Any]) -> dict[str, Any]:
+    dashboard = fixture.get("/api/dashboard")
+    if not isinstance(dashboard, dict):
+        return fixture
+    channels = dashboard.get("channels")
+    if not isinstance(channels, dict) or "report_mail" in channels:
+        return fixture
+    today = dashboard.get("today") or {}
+    immediate = today.get("immediate_enabled", True)
+    daily = today.get("daily_enabled", True)
+    detail = ("即时摘要与每日简报都会发到你的邮箱。"
+              if (immediate and daily) else
+              ("只发每日简报，即时摘要已关闭。" if daily else
+               ("只发即时摘要，每日简报已关闭。" if immediate else
+                "已关闭：报告照常生成，只在 App 里看，不发邮件。")))
+    channels["report_mail"] = {"state": "ok" if (immediate or daily) else "optional",
+                               "detail": detail, "label": "报告邮件"}
+    return fixture
+
+
+def originals(fixture: dict[str, Any]) -> dict[str, Any]:
+    """Agent「看原信」的演示条目，一个任务 id 一份。
+
+    从夹具**推**出来而不是另写一份：手写的第二份迟早跟任务对不上（主题改了、
+    id 换了），而那时演示里点开的是「另一封信」——比没有这个功能更糟。
+    """
+    tasks = (fixture.get("/api/dashboard") or {}).get("tasks") or []
+    entries: dict[str, Any] = {}
+    for task in tasks:
+        message_id = str(task.get("message_id") or "")
+        if not message_id or message_id in entries:
+            continue
+        subject = str(task.get("subject") or "（无主题）")
+        sender = str(task.get("sender") or "演示发件人")
+        action = str(task.get("action") or "")
+        entries[f"{ORIGINAL_PREFIX}{message_id}{ORIGINAL_SUFFIX}"] = {
+            "ok": True,
+            "live": False,          # 演示里**不是**实时读取，界面据此换一句话
+            "subject": subject,
+            "sender_name": sender,
+            "sender_address": "student@my.cityu.edu.hk",
+            "received": task.get("received") or (fixture.get("/api/dashboard") or {}).get("generated_at", ""),
+            "body": (f"{subject}\n\n" + (f"{action}\n\n" if action else "")
+                     + "这是一封用于演示的来信正文。真实使用时，这里显示的是你邮箱里那一封的原文，"
+                       "我们只是当场读了一遍——不复制、不保存。\n\n" + ORIGINAL_DEMO_NOTE),
+            "truncated": False,
+            "webmail": "",          # 演示里没有「去邮箱里看」的地址
+        }
+    return entries
 
 
 def responses(now: dt.datetime | None = None) -> dict[str, Any]:
     """Exactly what ``window.PILOT_DEMO`` carries to the browser."""
+    fixture = payload(now)
+    fixture.update(originals(fixture))
     return {
         "readOnly": True,
         "capturedOn": CAPTURED_ON,
         "sections": list(SECTIONS),
-        "responses": payload(now),
+        "responses": fixture,
     }

@@ -156,6 +156,66 @@ def immediate_prompt(profile: dict[str, Any], message: dict[str, Any], search_re
     )
 
 
+# 「看原信」里的两个按需动作。和报告不一样：**不做相关性判断、不查资料、不给建议**——
+# 用户只是想看懂手上这一封。所以输入只有这一封信，输出也只要这一封信的内容。
+#
+# ## 为什么指令只有一行（2026-09-18 真机实测，别再把规则表加回来）
+#
+# 第一版是一份五条要求的规则表（「只翻译，不总结」「逐段对应」「原样保留」…），
+# 在**真信**上它会翻车，而且翻车的样子很安静：模型把原文**一字不差地抄回来**当当译文。
+# 5 封真信上量过（temperature 0，可复现）：
+#
+#   五条规则 + JSON 正文      第 1 封逐字节相同；第 2 封中日韩字符占比 0.04
+#   去掉其中任意一条          仍然照抄（不是某一条的错）
+#   换一份「完整、不要漏段」  第 1 封 0.05 —— 措辞换了，行为没变
+#   一句话指令 + 裸正文       5 封全部 0.47–0.59，finish=stop
+#
+# 结论：**「不要漏段 / 不要概括 / 逐段对应 / 原样保留」这类话会让它改用「照抄」来保证
+# 什么都不丢。**指令越短越像「翻译」，越长越像「复述」。所以：
+#   ① 指令一行；
+#   ② 正文不再塞进 JSON（JSON 外壳 + 长指令的组合实测最不稳定，第 1 封 0.09）；
+#   ③ 要求「保持原样」的那句挪到正文**后面**一句话（5 封 0.44–0.58，安全）；
+#   ④ `<UNTRUSTED_EMAIL>` 记号留着（与报告同一个口径），实测不影响翻译。
+#
+# 丢掉的「信里没写就写不知道」那条要求由界面补上：原文就在译文上面一屏，
+# 用户随时能自己看一眼。**要改这段提示词，先拿 5 封真信量一遍**——
+# 单测只拦得住形状，拦不住「它把原文抄回来了」。
+ASSIST_INSTRUCTIONS = {
+    "translate": "把下面这封邮件翻译成中文，只给译文：",
+    "summary": "把这封邮件用中文概括成不超过 5 条要点，每行以「- 」开头：",
+}
+
+# 第一条指令没翻出来时的**第二种说法**：不提「邮件」，只当一段文字处理。
+ASSIST_PLAIN_INSTRUCTIONS = {
+    "translate": "把下面这段英文翻译成中文，只给译文：",
+    "summary": "用中文列出下面这段内容的要点，每行以「- 」开头：",
+}
+
+# 收尾的一句。放在正文**之后**——同一句话放在前面会把模型带回「照抄」。
+ASSIST_FOOTNOTES = {
+    "translate": "（原文里的日期、金额、课程代码、链接保持原样，不要换算。）",
+    "summary": "",
+}
+
+
+def assist_body(message: dict[str, Any], limit: int = 12000) -> str:
+    """这一封信的正文，按模型那条路的口径截断。"""
+    return _text(message.get("body"), limit)
+
+
+def assist_prompt(kind: str, body: str, *, plain: bool = False) -> str:
+    """一次「翻译」或「总结」的提示词。
+
+    正文用 ``<UNTRUSTED_EMAIL>`` 包起来，与报告那条路同一个口径：**邮件内容是别人的
+    文字**，模型不该把里面的话当成指令（提示注入）。上面那段注释解释了为什么指令只有
+    一行、以及为什么收尾那句在正文后面。
+    """
+    head = (ASSIST_PLAIN_INSTRUCTIONS if plain else ASSIST_INSTRUCTIONS)[kind]
+    footnote = "" if plain else ASSIST_FOOTNOTES.get(kind, "")
+    prompt = f"{head}\n\n<UNTRUSTED_EMAIL>\n{body}\n</UNTRUSTED_EMAIL>"
+    return f"{prompt}\n\n{footnote}" if footnote else prompt
+
+
 def daily_prompt(profile: dict[str, Any], report_date: str, partial_reports: list[str]) -> str:
     """Prompt for a model-written daily brief.
 

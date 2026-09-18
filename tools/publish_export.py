@@ -31,7 +31,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -138,6 +140,16 @@ INCLUDE_DOCS = (
     # worth more to them than the workaround alone. Addresses are redacted by
     # hand -- the export gate knows the operator's own addresses, not a user's.
     "docs/imap-id-163-2026-09-18.md",
+    # 日历待办的纯规则美化（v0.63.89）：由一次**直接推到公开 main** 的贡献并入，
+    # 评审后改了四处。文档里同时留下了生产实测（304 条任务里 52% 落到「其他」、
+    # 12% 会变成定时事件）——那些数字就是「为什么这么做」的答案。跟着一起公开的
+    # 还有 100 条案例表 `tools/taskexport_batch_check.py`：工具会出去，它的说明
+    # 不出去就是公开树里的死引用。规矩不变：新文件默认不公开，要显式列在这里。
+    "docs/calendar-task-beautify-2026-09-18.md",
+    # 同一位贡献者留下的调研（Jev 决策层值不值）。它已经随那次直接推送公开了，
+    # 内容里没有秘密（导出闸门逐字扫过：无生产 IP、无真实邮箱、无密钥）。与其在
+    # 下一次发布时**悄悄删掉别人的文档**，不如显式承认它在这里。
+    "docs/jev-decision-layer-cost-test-2026-09-17.md",
 )
 
 # Never published, whatever else says otherwise. Each line is a reason.
@@ -166,6 +178,13 @@ EXCLUDE_NAMES = {
     "test_handoff.py",         # tests that tool, so it cannot run without it
     "post_first_notice.py",    # hardcodes the operator's address
     "make_design_options.py",  # HTML mocks built from real pilot rows
+    # 飞书命令台：**不是这个 app 的一部分**（用户 2026-09-18 原话）。它是「人给
+    # agent 派活」的通道，连的是运营者自己的群，跟本产品无关。按**文件名**排除而
+    # 不是按路径——放在树里哪个位置都不该跟着公开树出去。`test_ci` 盯着这份名单。
+    "feishu_console.py",
+    "test_feishu_console.py",
+    "feishu-console",
+    ".lark-console",           # 运行状态：真实群消息的收件箱与游标
 }
 
 EXCLUDE_SUFFIXES = (".pyc", ".sqlite3", ".sqlite3-shm", ".sqlite3-wal")
@@ -292,6 +311,9 @@ SAFE_DOMAINS = (
     r"^(?:[a-z0-9-]+\.)*cityu\.edu\.hk$",
     r"^smtp\d+\.ad\.cityu\.edu\.hk$",
     r"^notcityu\.edu\.hk$",                       # anti-spoofing test look-alikes
+    # 同类：`webmail_home` 必须按域名边界匹配，`notqq.com` 就是拿来测这条边界的
+    # 虚构域名（它**不是** QQ 邮箱）。测试在 test_read_original.WebmailHomeTests。
+    r"^notqq\.com$",
     r"^[a-z0-9.-]*cityu\.edu\.hk\.evil\.com$",
     r"^(?:mail\.grammarly\.com|codefinity\.com|fairwood\.com\.hk|accountprotection\.microsoft\.com)$",
     r"^other\.edu$",
@@ -445,9 +467,65 @@ def iter_files() -> list[Path]:
     return sorted(set(chosen))
 
 
+# 发布与保存是两件事。工作区里可能正躺着**另一个人写了一半的东西**（本仓库同时有两个
+# agent 在改），而公开树是给外面的人看的承诺——它应该是「提交过的状态」，不是「此刻磁盘
+# 上的样子」。2026-09-18 真的发生过一次：一次推送把另一个会话没写完的文档一起带了出去，
+# 闸门（凭据/隐私）都过了，所以没有人会发现。
+#
+# 做法是**闸门而不是架构**：仍然按策略导出工作区的文件，但导出前先问一次 git——
+# 「要公开的这些路径里，有没有和 HEAD 不一样的？」有就拒绝，并列出是哪些，让人自己决定
+# （提交它，或者明确带 PILOT_PUBLISH_ALLOW_DIRTY=yes 表示「我知道，就要这样推」）。
+DIRTY_OVERRIDE_ENV = "PILOT_PUBLISH_ALLOW_DIRTY"
+
+
+def _git(*args: str) -> tuple[int, str]:
+    try:
+        result = subprocess.run(("git", *args), cwd=ROOT, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+    return result.returncode, result.stdout
+
+
+def dirty_published_paths(files: list[pathlib.Path]) -> list[str]:
+    """要公开的文件里，哪些与 HEAD 不一致（改动/新增/删除/重命名）。
+
+    没有 git、或者根本不在仓库里时返回空表：这个闸门是**加分项**，不该让一个不带 git 的
+    环境无法发布（公开仓库本身可以只是一个导出目录）。
+    """
+    code, _ = _git("rev-parse", "--is-inside-work-tree")
+    if code != 0:
+        return []
+    code, porcelain = _git("status", "--porcelain", "--untracked-files=all", "--", ".")
+    if code != 0:
+        return []
+    published = {str(item) for item in files}
+    dirty: set[str] = set()
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        entry = line[3:].strip().strip('"')
+        if " -> " in entry:                      # 重命名：两边都算
+            for part in entry.split(" -> "):
+                if part.strip().strip('"') in published:
+                    dirty.add(part.strip().strip('"'))
+            continue
+        if entry in published:
+            dirty.add(entry)
+    return sorted(dirty)
+
+
 def build(out_dir: Path, rules, forbidden: list[str] | None = None) -> int:
     files = iter_files()
     forbidden = forbidden or []
+    if os.environ.get(DIRTY_OVERRIDE_ENV, "") != "yes":
+        dirty = dirty_published_paths(files)
+        if dirty:
+            print("拒绝导出——这些**要公开**的文件和最后一次提交不一样：", file=sys.stderr)
+            for name in dirty:
+                print(f"  {name}", file=sys.stderr)
+            print("\n公开树应当是「提交过的状态」：先 `git add` + `git commit` 再导出；"
+                  f"确实要推未提交的内容，就带 {DIRTY_OVERRIDE_ENV}=yes 再跑一次。", file=sys.stderr)
+            return 3
     scrubbed: dict[str, int] = {}
     problems: list[str] = []
     exempted: list[str] = []
@@ -508,9 +586,12 @@ def build(out_dir: Path, rules, forbidden: list[str] | None = None) -> int:
     # whose output nobody reads. The prose lives in its own file.
     manifest = [f"{digest}  {name}" for name, digest in sorted(written)]
     (out_dir / "PUBLISH-MANIFEST.txt").write_text("\n".join(manifest) + "\n", encoding="utf-8")
+    code, head = _git("rev-parse", "--short", "HEAD")
+    commit_line = f"提交：{head.strip()}\n" if code == 0 and head.strip() else "提交：（这个环境里没有 git 信息）\n"
     (out_dir / "PUBLISH-NOTES.txt").write_text(
         "这个包由 tools/publish_export.py 生成。\n"
-        f"文件数：{len(written)}\n\n"
+        f"文件数：{len(written)}\n"
+        + commit_line + "\n"
         "自证完整性：shasum -a 256 -c PUBLISH-MANIFEST.txt\n"
         "私有信息（生产域名/IP、运营者与用户的邮箱、部署密钥名、主密钥指纹）\n"
         "在导出时已被替换成占位值；替换规则不在这个包里。\n", encoding="utf-8")

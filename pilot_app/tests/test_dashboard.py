@@ -174,13 +174,31 @@ class DashboardTests(unittest.TestCase):
         body = web.build_dashboard(self._user_row())
         self.assertEqual(body["next_step"].get("tone"), "warn")
 
-    def test_no_warning_when_immediate_reports_are_switched_off(self):
-        """With immediate reports off the mailbox is not polled at all, so an
-        empty inbox is expected rather than suspicious."""
+    def test_switching_report_mail_off_does_not_hide_a_broken_forward(self):
+        """关掉报告邮件**不等于**我们不再读他的邮箱（v0.63.85 拆开了这两件事）。
+
+        改之前这条测试写的是「即时摘要关了就不轮询，所以空邮箱正常」——那正是那个 bug
+        的化石：它把"不发邮件"和"不收信"当成一件事，于是关掉开关的人连"你的转发从来没
+        生效过"这句提醒都看不到。现在信照收，所以这句话照说。
+        """
         self._ready(hours_ago=30)
         self.db.upsert_profile(self.user["id"], {"immediate_enabled": False})
         body = web.build_dashboard(self._user_row())
-        self.assertNotEqual(body["next_step"].get("tone"), "warn")
+        self.assertEqual(body["next_step"].get("tone"), "warn")
+
+    def test_the_dashboard_says_out_loud_that_report_mail_is_off(self):
+        """关掉之后，"邮箱里什么都没有"和"坏了"长得一样——所以首页必须自己说出来。"""
+        self._ready(hours_ago=30)
+        self.db.upsert_profile(self.user["id"], {"immediate_enabled": False, "daily_enabled": False})
+        body = web.build_dashboard(self._user_row())
+        self.assertEqual(body["channels"]["report_mail"]["state"], "optional")
+        self.assertIn("App 里", body["channels"]["report_mail"]["detail"])
+        self.assertFalse(body["today"]["immediate_enabled"])
+        # 只关一半时也要说清是哪一半。
+        self.db.upsert_profile(self.user["id"], {"immediate_enabled": False, "daily_enabled": True})
+        body = web.build_dashboard(self._user_row())
+        self.assertEqual(body["channels"]["report_mail"]["state"], "ok")
+        self.assertIn("只发每日简报", body["channels"]["report_mail"]["detail"])
 
     def test_verification_does_not_touch_the_uid_cursor(self):
         self._complete_profile()

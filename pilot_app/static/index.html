@@ -187,6 +187,22 @@
     .button-link{display:inline-flex;align-items:center;border-radius:var(--radius-control);padding:11px 16px;font-weight:700;text-decoration:none;background:var(--blue);color:var(--on-accent);min-height:44px}
     .button-link.secondary{background:var(--quiet-bg);color:var(--navy-ink)}
     .help{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.5}
+    /* 「你的邮件走这条路」：三段链，每段说清"这一段谁决定"。
+       不画图、不外链图片——纯 HTML，所以在任何宽度下都不会溢出，也不用维护二进制资源。 */
+    .mailpath{margin:14px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;
+      background:var(--surface-2)}
+    .mailpath h3{margin:0 0 4px;font-size:14px}
+    .mailpath ol{margin:8px 0 0;padding-left:20px}
+    .mailpath li{margin:0 0 10px;font-size:13.5px;line-height:1.55}
+    .mailpath li:last-child{margin-bottom:0}
+    /* 标签只有一层意思：**这两段你能改**（转发规则、报告邮件），中间那段是我们的开关。
+       所以"你的"用强调色、"我们的"保持中性——不要用绿色去标"你决定"，那会被读成
+       "这样是好的"。（第一版就是这么写的，截图上一眼就看出来了。） */
+    .mailpath .who{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;
+      font-size:11.5px;font-weight:700;letter-spacing:.02em;border:1px solid var(--line);
+      color:var(--muted);vertical-align:1px}
+    .mailpath .who.mine{color:var(--blue);border-color:var(--info-line);background:var(--info-bg)}
+    .mailpath .foot{margin:8px 0 0;font-size:12.5px;color:var(--muted)}
     .actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:14px}
     .status{padding:11px 13px;border-radius:9px;background:var(--info-bg);color:var(--navy-ink);margin:12px 0;font-size:14px}
     /* Consent at the point of collection: the checkbox and the disclosure it
@@ -615,6 +631,27 @@
     #broadcast-image-preview img { display:block; max-width:260px; height:auto;
       border-radius:8px; border:1px solid var(--line); }
     .announce-modal .foot { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+
+    /* 「看原信」的阅读面板：借广播对话框那套外壳（同一层、同一个遮罩、同一张卡），
+       但正文**只是纯文本**：原信是别人写的 HTML，把它注进我们的页面等于让陌生人
+       往我们的 DOM 里放东西。服务端已经剥掉了标签，这里再 pre-wrap 显示。 */
+    #original-body { margin:0 0 12px; font-size:14px; line-height:1.65; white-space:pre-wrap;
+      word-break:break-word; max-height:46vh; overflow:auto; padding:10px 12px;
+      border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+    #original-meta { color:var(--muted); font-size:13px; margin:0 0 10px; }
+    /* 翻译/总结的结果：和正文分开一块，标题写明是哪一种、由哪个模型做的。 */
+    #original-assist { margin:0 0 12px; }
+    #original-assist-text { margin:6px 0 0; font-size:14px; line-height:1.7; white-space:pre-wrap;
+      word-break:break-word; max-height:40vh; overflow:auto; padding:10px 12px;
+      border:1px solid var(--info-line); border-left:4px solid var(--blue);
+      border-radius:8px; background:var(--info-bg); }
+    #original-assist-actions { margin:0 0 12px; flex-wrap:wrap; }
+    /* 「这次没翻出来」「可能被截断」：不许长得像正文的一部分，也不许红得像报错。 */
+    #original-assist-note { margin:8px 0 0; font-size:12.5px; color:var(--muted); }
+    #original-look { margin:0 0 10px; padding-left:18px; }
+    #original-look li { margin:0 0 4px; }
+    #original-look a { color:var(--blue); }
+    .announce-modal #original-note { font-size:12.5px; color:var(--muted); }
     .announce-modal .foot .help { margin:0; }
     .announce-modal button { min-height:40px; padding:9px 18px; font-size:14px; }
 
@@ -961,6 +998,41 @@
       </div>
     </div>
 
+    <!-- 「看原信」的阅读面板。和广播对话框一样挂在外壳这一层：它是盖住整页的东西，
+         不能是可隐藏容器的后代（v0.63.69 的教训）。正文全是纯文本，不注 HTML。 -->
+    <div id="original" class="announce-modal hidden" role="dialog" aria-modal="true"
+         aria-labelledby="original-title" aria-describedby="original-meta">
+      <div class="announce-card" id="original-card" tabindex="-1">
+        <div class="tag">原信</div>
+        <h3 id="original-title">正在从你的邮箱取回这一封…</h3>
+        <p id="original-meta"></p>
+        <div id="original-body"></div>
+        <!-- 按需的翻译/总结。它们**每次都真的调一次模型**（走平台 key 时是管理员出钱），
+             所以按钮上写清是做什么的，结果只显示在这里、不保存。 -->
+        <div class="actions" id="original-assist-actions">
+          <button id="original-translate" type="button" class="secondary">翻译成中文</button>
+          <button id="original-summary" type="button" class="secondary">AI 总结</button>
+          <button id="original-copy" type="button" class="secondary">复制主题</button>
+        </div>
+        <div id="original-assist" class="hidden">
+          <div class="tag" id="original-assist-label"></div>
+          <div id="original-assist-text"></div>
+          <!-- 「这次没翻出来」「可能被截断」这类实话。服务器说，界面照原话说。 -->
+          <p class="help" id="original-assist-note"></p>
+        </div>
+        <p class="help" id="original-note"></p>
+        <!-- 「还能去哪儿看」：学校邮箱、转发邮箱，Gmail 还能精确到那一封。
+             每条的 detail 会写明精确到什么程度——做不到的事不暗示做得到。 -->
+        <ul class="help" id="original-look"></ul>
+        <div class="foot">
+          <div class="help" id="original-help">这封信是你邮箱里的原件，我们只是当场读了一遍。</div>
+          <div class="actions">
+            <button id="original-close" type="button" class="secondary">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- The old stacked <nav class="tabs"> lived here, below four dashboard
          cards and ~2.5 phone screens down. It is now the shell's sidebar /
          tab bar / drawer, all rendered from NAV in app.js. -->
@@ -997,10 +1069,6 @@
             <div><label for="timezone">时区</label><input id="timezone" value="Asia/Hong_Kong"></div>
           </div>
           <div style="margin-top:12px"><label for="daily-time">每日简报时间</label><input id="daily-time" type="time" value="22:00"><div class="help">默认香港时间 22:00。</div></div>
-          <div style="margin-top:12px">
-            <label><input id="immediate" type="checkbox" checked style="width:auto"> 收到新邮件后立即发送摘要</label>
-            <label style="margin-top:8px"><input id="daily" type="checkbox" checked style="width:auto"> 每天发送简报</label>
-          </div>
         </div>
       </details>
       <div class="actions"><button id="save-profile">保存个人资料</button></div>
@@ -1273,6 +1341,30 @@
     <section id="section-reports" class="card hidden">
       <h2 style="font-size:16px">5 报告与账户</h2>
       <div id="reports-status" class="status"></div>
+      <!-- 「你的邮件走这条路」（v0.63.86）：用户反复问的其实是同一件事——
+           「为什么两个邮箱都有「关了会怎样」「提醒到底从哪来」。这三段各有各的主人，
+           而每一段的开关就在本板块里（暂停服务 / 报告邮件），所以不用他到处找。
+           每一句都必须是能兑现的：说"你决定"的那一段，控件真的存在；说"我们改了不"的，
+           就明说改不了。 -->
+      <div class="mailpath" id="mail-path">
+        <h3>你的邮件走这条路</h3>
+        <ol>
+          <li><strong>学校邮箱</strong>（CityU Outlook）——原件在这里。
+            <span class="who mine">这一段由你决定</span>
+            <div class="help">把邮件转到下面那个私人邮箱，是<strong>你在 Outlook 里设的转发规则</strong>；
+              我们改不了它，也读不到学校邮箱。去哪设、怎么设：设置向导第 2 步有图文。</div></li>
+          <li><strong>你的私人邮箱</strong>（转过来的那一封）——我们<strong>只读</strong>地看这一个邮箱。
+            <span class="who ours">这一段由这个 App 决定</span>
+            <div class="help">就是上面的「<strong>暂停服务</strong>」：按下去我们就不再读你的邮箱，
+              待办与提醒也会一起停（想恢复随时按「恢复服务」）。我们从不删信、从不改信。</div></li>
+          <li><strong>报告与待办</strong>（就在这个 App 里）——报告照常生成，发不发邮件由你选。
+            <span class="who mine">这一段由你决定</span>
+            <div class="help">就是下面的「<strong>要不要收到报告邮件</strong>」：关掉之后报告只在这里显示，
+              一封邮件都不发；服务公告与账号故障通知不受影响。</div></li>
+        </ol>
+        <p class="foot">提醒的唯一来源是中间那一段：<strong>学校不转发，我们就看不见，也就没有提醒。</strong>
+          所以想少收邮件时，关第三段（不发报告）而不是第二段（不收信）。</p>
+      </div>
       <div class="actions">
         <button id="load-reports">刷新报告</button>
         <button id="pause" class="secondary">暂停服务</button>
@@ -1324,6 +1416,41 @@
             <button id="reportmode-save" class="ghost">保存</button>
           </div>
           <div id="reportmode-hint" class="help"></div>
+        </div>
+      </details>
+
+      <!-- 报告邮件（v0.63.85）：一个总开关 + 两个细分选项，**只有这一处**。
+           写在「报告与账户」而不是「编辑资料」里有两个原因：① 那两个勾选原来混在资料
+           表单里，保存资料会顺手把它改回去（两个写入点迟早自相矛盾）；② 关掉它的人
+           需要同时看到三句实话，那三句话在资料表单里放不下。 -->
+      <details class="panel" id="panel-report-mail">
+        <summary><span class="panel-title">要不要收到报告邮件</span><span class="panel-note" id="reportmail-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">
+            关掉之后：<strong>报告照常生成</strong>，「今天要处理的事」、提醒、看原信、
+            翻译与总结都还在这个 App 里，只是<strong>不再往你邮箱里发邮件</strong>。
+          </div>
+          <div style="margin:12px 0">
+            <label><input id="reportmail-receive" type="checkbox" checked style="width:auto"> <strong>接收报告邮件</strong></label>
+            <div class="help" id="reportmail-summary">—</div>
+          </div>
+          <div id="reportmail-detail" style="margin:0 0 10px;padding-left:22px">
+            <label><input id="reportmail-immediate" type="checkbox" checked style="width:auto"> 有新邮件就发一封摘要</label>
+            <label style="display:block;margin-top:8px"><input id="reportmail-daily" type="checkbox" checked style="width:auto"> 每天发一封简报</label>
+          </div>
+          <div class="help" id="reportmail-what">
+            <strong>这个开关管不到的：</strong>
+            ① 学校转来的原信<strong>还是会到你的私人邮箱</strong>——那是你在 CityU Outlook 里
+            设的转发规则，我们停不掉；
+            ② <strong>服务公告</strong>与<strong>「你的账号或邮箱出问题」的通知</strong>照发；
+            ③ 想看原件时，报告列表里点「看原信」可以当场从邮箱取回那一封。
+          </div>
+          <div class="help" id="reportmail-fewer" style="margin-top:8px">
+            <strong>想更少收邮件？</strong>只有两条真路：关掉上面的开关，或者把学校的转发
+            改到一个你不常看的邮箱（报告也可以发到另一个地址）。注意<strong>不转发就等于
+            我们看不见，也就没有提醒</strong>——提醒的唯一来源就是转过来的那封信。
+          </div>
+          <div id="reportmail-status" class="status"></div>
         </div>
       </details>
 
@@ -1562,7 +1689,8 @@
             <div class="panel-body">
               <div class="help">这里改的是<strong>之后要发的</strong>那几封信（四种卡住的情况各一封，
               每个人只会收到他自己那一封），改完按保存。
-              可用的占位符：<code>{link}</code>（设置向导地址，<strong>必须保留</strong>）、
+              可用的占位符：<code>{link}</code>（<strong>设置向导那一页</strong>的地址，收信人点开就是
+              「邮箱设置」，四格进度在页面顶上，<strong>必须保留</strong>）、
               <code>{wechat}</code>（联系方式那两行）、<code>{steps}</code>（按对方邮箱自动生成的授权码步骤）、
               <code>{mailbox}</code>（对方的私人邮箱）。写错的占位符会被拒绝，不会原样发给用户。</div>
               <h4 class="help">没填过私人邮箱的人收到这封</h4>

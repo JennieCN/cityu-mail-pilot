@@ -20,6 +20,7 @@ import datetime as dt
 import importlib.util
 import io
 import os
+import pathlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -166,6 +167,54 @@ class NotifyStalledTests(unittest.TestCase):
         self.assertIn("IMAP", body)
         self.assertIn("SMTP", body)
         self.assertIn("https://example.test/app", body)
+
+    # -- {link} 指向"他该去的那一步"，不是首页 ------------------------------
+
+    def test_every_letter_links_into_the_setup_wizard(self):
+        """首页只会让他再找一次「设置向导在哪」。
+
+        四封信指向同一个板块，而且这不是图省事：向导的 1–4 步全都在「邮箱设置」这一页，
+        四格进度就钉在它顶上——收信人一眼看得出自己灰着的是哪一格。
+        （原本 `{link}` 填的是 `/app`，收信人要自己从首页找到那一步。）
+        """
+        self.account("bare@example.com", mailbox=None)
+        body = setup_reminders.never_configured_body()
+        self.assertIn(f"https://example.test/app#/{setup_reminders.LINK_SECTION}", body)
+        self.assertNotIn("https://example.test/app\n", body, "别只给到首页")
+
+    def test_all_four_letters_carry_that_same_destination(self):
+        for group in setup_reminders.GROUPS:
+            body = setup_reminders.render_body(None, group, "someone@example.com")
+            self.assertIn(f"#/{setup_reminders.LINK_SECTION}", body, group)
+
+    def test_the_destination_is_a_real_section_of_the_app(self):
+        """不许凭空编一个地址：`LINK_SECTION` 必须是 `app.js` 里 `NAV` 的一个键，
+        而且 `index.html` 里真的有一个对应的板块（导航项没视图 = 空白屏）。"""
+        root = pathlib.Path(__file__).resolve().parents[2]
+        app_js = (root / "pilot_app" / "static" / "app.js").read_text(encoding="utf-8")
+        index = (root / "pilot_app" / "static" / "index.html").read_text(encoding="utf-8")
+        nav = app_js[app_js.index("const NAV = ["):app_js.index("];", app_js.index("const NAV = ["))]
+        self.assertIn(f"key: '{setup_reminders.LINK_SECTION}'", nav)
+        self.assertIn(f'id="section-{setup_reminders.LINK_SECTION}"', index)
+
+    def test_the_wizard_on_that_page_owns_the_steps_the_letters_talk_about(self):
+        """信里说「第 3 步」「第 2 步」，那些步骤必须真的在链接到的那一页里。"""
+        root = pathlib.Path(__file__).resolve().parents[2]
+        index = (root / "pilot_app" / "static" / "index.html").read_text(encoding="utf-8")
+        section = index[index.index(f'id="section-{setup_reminders.LINK_SECTION}"'):]
+        section = section[:section.index("</section>")]
+        for step in ("第 1 步", "第 2 步", "第 3 步", "第 4 步"):
+            self.assertIn(step, section, step)
+
+    def test_without_an_origin_configured_the_link_still_names_the_section(self):
+        """自部署没配 `INFE_PILOT_ORIGIN` 时是相对地址（那本来也发不出去），
+        但板块仍然要指对——改天配上域名，链接就完整了。"""
+        os.environ.pop("INFE_PILOT_ORIGIN", None)
+        try:
+            self.assertEqual(setup_reminders.step_url(),
+                             f"/app#/{setup_reminders.LINK_SECTION}")
+        finally:
+            os.environ["INFE_PILOT_ORIGIN"] = "https://example.test"
 
     # -- the operator's own contact details --------------------------------
 

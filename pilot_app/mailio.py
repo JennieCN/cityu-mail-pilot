@@ -19,6 +19,10 @@ from typing import Any
 
 GENERATED_PREFIXES = ("【AI邮件摘要】", "【AI每日报告】", "[AI Mail Summary]", "[AI Daily Report]")
 
+# 一封来信正文最多留多少字。生成报告与「看原信」共用这一个数：两处各写一个，
+# 迟早出现「报告里看得到、点开原信反而被截掉」这种对不上的怪事。
+MESSAGE_BODY_LIMIT = 20000
+
 # Providers differ in how much polling they tolerate, and only Gmail publishes
 # both the rule and the penalty. Its "Gmail server request limits" page states
 # "When the limit is reached, the account is temporarily suspended", that a
@@ -209,7 +213,7 @@ def normalize_message(raw: bytes) -> dict[str, str]:
     return {
         "subject": (_decode(message.get("Subject")) or "（无主题）")[:500],
         "sender_name": sender_name[:200], "sender_address": sender_address[:320],
-        "received": received, "importance": importance, "body": _strip_html(body)[:20000],
+        "received": received, "importance": importance, "body": _strip_html(body)[:MESSAGE_BODY_LIMIT],
         "message_key": message_id,
     }
 
@@ -311,6 +315,66 @@ def fetch_recent_messages(config: dict[str, Any], password: str, *, count: int =
         raise MailError(explain_imap_failure(exc)) from exc
     finally:
         if "client" in locals():
+            try:
+                client.close()
+            except Exception:
+                pass
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+
+# 「看原信」的两种「取不到」。放在 mailio 里是因为**只有这里知道为什么取不到**：
+# 网页层要按这两种分别说人话，而不是一律「加载失败」。
+ORIGINAL_GONE = "gone"      # 邮箱里已经没有这一封了（被删/被移走）
+ORIGINAL_MOVED = "moved"    # 邮箱被重建过（UIDVALIDITY 变了），这串 UID 指的是别的信
+
+
+def fetch_message_by_uid(config: dict[str, Any], password: str, uid: int, *,
+                         uid_validity: str = "") -> dict[str, Any]:
+    """Read exactly one message back by UID. Read-only; **nothing is stored**.
+
+    Why this exists: the raw body is wiped the moment the report is delivered
+    (``Database.finish_message``, and the privacy policy promises it), so "show
+    me that mail again" cannot be answered from our own database. The mailbox
+    still has it — we kept ``uid_validity`` and ``imap_uid`` for exactly this.
+
+    ``uid_validity`` is a door number, not a detail: once the mailbox is rebuilt,
+    the same UID string points at a *different* message. Showing that other
+    message under this task would be worse than showing nothing, so a mismatch
+    comes back as ``ORIGINAL_MOVED`` and we never fetch in that case.
+    """
+    client = None
+    try:
+        client = imaplib.IMAP4_SSL(config["imap_host"], int(config["imap_port"]), timeout=30)
+        identified = identify_client(client)
+        client.login(config["email"], password)
+        if not identified:
+            identify_client(client)
+        status, data = client.select("INBOX", readonly=True)
+        if status != "OK":
+            raise refused_inbox(data)
+        live = ""
+        status, response = client.response("UIDVALIDITY")
+        if status == "UIDVALIDITY" and response:
+            first = response[0]
+            live = first.decode(errors="ignore") if isinstance(first, bytes) else str(first)
+        if uid_validity and live and live != str(uid_validity):
+            return {"state": ORIGINAL_MOVED, "uid_validity": live}
+        status, content = client.uid("fetch", str(uid), "(BODY.PEEK[])")
+        if status != "OK":
+            raise MailError("IMAP 取回这一封失败。")
+        raw = next((item[1] for item in content if isinstance(item, tuple) and isinstance(item[1], bytes)), None)
+        if raw is None:
+            return {"state": ORIGINAL_GONE}
+        message = normalize_message(raw)
+        return {"state": "ok", "message": message,
+                "truncated": len(message["body"]) >= MESSAGE_BODY_LIMIT}
+    except (imaplib.IMAP4.error, OSError, ssl.SSLError) as exc:
+        raise MailError(explain_imap_failure(exc)) from exc
+    finally:
+        if client is not None:
             try:
                 client.close()
             except Exception:

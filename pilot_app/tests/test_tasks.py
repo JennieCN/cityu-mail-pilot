@@ -246,6 +246,20 @@ class TaskFlowTests(unittest.TestCase):
         self.assertEqual(task["effective_priority"], task["priority"])
         self.assertIn("export_title", task)
 
+    def test_the_clipboard_title_stays_plain_text(self):
+        """`export_title` 是**剪贴板**那一行（粘进 iOS 提醒事项），不是日历标题。
+
+        2026-09-19 审这份日历时发现的：`export_title` 曾被换成美化过的标题，于是
+        emoji 与 ⏰ 会跟着「复制成清单」粘进别人的提醒事项——而那份设计文档自己
+        写着「emoji 不进清单」。日历里的漂亮标题在 `build_ics` 里生成，不经过这里。
+        """
+        from pilot_app import taskexport
+
+        self._seed_report(received=self._today_iso())
+        task = self._today_tasks()["tasks"][0]
+        self.assertEqual(task["export_title"], taskexport.line_for(task))
+        self.assertNotIn("⏰", task["export_title"])
+
     def test_setting_a_priority_is_remembered_and_shown(self):
         self._seed_report(received=self._today_iso())
         key = self._today_tasks()["tasks"][0]["task_key"]

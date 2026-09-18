@@ -19,6 +19,17 @@ import unittest
 import urllib.error
 import urllib.request
 
+
+def _fixed_paths(payload: dict) -> list[str]:
+    """夹具里**固定**的那几条路径。
+
+    「看原信」是按邮件 id 取的一家子（`demo.originals()` 推出来的），不算在里面——
+    否则每加一个演示任务都得改 `demo.PATHS`，而那份名单的意义正是「演示只答这几个」。
+    """
+    return [path for path in payload["responses"]
+            if not (path.startswith(demo.ORIGINAL_PREFIX) and path.endswith(demo.ORIGINAL_SUFFIX))]
+
+
 _TMP = tempfile.mkdtemp()
 os.environ["INFE_PILOT_DB"] = _TMP + "/demo.sqlite3"
 os.environ["INFE_PILOT_MASTER_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -51,9 +62,43 @@ class FixtureTests(unittest.TestCase):
 
     def test_it_carries_exactly_the_endpoints_the_demo_claims(self):
         payload = demo.responses()
-        self.assertEqual(set(payload["responses"]), set(demo.PATHS))
+        self.assertEqual(set(_fixed_paths(payload)), set(demo.PATHS))
         self.assertEqual(set(demo.SECTIONS), {"dashboard", "reports"})
         self.assertTrue(payload["readOnly"])
+
+    def test_the_fixture_has_every_channel_the_frontend_renders(self):
+        """夹具是**冻结的**：服务端加一格，它不会自己长出来。
+
+        这一条是"下次再加一格"的探测器——`renderChannels` 遍历的那份键名直接从
+        app.js 里读出来，和夹具逐个对。少一格的表现曾经是：首页整个任务列表空白
+        （渲染中途抛错），而看起来像"演示没有数据"。
+        """
+        source = (ROOT / "pilot_app" / "static" / "app.js").read_text(encoding="utf-8")
+        match = re.search(r"\['mailbox'[^\]]*\]\.forEach", source)
+        self.assertTrue(match, "没找到 renderChannels 里的通道清单")
+        keys = re.findall(r"'([a-z_]+)'", match.group(0))
+        self.assertIn("report_mail", keys)
+        channels = demo.payload()["/api/dashboard"]["channels"]
+        for key in keys:
+            self.assertIn(key, channels, f"演示夹具里缺了通道：{key}")
+
+    def test_every_task_can_show_its_original_mail(self):
+        """演示里点「看原信」必须真的有东西可看。
+
+        真接口按邮件 id 取，所以这些条目是**推**出来的；一旦任务的 id 变了而这里
+        没跟上，演示里点开就是一句「演示里没有这个接口的数据」——那是功能看着坏掉，
+        而不是演示数据不全。
+        """
+        payload = demo.responses()
+        tasks = payload["responses"]["/api/dashboard"]["tasks"]
+        self.assertTrue(tasks, "演示里应该有任务，否则这条测试没在测东西")
+        for task in tasks:
+            path = f"{demo.ORIGINAL_PREFIX}{task['message_id']}{demo.ORIGINAL_SUFFIX}"
+            self.assertIn(path, payload["responses"], f"演示缺少 {task['subject']} 的原信")
+            original = payload["responses"][path]
+            self.assertIn(task["subject"], original["body"] or original["subject"])
+            # 演示里**不是**实时读取，界面据此换一句话——假装实时就是假话。
+            self.assertFalse(original["live"])
 
     def test_no_address_of_ours_or_anybody_elses(self):
         """A demo that leaked a real address would be the worst kind of bug."""
@@ -146,7 +191,7 @@ class DemoRouteTests(unittest.TestCase):
         self.assertTrue(body.startswith("window.PILOT_DEMO="))
         self.assertTrue(body.rstrip().endswith(";"))
         payload = json.loads(body.strip()[len("window.PILOT_DEMO="):-1])
-        self.assertEqual(set(payload["responses"]), set(demo.PATHS))
+        self.assertEqual(set(_fixed_paths(payload)), set(demo.PATHS))
 
     def test_visiting_the_demo_does_not_log_anybody_in(self):
         """No session, and none created: the next request is still anonymous."""

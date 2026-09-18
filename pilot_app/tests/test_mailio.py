@@ -450,3 +450,89 @@ class AuthCodeRejectedWordingTests(unittest.TestCase):
         """别把所有东西都套进这句话：认不出来就照实说。"""
         message = explain_imap_failure(imaplib.IMAP4.error(b"NO [SERVERBUG] something odd"))
         self.assertIn("something odd", message)
+
+
+class FetchOriginalTests(unittest.TestCase):
+    """「看原信」的那一次只读取回：**它只读，而且它不猜**。
+
+    两个后果比功能本身更重要：
+    ① 邮箱被重建过（UIDVALIDITY 变了）时，同一串 UID 指的是**别的信**——
+       那时候宁可说「取不到」，也不能把另一封信当成这封显示给用户；
+    ② 它是只读的（EXAMINE + BODY.PEEK[]），永远不许在用户邮箱里留下痕迹。
+    """
+
+    @staticmethod
+    def _raw(subject: str = "作业截止", body: str = "请提交作业。") -> bytes:
+        from email.message import EmailMessage
+        message = EmailMessage()
+        message["From"] = "老师 <student@my.cityu.edu.hk>"
+        message["To"] = "me@example.com"
+        message["Subject"] = subject
+        message["Date"] = "Mon, 14 Sep 2026 04:00:00 +0000"
+        message.set_content(body)
+        return message.as_bytes()
+
+    @staticmethod
+    def _config() -> dict:
+        return {"imap_host": "imap.example.com", "imap_port": 993, "email": "me@example.com"}
+
+    def _fetch(self, fake, **kwargs):
+        with mock.patch.object(mailio.imaplib, "IMAP4_SSL", return_value=fake):
+            return mailio.fetch_message_by_uid(self._config(), "授权码", kwargs.pop("uid", 7), **kwargs)
+
+    def test_it_reads_the_message_it_was_asked_for(self):
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', self._raw()))
+        result = self._fetch(fake)
+        self.assertEqual(result["state"], "ok")
+        self.assertIn("请提交作业", result["message"]["body"])
+        self.assertEqual(result["message"]["subject"], "作业截止")
+        self.assertEqual(fake.uid_calls, [("fetch", ("7", "(BODY.PEEK[])"))],
+                         "取的是第 7 封，而且用的是 PEEK（不改已读标记）")
+        self.assertFalse(result["truncated"])
+
+    def test_it_opens_the_mailbox_read_only(self):
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {5}', self._raw()))
+        self._fetch(fake)
+        self.assertIn(("EXAMINE", ("INBOX",)), fake.commands,
+                      "只读打开（EXAMINE）而不是 SELECT——铁律：绝不改动用户的邮箱")
+
+    def test_a_rebuilt_mailbox_is_not_guessed_at(self):
+        """UIDVALIDITY 是门牌号：变了以后同一个 UID 是**另一封信**。"""
+        class Rebuilt(FakeImap):
+            def response(self, key):
+                return ("UIDVALIDITY", [b"99"])
+
+        fake = Rebuilt(uid_rows=(b'1 (BODY[] {5}', self._raw(subject="别人的信")))
+        result = self._fetch(fake, uid_validity="1")
+        self.assertEqual(result["state"], mailio.ORIGINAL_MOVED)
+        self.assertEqual(fake.uid_calls, [], "认不出是哪一封时**连取都不取**")
+        self.assertEqual(result["uid_validity"], "99")
+
+    def test_a_message_that_is_no_longer_in_the_mailbox(self):
+        fake = FakeImap(uid_rows=None)
+        self.assertEqual(self._fetch(fake)["state"], mailio.ORIGINAL_GONE)
+
+    def test_the_same_uid_validity_goes_ahead(self):
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {5}', self._raw()))
+        self.assertEqual(self._fetch(fake, uid_validity="1")["state"], "ok")
+
+    def test_a_refused_mailbox_raises_the_actionable_error(self):
+        """邮箱不肯开箱时，用户要看到**能照着做**的话，而不是一句「加载失败」。"""
+        class Refusing(FakeImap):
+            def select(self, mailbox="INBOX", readonly=False):
+                return ("NO", [self.REFUSAL])
+
+        with self.assertRaises(mailio.MailError) as caught:
+            self._fetch(Refusing(require_id=False))
+        text = str(caught.exception)
+        self.assertIn("安全验证", text, "163 的「不安全登录」要给出下一步怎么做")
+        self.assertIn("Unsafe Login", text, "同时把服务器的原话带上，别替它编")
+
+    def test_a_very_long_letter_is_flagged_as_truncated(self):
+        """正文上限与生成报告那一条**共用一个常量**，否则会出现
+        「报告里看得到、点开原信反而没有」这种对不上的怪事。"""
+        long_body = "行" * (mailio.MESSAGE_BODY_LIMIT + 500)
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {999999}', self._raw(body=long_body)))
+        result = self._fetch(fake)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["message"]["body"]), mailio.MESSAGE_BODY_LIMIT)

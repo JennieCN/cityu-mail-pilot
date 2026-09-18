@@ -91,8 +91,13 @@ async function auditOverflow(page, label) {
     notes.push(`${viewport.name}: next step = ${hero}`);
     check(!!hero && hero.trim().length > 0, `${viewport.name}: hero has no next step`);
 
+    // 5 格：邮箱收信 / 报告邮件 / AI 摘要 / 联网搜索 / 每日简报。
+    // 「报告邮件」是 v0.63.85 加的——关掉它的人必须能在首页看见自己关过，
+    // 因为"邮箱里什么都没有"和"坏了"长得一模一样。
     const chipCount = await page.locator('#channels .channel').count();
-    check(chipCount === 4, `${viewport.name}: expected 4 status chips, found ${chipCount}`);
+    check(chipCount === 5, `${viewport.name}: expected 5 status chips, found ${chipCount}`);
+    check(await page.locator('#channels').innerText().then((t) => /报告邮件/.test(t)),
+      `${viewport.name}: 首页通道栏里少了「报告邮件」`);
     const metricCount = await page.locator('#metrics div').count();
     check(metricCount === 4, `${viewport.name}: expected 4 metrics, found ${metricCount}`);
 
@@ -105,6 +110,62 @@ async function auditOverflow(page, label) {
       await page.waitForTimeout(150);
       await auditOverflow(page, `${viewport.name}/${section}`);
       await page.screenshot({ path: path.join(SHOTS, `${viewport.name}-${section}.png`), fullPage: true });
+    }
+
+    // 「要不要收到报告邮件」（v0.63.85）：一键开关 + 两个细分选项，只有这一处。
+    // 这里走的是**真的保存**（PUT /api/reports/delivery）与**首页那一格的当场刷新**——
+    // 关掉之后首页必须立刻改口，否则它会继续写着"报告会发到你的邮箱"，而那是假话。
+    if (viewport.name === 'mobile-390') {
+      await goTo(page, 'reports');
+      await page.waitForSelector('#section-reports:not(.hidden)');
+      const panel = page.locator('#panel-report-mail');
+      check(await panel.count() === 1, '报告邮件面板不在「报告与账户」里');
+      await page.locator('#panel-report-mail > summary').click();
+      await page.waitForTimeout(200);
+      const body = await page.locator('#panel-report-mail').innerText();
+      check(/这个开关管不到的/.test(body) && /学校转来的原信/.test(body),
+        '报告邮件面板必须说清"学校转来的原信还是会到你的邮箱"');
+      check(/想更少收邮件/.test(body) && /不转发就等于/.test(body),
+        '报告邮件面板必须说清"不转发就等于我们看不见，也就没有提醒"');
+      check((await page.locator('#panel-report-mail').getAttribute('open')) !== null
+        || (await page.locator('#panel-report-mail').evaluate((el) => el.open)), '面板没有展开');
+      check(await page.locator('#reportmail-note').innerText() === '即时摘要 + 每日简报',
+        `默认应当是两种都发，现在是 ${await page.locator('#reportmail-note').innerText()}`);
+      // 关掉即时摘要（用户原话：「可能有的用户不想要即时邮件但是想要汇总」）
+      await page.locator('#reportmail-immediate').uncheck();
+      await page.waitForTimeout(600);
+      check(await page.locator('#reportmail-note').innerText() === '只发每日简报',
+        `关掉即时摘要后说明没跟上：${await page.locator('#reportmail-note').innerText()}`);
+      const channels = await page.locator('#channels').innerText();
+      check(/只发每日简报/.test(channels), '首页的「报告邮件」那一格没有跟着改口');
+      // 总开关：一次点击关掉两种，两个细分项跟着禁用（它们已经没有意义）
+      await page.locator('#reportmail-receive').uncheck();
+      await page.waitForTimeout(600);
+      check(await page.locator('#reportmail-note').innerText() === '都不发（只在这个 App 里看）',
+        `总开关关掉后说明不对：${await page.locator('#reportmail-note').innerText()}`);
+      check(await page.locator('#reportmail-immediate').isDisabled() && await page.locator('#reportmail-daily').isDisabled(),
+        '总开关关掉后两个细分项应当是禁用的');
+      check(/App 里/.test(await page.locator('#channels').innerText()),
+        '首页要说明白：报告只在 App 里显示');
+      // 还原成默认，后面的套件与截图不该看到一个被改过的账号
+      await page.locator('#reportmail-receive').check();
+      await page.waitForTimeout(600);
+      check(await page.locator('#reportmail-note').innerText() === '即时摘要 + 每日简报',
+        '总开关打开后应当回到两种都发');
+      notes.push('报告邮件开关：真保存 + 首页当场改口 + 还原');
+
+      // 「你的邮件走这条路」：三段各写清谁决定，而且指向的控件就在**同一屏**里。
+      // 这些话是用户最容易误解的地方（「关了报告为什么还有信」「不要邮件但要有提醒」），
+      // 所以断言不只看"有没有这段话"，还要看那一屏里真有两个开关。
+      const pathText = await page.locator('#mail-path').innerText();
+      check(!(await page.locator('#mail-path').isHidden()), '「你的邮件走这条路」在报告与账户里可见');
+      check((pathText.match(/这一段由/g) || []).length === 3,
+        `三段链路各要写一个「这一段由…决定」，现在 ${(pathText.match(/这一段由/g) || []).length} 个`);
+      check(/学校不转发，我们就看不见，也就没有提醒/.test(pathText),
+        '要写明提醒的唯一来源是"学校的信真的到了"');
+      const sectionText = await page.locator('#section-reports').innerText();
+      check(/暂停服务/.test(sectionText) && /要不要收到报告邮件/.test(sectionText),
+        '它指的两个开关（暂停服务 / 报告邮件）必须在同一屏里找得到');
     }
 
     // Long, unbroken content must still not force a horizontal scrollbar.

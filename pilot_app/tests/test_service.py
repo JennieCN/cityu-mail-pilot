@@ -365,6 +365,137 @@ class ServiceTests(unittest.TestCase):
         self.db.mark_message_skipped_by_uid.assert_not_called()
 
 
+class DailyDigestRetryTests(unittest.TestCase):
+    """每日简报失败后**不许每 15 秒重发一遍**。
+
+    2026-09-18 用户报「后台显示 5 个报告失败，但刷新下发情况又没有」。查数字的时候
+    发现了底下这个真问题：`run_daily_due` 由主循环每 15 秒调一次，而
+    `daily_report_exists` 只认 `status='sent'`，于是一封发不出去的简报会被重发到当天结束——
+    生产日志里一个授权码坏掉的账号一晚上 **1185 次** SMTP 尝试，而 163 回给我们的原话里
+    就有「IP is rejected」：我们可能正在自己把发信的路走坏。
+
+    这里钉住三件事：会重试、退避、试够就停。
+    """
+
+    def setUp(self):
+        self.db = mock.MagicMock()
+        self.service = PilotService(self.db, SecretBox(secrets.token_bytes(32)))
+        self.user = {"id": "usr_x", "email": "x@example.com", "timezone": "Asia/Hong_Kong",
+                     "daily_time": "22:00", "report_to": "x@example.com"}
+        self.db.daily_users.return_value = [self.user]
+        self.db.daily_report_exists.return_value = False
+        # 时间由测试推着走：退避是用 monotonic 算的。
+        self.clock = {"now": 1000.0}
+        self.service.daily_due = lambda user, now_utc=None: (True, "2026-09-18")
+
+    def _monotonic(self):
+        return self.clock["now"]
+
+    def test_a_failed_digest_is_retried_but_not_every_pass(self):
+        import pilot_app.service as service_mod
+        self.service.send_daily = mock.MagicMock(side_effect=service_mod.mailio.MailError("550 User has no permission"))
+        with mock.patch.object(service_mod.time, "monotonic", side_effect=self._monotonic), \
+             mock.patch.object(service_mod, "log_job_failure") as logged:
+            self.service.run_daily_due()
+            self.assertEqual(self.service.send_daily.call_count, 1)
+            # 紧接着的几轮（15 秒一次）不许再打——这就是那 1185 次的来源
+            for _ in range(10):
+                self.clock["now"] += 15
+                self.service.run_daily_due()
+            self.assertEqual(self.service.send_daily.call_count, 1, "退避窗口内不许重试")
+            # 退避过去之后要再试一次（网络抖动值得再给机会）
+            self.clock["now"] += 300
+            self.service.run_daily_due()
+            self.assertEqual(self.service.send_daily.call_count, 2)
+        self.assertTrue(logged.called, "失败要走那一处共用的日志口径，而不是留堆栈")
+
+    def test_it_gives_up_for_the_day_after_the_budget(self):
+        import pilot_app.service as service_mod
+        self.service.send_daily = mock.MagicMock(side_effect=service_mod.mailio.MailError("550 nope"))
+        with mock.patch.object(service_mod.time, "monotonic", side_effect=self._monotonic), \
+             mock.patch.object(service_mod, "log_job_failure"):
+            for _ in range(24):                      # 推着时钟走一整天
+                self.clock["now"] += 3600
+                self.service.run_daily_due()
+            # 1 次首发 + 退避表里的 3 次，之后当天不再试
+            self.assertEqual(self.service.send_daily.call_count, 1 + len(service_mod.DIGEST_RETRY_BACKOFF))
+
+    def test_a_success_clears_the_budget(self):
+        self.service.send_daily = mock.MagicMock(return_value=True)
+        with mock.patch("pilot_app.service.time.monotonic", return_value=1000.0):
+            self.service.run_daily_due()
+        self.assertEqual(self.service._digest_retry, {})
+
+    def test_old_entries_do_not_pile_up(self):
+        self.service._digest_retry[("usr_old", "2026-09-01")] = (3, 0.0)
+        self.service._digest_retry[("usr_new", "2026-09-18")] = (1, 0.0)
+        self.service._prune_digest_retries("2026-09-18")
+        self.assertEqual(list(self.service._digest_retry), [("usr_new", "2026-09-18")])
+
+
+class FailedReportAccountingTests(unittest.TestCase):
+    """「失败报告 N 份」与「下发情况」那张表必须能对上账。
+
+    用户报的原话：「后台显示有5个报告失败，但是我刷新下发情况又没有」。两个数字都
+    没错——**5 个全是每日简报**，而简报按设计没有 message_id，所以那张一行一封邮件的
+    表里永远看不到它们。修法是让两个数分开站着，并且把简报那几行交出去。
+    """
+
+    def _db(self):
+        import os
+        import tempfile
+        from pilot_app.database import Database
+        path = os.path.join(tempfile.mkdtemp(), "failed.sqlite3")
+        database = Database(path)
+        database.initialize()
+        # 外键是真的：`reports.user_id` 指向 `users`，所以先放一个账号进去。
+        with database.connect() as connection:
+            connection.execute(
+                "INSERT INTO users(id,email,password_hash,status,created_at)"
+                " VALUES('usr_1','one@example.com','x','active','2026-09-18T00:00:00+00:00')")
+        return database
+
+    _day = 0
+
+    def _seed(self, database, *, kind: str, status: str):
+        """一行报告。**不带 message_id**：这一组测的是按 kind 分开数，
+        而带 message_id 就要先造出真实的用户与邮件行（外键是真的）。
+
+        每天只能有一封简报（`(user_id, kind, report_date)` 是唯一的，这是设计），
+        所以连着造几封失败简报要各自换一天。
+        """
+        FailedReportAccountingTests._day += 1
+        report_id = database.create_report(
+            user_id="usr_1", message_id=None, kind=kind, subject="s", body="b",
+            sent_to="a@example.com",
+            report_date=(f"2026-09-{FailedReportAccountingTests._day:02d}" if kind == "daily" else ""))
+        # 按 id 改这一行——id 是随机串，`MAX(id)` 拿到的是别的行（第一版就是这么错的）。
+        with database.connect() as connection:
+            connection.execute("UPDATE reports SET status=? WHERE id=?", (status, report_id))
+
+    def test_the_two_numbers_are_split(self):
+        database = self._db()
+        self._seed(database, kind="immediate", status="failed")
+        self._seed(database, kind="immediate", status="sent")
+        for _ in range(5):
+            self._seed(database, kind="daily", status="failed")
+        self._seed(database, kind="daily", status="sent")
+        summary = database.failed_reports_summary()
+        self.assertEqual(summary["total"], 6)
+        self.assertEqual(summary["digests"], 5, "简报失败要单独数出来")
+        self.assertEqual(summary["per_mail"], 1, "逐封邮件的失败才是列表里看得到的那些")
+        self.assertEqual(len(database.failed_digests(10)), 5)
+
+    def test_a_digest_failure_carries_enough_for_the_panel_to_explain_itself(self):
+        database = self._db()
+        self._seed(database, kind="daily", status="failed")
+        with database.connect() as connection:
+            connection.execute("UPDATE reports SET last_error='SMTP 发送失败：(550, …)'")
+        row = database.failed_digests(10)[0]
+        for field in ("report_date", "sent_to", "last_error"):
+            self.assertIn(field, row, f"面板要拿 {field} 说话")
+
+
 class CredentialClassificationTests(unittest.TestCase):
     """Which model failures may be blamed on the user's key -- and which may not.
 

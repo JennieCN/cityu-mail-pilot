@@ -656,8 +656,11 @@ function renderChannels() {
   const box = $('channels');
   clear(box);
   if (!dash) return;
-  ['mailbox', 'model', 'search', 'digest'].forEach((key) => {
+  ['mailbox', 'report_mail', 'model', 'search', 'digest'].forEach((key) => {
     const item = dash.channels[key];
+    // 少一格也不能把整张首页带下水（演练夹具是冻结的，服务端加一格它就跟不上）。
+    // 但不许静默：控制台留一条，浏览器检查里"零 console 错误"会当场变红。
+    if (!item) { console.error(`通道缺了一格：${key}`); return; }
     const card = el('div', `channel ${item.state}`);
     const head = el('div', 'spread');
     head.appendChild(el('strong', null, item.label));
@@ -875,6 +878,28 @@ document.addEventListener('click', (event) => {
   if (target && target.id === 'announcement-ack') acknowledgeAnnouncement();
 });
 
+// 「看原信」是一个**读了就走**的面板，不是「必须确认」的公告，所以它的出口不止一个：
+// 关闭按钮、点遮罩、按 ESC 都关。广播对话框那三个出口全是关不掉的——那是刻意的；
+// 这里刻意反过来：看一封信不该把人锁在页面上。
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!target) return;
+  if (target.id === 'original-close') hideOriginal();
+  if (target.id === 'original') hideOriginal();      // 点卡片外面（遮罩本身）
+  // 翻译/总结：点一次调一次模型，结果只显示在这块面板里（不保存）。
+  if (target.id === 'original-translate') assistOriginal('translate', target);
+  if (target.id === 'original-summary') assistOriginal('summary', target);
+  if (target.id === 'original-copy') copyOriginalSubject();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  const box = $('original');
+  if (box && !box.classList.contains('hidden')) {
+    hideOriginal();
+    event.preventDefault();
+  }
+});
+
 function renderHero() {
   const hero = $('hero');
   const step = dash.next_step;
@@ -938,7 +963,164 @@ function taskActions(task, mode) {
   if (mode === 'done') button.title = '从今天列表里收起，任务不会被删除';
   button.addEventListener('click', () => markTask(task.task_key, button.dataset.taskState, button));
   wrap.appendChild(button);
+  // 「看原信」放在**后面**：主按钮（每天要点的那个）的位置不能因为多了一个次要入口
+  // 而挪动——手机上那就是误触。没有 message_id 就没有可看的原信（老数据可能没有），
+  // 那时**不显示**这颗按钮，而不是点了才说做不到。
+  if (task.message_id) {
+    const view = el('button', 'secondary', '看原信');
+    view.dataset.taskKey = task.task_key;
+    view.dataset.taskOriginal = task.message_id;
+    view.title = '当场从你的邮箱把这一封读回来给你看，服务器不留存';
+    view.addEventListener('click', () => openOriginal(task));
+    wrap.appendChild(view);
+  }
   return wrap;
+}
+
+/* -------------------------------------- 看原信：当场取一封，读完就丢 */
+
+// 原信正文在报告发出后就被清空了（`Database.finish_message`，也是隐私政策里的承诺），
+// 所以这里**不是**从我们的库里读，而是回用户自己的邮箱当场取一次。界面上必须说清三件事：
+//   ① 它在实时读你的邮箱（不是我们存着的副本）；
+//   ② 服务器不留存（不写库、不写日志）；
+//   ③ 取不到是正常结果之一（信被删了/邮箱重建过），要说清是哪一种，并且给出去哪儿看的兜底。
+// 演示模式下这三句要换成实话——演示里既不实时、也没有邮箱（`live: false`）。
+// **它不锁 `modal-open`**，这是有意的：全应用只有一处锁滚动（广播对话框，那条必须
+// 确认才关），而这一个是读了就走的面板。更关键的是它**绝不能去解锁**——广播在它上面
+// 显示时，关掉阅读面板会把广播的锁一并解掉，那正是「发完广播软件不能滑动」那类故障。
+function hideOriginal() {
+  const box = $('original');
+  if (box) box.classList.add('hidden');
+}
+
+// 「还能去哪儿看」：学校邮箱、转发邮箱的收件箱，Gmail 还能精确到那一封。
+// 每条都带一句 detail 说明能精确到什么程度——**做不到的事不暗示做得到**。
+// 数据来自服务端（`original_links`，一处定义）；取不到原信时用首页那份兜底。
+function renderLookHere(links) {
+  const list = $('original-look');
+  if (!list) return;
+  clear(list);
+  (links || []).forEach((item) => {
+    const li = el('li');
+    const anchor = el('a', null, item.label || item.url);
+    anchor.href = item.url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    li.appendChild(anchor);
+    if (item.detail) li.appendChild(el('span', null, ` — ${item.detail}`));
+    list.appendChild(li);
+  });
+  list.classList.toggle('hidden', !(links || []).length);
+}
+
+// 翻译 / 总结那两个按钮的状态。演示模式是**只读**的：这两个动作要调模型（要花钱），
+// 演示里不调。按钮留着但禁用并说明原因，比藏起来诚实——用户知道正式版有这两个功能。
+function resetAssist() {
+  const box = $('original-assist');
+  if (box) box.classList.add('hidden');
+  const text = $('original-assist-text');
+  if (text) { text.textContent = ''; text.classList.add('hidden'); }
+  const label = $('original-assist-label');
+  if (label) label.textContent = '';
+  const note = $('original-assist-note');
+  if (note) { note.textContent = ''; note.classList.add('hidden'); }
+  const demo = demoMode();
+  ['original-translate', 'original-summary'].forEach((id) => {
+    const button = $(id);
+    if (!button) return;
+    button.disabled = demo;
+    button.title = demo ? '只读演示：翻译与总结要调用 AI，正式账号里可用' : '';
+  });
+}
+
+async function assistOriginal(kind, button) {
+  const task = assistOriginal.task;
+  if (!task || !task.message_id) return;
+  const label = $('original-assist-label');
+  const text = $('original-assist-text');
+  const note = $('original-assist-note');
+  const box = $('original-assist');
+  const names = { translate: '翻译成中文', summary: 'AI 总结' };
+  if (button) button.disabled = true;
+  if (box) box.classList.remove('hidden');
+  if (label) label.textContent = `${names[kind] || kind} · 正在生成…`;
+  if (text) { text.textContent = ''; text.classList.add('hidden'); }
+  if (note) { note.textContent = ''; note.classList.add('hidden'); }
+  try {
+    const data = await api(`/api/messages/${encodeURIComponent(task.message_id)}/assist`, {
+      method: 'POST', body: JSON.stringify({ kind }),
+    });
+    if (label) label.textContent = `${names[kind] || kind} · ${data.model || 'AI'} · 不保存`;
+    // 没翻出来时服务器给的是空文本 + 一句实话：那时**不画那个空框**，只留那句话。
+    if (text) { text.textContent = data.text || ''; text.classList.toggle('hidden', !data.text); }
+    // 服务器把「这次没成」「可能被截断」写在 note 里。**照原话说**：模型把英文原文
+    // 抄回来时，界面上一个字都不该装作这是译文（真机上抓到过，见 service.assist）。
+    if (note && data.note) { note.textContent = data.note; note.classList.remove('hidden'); }
+    if (text && !data.text && !(data.note || '')) text.textContent = '（模型没有返回内容）';
+  } catch (error) {
+    if (label) label.textContent = `${names[kind] || kind} · 没做成`;
+    if (text) { text.textContent = error.message || String(error); text.classList.remove('hidden'); }
+  } finally {
+    if (button && !demoMode()) button.disabled = false;
+  }
+}
+
+// 「复制主题」：QQ/163/学校邮箱都没有稳定的单封链接，所以给一条**能自己找到**的路——
+// 复制主题，粘进邮箱的搜索框。这比编一个假深链诚实，也比「自己想办法」有用。
+async function copyOriginalSubject() {
+  const task = assistOriginal.task;
+  const subject = (task && task.subject) || '';
+  if (!subject) return;
+  try {
+    await navigator.clipboard.writeText(subject);
+    toast('主题已复制。粘到邮箱的搜索框里就能找到这一封。', 'ok');
+  } catch (_) {
+    toast('浏览器不允许自动复制，请手动选中主题文字。', 'error');
+  }
+}
+
+async function openOriginal(task) {
+  const box = $('original');
+  if (!box) return;
+  const title = $('original-title');
+  const meta = $('original-meta');
+  const body = $('original-body');
+  const note = $('original-note');
+  const help = $('original-help');
+  assistOriginal.task = task;
+  resetAssist();
+  // 打开就立刻有反应：一次 IMAP 往返要一两秒，什么都不显示会让人以为没点上，
+  // 然后连点五次 —— 那正好是限流会拦下来的行为。
+  title.textContent = '正在从你的邮箱取回这一封…';
+  meta.textContent = task.subject || '';
+  body.textContent = '';
+  note.textContent = '实时读取中——我们只读这一封，不复制、不保存。';
+  if (help) help.textContent = '这封信是你邮箱里的原件，我们只是当场读了一遍。';
+  // 先摆上首页那份兜底去处，取到之后再换成这一封自己的（Gmail 那条会多出来）。
+  renderLookHere((dash && dash.look_here) || []);
+  box.classList.remove('hidden');
+  const card = $('original-card');
+  if (card) card.focus();
+  let data;
+  try {
+    data = await api(`/api/messages/${encodeURIComponent(task.message_id)}/original`);
+  } catch (error) {
+    // 取不到时**照实说**：正文不在我们这儿（这是承诺，不是故障），所以只能现取。
+    title.textContent = '这一封取不到了';
+    meta.textContent = task.subject || '';
+    body.textContent = error.message || String(error);
+    note.textContent = '正文在你收到报告后就从我们服务器上删掉了，所以只能回你的邮箱现取。';
+    if (help) help.textContent = '想自己翻一下的话，用下面的链接直接去邮箱。';
+    return;
+  }
+  title.textContent = data.subject || task.subject || '（无主题）';
+  const who = data.sender_name ? `${data.sender_name} <${data.sender_address}>` : (data.sender_address || '');
+  meta.textContent = [who, momentText(data.received)].filter(Boolean).join(' · ');
+  body.textContent = data.body || '（这封信没有可显示的正文）';
+  note.textContent = data.live === false
+    ? '演示数据：这里显示的是一封示例来信。'
+    : `${data.truncated ? '这封信很长，只显示了前面一部分。' : ''}实时从你的邮箱读取，服务器不留存。`;
+  if (data.look_here && data.look_here.length) renderLookHere(data.look_here);
 }
 
 // 「轻重缓急」是用户自己的判断，和来信里那个由模型读出来的 priority 是两件事：
@@ -1064,7 +1246,7 @@ function renderTasks() {
     list.appendChild(el('li', 'muted', view.is_today
       ? (dash.today.immediate_enabled
         ? '今天还没有需要你处理的邮件。'
-        : '即时摘要已暂停；恢复后新邮件会自动生成报告。')
+        : '今天还没有需要你处理的邮件。报告邮件已关闭——出了报告只在这里显示，不发到邮箱。')
       : '这一天没有未处理的任务了。'));
   } else {
     view.tasks.forEach((task) => list.appendChild(taskItem(task, 'done')));
@@ -1228,6 +1410,10 @@ async function syncDashboardTop() {
     if (token !== topSyncToken) return;
     dash = data;
     renderHero();
+    // 通道栏（邮箱收信 / 报告邮件 / 模型 / 搜索 / 简报）也读同一次响应。改完
+    // 「要不要收报告邮件」再回到首页，那一格必须当场变——否则它会继续写着
+    // "会发到你的邮箱"，而那正是这一轮要防的那种"看起来正常"的假话。
+    renderChannels();
     renderTaskSummary();
   } catch (_) {
     // 拉不到就保持原样：卡片上是旧数字，总好过在顶部摆一条错误。
@@ -1307,6 +1493,7 @@ function openSection(name, { updateHash = true } = {}) {
     // Renders from state.profile -- no extra request. The panel is part of this
     // section because that is where per-account settings live.
     renderReportMode();
+    renderReportMail();
   }
   // The session list is about the account, not about reports, so it loads with
   // its own section -- opening the reports tab should not silently fetch it.
@@ -1778,8 +1965,8 @@ function fill() {
   $('language').value = p.language || 'bilingual';
   $('timezone').value = p.timezone || 'Asia/Hong_Kong';
   $('daily-time').value = p.daily_time || '22:00';
-  $('immediate').checked = !!p.immediate_enabled;
-  $('daily').checked = !!p.daily_enabled;
+  // 「要不要收报告邮件」**不在这里**：它有自己的面板（报告与账户）和自己的端点。
+  // 混在资料表单里的后果是保存资料会顺手把它改回去——两个写入点迟早自相矛盾。
   renderAppearance(p.theme, p.background, state.background_image);
 
   const m = state.mailbox;
@@ -1867,8 +2054,6 @@ $('save-profile').addEventListener('click', async () => {
         custom_instructions: $('custom').value,
         language: $('language').value,
         timezone: $('timezone').value,
-        immediate_enabled: $('immediate').checked,
-        daily_enabled: $('daily').checked,
         daily_time: $('daily-time').value,
       }),
     });
@@ -2075,6 +2260,20 @@ $('panel-usage-mine').addEventListener('toggle', (event) => {
 });
 $('myusage-refresh').addEventListener('click', () => loadMyUsage({ notify: true }));
 $('myusage-days').addEventListener('change', () => loadMyUsage());
+// 总开关：一次点击 = 一次写入。打开 = 两种都发（默认），关掉 = 都不发。
+$('reportmail-receive').addEventListener('change', (event) => {
+  const on = event.target.checked;
+  saveReportDelivery(on, on);
+});
+// 细分项：即时摘要 / 每日简报各自可关。"不发即时、只要汇总"就是这里点一下。
+$('reportmail-immediate').addEventListener('change', (event) => {
+  const { daily } = reportMailState();
+  saveReportDelivery(event.target.checked, daily);
+});
+$('reportmail-daily').addEventListener('change', (event) => {
+  const { immediate } = reportMailState();
+  saveReportDelivery(immediate, event.target.checked);
+});
 $('reportmode-save').addEventListener('click', saveReportMode);
 $('reportmode-select').addEventListener('change', () => {
   // Changing the picker is a statement of intent, not a save; the button says
@@ -2546,6 +2745,77 @@ function renderReportMode() {
   }
 }
 
+// ---- 报告邮件：一个总开关 + 两个细分选项（v0.63.85） ----
+//
+// 为什么要有这一块：用户反馈「不想同时在两个邮箱收到邮件，想有个一键开关，但又想保留
+// 即时/汇总的选择」。总开关 = 「至少发一种」，两个勾选决定发哪些——这样"不发即时只要
+// 汇总"是一次点击能表达出来的状态，而不是两个互相矛盾的控件。
+//
+// 关掉的是**投递**：报告照常生成，待办、提醒、看原信都还在 App 里（服务端那侧收尾记
+// `held`，不是 sent 也不是 failed）。所以界面上的每句话都不能暗示"我们不看你的邮箱了"。
+const REPORT_MAIL_LABELS = {
+  both: '即时摘要 + 每日简报',
+  immediate: '只发即时摘要',
+  daily: '只发每日简报',
+  none: '都不发（只在这个 App 里看）',
+};
+
+function reportMailState() {
+  const p = (state && state.profile) || {};
+  return { immediate: p.immediate_enabled !== 0 && p.immediate_enabled !== false,
+           daily: p.daily_enabled !== 0 && p.daily_enabled !== false };
+}
+
+function renderReportMail() {
+  const box = $('reportmail-receive');
+  if (!box) return;
+  const { immediate, daily } = reportMailState();
+  const key = immediate && daily ? 'both' : (immediate ? 'immediate' : (daily ? 'daily' : 'none'));
+  const demo = demoMode();
+  $('reportmail-receive').checked = immediate || daily;
+  $('reportmail-immediate').checked = immediate;
+  $('reportmail-daily').checked = daily;
+  // 总开关关掉时两个细分项没有意义（它们都已经关着），禁掉比让人点了没反应好。
+  const open = immediate || daily;
+  $('reportmail-immediate').disabled = demo || !open;
+  $('reportmail-daily').disabled = demo || !open;
+  $('reportmail-receive').disabled = demo;
+  if (demo) {
+    ['reportmail-receive', 'reportmail-immediate', 'reportmail-daily'].forEach((id) => {
+      $(id).title = '只读演示：这一项在正式账号里可以改';
+    });
+  }
+  panelNote('reportmail-note', REPORT_MAIL_LABELS[key], key === 'none' ? 'warn' : '');
+  const summary = $('reportmail-summary');
+  if (summary) {
+    summary.textContent = key === 'none'
+      ? '现在不发任何报告邮件；报告只在这个 App 里显示。'
+      : `现在会收到：${REPORT_MAIL_LABELS[key]}。`;
+  }
+  $('reportmail-detail').classList.toggle('hidden', key === 'none');
+}
+
+async function saveReportDelivery(immediate, daily) {
+  try {
+    await api('/api/reports/delivery', {
+      method: 'PUT', body: JSON.stringify({ immediate, daily }),
+    });
+    if (state && state.profile) {
+      state.profile.immediate_enabled = immediate ? 1 : 0;
+      state.profile.daily_enabled = daily ? 1 : 0;
+    }
+    renderReportMail();
+    // 首页那张卡的通道栏也读这两个值（`/api/dashboard` 会重算），所以顺手对齐一次，
+    // 否则"刚关掉、回首页还写着会发"要等下一次刷新才变。
+    if (typeof syncDashboardTop === 'function') syncDashboardTop();
+    toast(immediate || daily ? `已保存：${REPORT_MAIL_LABELS[immediate && daily ? 'both' : (immediate ? 'immediate' : 'daily')]}`
+                             : '已关掉报告邮件：报告只在这个 App 里显示', 'ok');
+  } catch (error) {
+    renderReportMail();          // 失败就把控件退回服务器的真实状态，不留下假象
+    setStatus('reportmail-status', `没保存成功：${error.message}`, 'error');
+  }
+}
+
 async function saveReportMode() {
   const select = $('reportmode-select');
   if (!select) return;
@@ -2827,7 +3097,12 @@ function renderAdminHealth(health) {
     ['启用中', `${health.active_users} 人`],
     ['已暂停', `${health.paused_users} 人`],
     ['待处理队列', `${health.pending_messages} 封`],
-    ['失败报告', `${health.failed_reports} 份`],
+    // 「失败报告」曾经只给一个数，于是运营者在「下发情况」里找不到它们——
+    // 那个列表是一行一封邮件，而每日简报没有对应的邮件行（它汇总一整天）。
+    // 两种东西分开说，并且说清该去哪儿看（2026-09-18 用户报的那次）。
+    ['失败报告', health.failed_reports_digests
+      ? `${health.failed_reports} 份（逐封邮件 ${health.failed_reports_per_mail}，每日简报 ${health.failed_reports_digests}）`
+      : `${health.failed_reports} 份`],
     // Two numbers, because they answer two different questions and used to be
     // conflated into one misleading one. `last_polled_at` is written on failure
     // too, so "轮询在跑" can be full while "收信正常" is not -- which is exactly
@@ -3969,6 +4244,20 @@ function renderMailBoard() {
     list.appendChild(el('p', 'help', '这个筛选条件下没有邮件。'));
   } else {
     mailBoard.messages.forEach((row) => list.appendChild(renderMailRow(row)));
+  }
+  // 每日简报失败在这张表里**永远**看不到（它不对应某一封邮件）。不说这一句，
+  // 健康卡上的「失败报告 N 份」和这里的空列表就会互相打架——用户已经报过一次了。
+  const digests = mailBoard.failed_digests || [];
+  if (digests.length) {
+    const note = el('p', 'help');
+    note.appendChild(el('b', null, `另有 ${digests.length} 封每日简报发送失败：`));
+    note.appendChild(document.createTextNode(
+      '简报汇总一整天，不对应某一封邮件，所以不在上面的列表里。'));
+    const ul = el('ul', 'help');
+    digests.forEach((item) => ul.appendChild(el('li', null,
+      `${item.report_date || '（日期不明）'} · ${item.sent_to || '（没有收件地址）'} · ${(item.last_error || '').slice(0, 80)}`)));
+    list.appendChild(note);
+    list.appendChild(ul);
   }
   box.appendChild(list);
   $('mail-more-wrap').style.display = mailBoard.messages.length < mailBoard.total ? 'block' : 'none';
