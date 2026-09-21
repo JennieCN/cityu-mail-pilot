@@ -1,20 +1,44 @@
-# Local-only. Kept out of the repository on purpose: the master key never leaves
-# the server's 0600 environment file, and a database with real mail in it does
-# not belong in a public repository either.
-.secrets/
-pilot.env
-*.env
-*.sqlite3
-*.sqlite3-shm
-*.sqlite3-wal
-.venv/
-.venv-pilot/
-__pycache__/
-*.pyc
-dist/
-preview/
-# Scratch output from running the app locally (`run.ps1` writes a throwaway
-# database here). Never committed — it is a working directory, not source, and
-# the database in it is exactly the kind of file the header above is about.
-local-run/
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnpm-cache
+/.pnpm-store
+/cityu-temp
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
 .DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
