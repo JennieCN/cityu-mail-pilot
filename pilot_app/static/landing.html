@@ -1537,33 +1537,16 @@ figure.shot figcaption{font-size:13px;color:var(--muted);margin-top:8px}
     <hr class="rule">
 
     <!-- ================= 创建账号 ================= -->
-    <!-- 2026-09-22：**邀请码制度取消**。位置与 DOM 顺序一个字没动（`#apply` 仍在
-         `#download` 之前、留言板仍在它之后），因为套件与测试按 DOM 顺序量这两条。 -->
-    <section class="block reveal" id="apply">
-      <div class="wrap">
-        <div class="shell lift">
-          <div class="core core-pad">
-            <p class="kicker">开放注册</p>
-            <h2>创建账号</h2>
-            <div class="lead-col">
-              <p>这个工具要有一台一直开着的服务器替你读信、写信，所以<b>光下载、装到手机上还用不了</b>——
-              在这里注册一个账号就行：<b>完全开放，任何邮箱填了就能建号</b>，不需要审批，也没有别的门槛。</p>
-              <p>注册只要一个邮箱和一个密码。之后在应用里的「邮箱设置」填一次你要转发的私人邮箱和授权码，
-              当天就会收到第一封清单。名额换来的是<b>这台服务器上的一个账号</b>：
-              邮件只经过你自己的设置，报告只发给你。</p>
-            </div>
-            <!-- 「现在有 N 个账号接好了邮箱」：**从数据库现取**（`web.py` 的
-                 `{{PILOT_COUNT}}`，定义在 `Database.landing_user_count`）。它的规矩是
-                 **句子不许比数字说得更满**：算的是「接好了邮箱的活跃账号」，不是注册行数。 -->
-            <p class="note" id="pilot-count">{{PILOT_COUNT}}</p>
-            <p class="note">目前免费：在另行通知前，默认用管理员提供的模型 key（模型的钱由我出），你不花钱；
-            想换成自己的 key 也可以，费用和调用记录就都在你自己的服务商账号下。</p>
-            <p class="note">注册之后：填好转发邮箱 → 收到第一封清单 → 之后每天一封。
-            还没想好？<a href="/demo">先看一眼界面</a>——不用账号，数据是编的。</p>
-
-            <p class="repo"><a class="btn" href="/app">创建账号 →</a></p>
-          </div>
-        </div>
+    <!-- 2026-09-24：页面原来在正文和页尾各有一个创建账号入口。现在只保留页尾那版
+         深色 CTA，并把它放在原来的 `#apply` 位置；原来的浅色说明卡整块删除。
+         顺序契约不变：`#apply` 仍在 `#download` 之前。 -->
+    <section class="closing reveal" id="apply" aria-labelledby="apply-title">
+      <div class="closing-inner">
+        <span class="eyebrow rv" style="--i:0"><span class="dot"></span>开放注册 · 填一个邮箱就能建号</span>
+        <h2 class="scrub" id="apply-title">别再让学校邮件决定你的<span class="mark">今天</span>。</h2>
+        <p class="rv" style="--i:2">注册只要一个邮箱和一个密码；配好转发邮箱的当天，第一封清单就会到。</p>
+        <a class="pill on-dark rv-soft" style="--i:3" href="/app">创建账号
+          <span class="icon-wrap" aria-hidden="true"><svg viewBox="0 0 13 13"><path d="M2.5 6.5h8M6.8 2.8l3.7 3.7-3.7 3.7"></path></svg></span></a>
       </div>
     </section>
 
@@ -1723,17 +1706,6 @@ figure.shot figcaption{font-size:13px;color:var(--muted);margin-top:8px}
     </section>
 
 </main>
-
-<!-- ================= 深色收尾 ================= -->
-<section class="closing reveal" id="closing">
-  <div class="closing-inner">
-    <span class="eyebrow rv" style="--i:0"><span class="dot"></span>开放注册 · 填一个邮箱就能建号</span>
-    <h2 class="scrub">别再让学校邮件决定你的<span class="mark">今天</span>。</h2>
-    <p class="rv" style="--i:2">注册只要一个邮箱和一个密码；配好转发邮箱的当天，第一封清单就会到。</p>
-    <a class="pill on-dark rv-soft" style="--i:3" href="#apply">创建账号
-      <span class="icon-wrap" aria-hidden="true"><svg viewBox="0 0 13 13"><path d="M2.5 6.5h8M6.8 2.8l3.7 3.7-3.7 3.7"></path></svg></span></a>
-  </div>
-</section>
 
 <footer>
   <div class="row">

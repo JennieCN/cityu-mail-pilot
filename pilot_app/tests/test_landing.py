@@ -60,26 +60,11 @@ def without_comments(markup: str) -> str:
 
 
 class HeroTests(unittest.TestCase):
-    def test_the_account_count_line_left_the_hero_but_not_the_page(self):
-        """那句小字 2026-09-23 从首屏搬到了「创建账号」那一节（用户：「按钮下那两行去掉」）。
-
-        它守的规矩没变：**句子不许比数字说得更满** —— 数字仍由 `{{PILOT_COUNT}}` 现取，
-        而且这一行不许自己解释「谁出钱」（那是下一行的事，写得比这里清楚）。
-        变的只有位置：首屏只剩标题、那段话、两颗按钮。
-        """
+    def test_the_account_count_line_is_gone(self):
+        """2026-09-24：浅色创建账号卡整块删掉，账号数量行也随它一起消失。"""
         page = landing()
-        match = re.search(r'<p class="note" id="pilot-count">(.*?)</p>', page, re.S)
-        self.assertIsNotNone(match, "那句「现在有 N 个账号接好了邮箱」不见了")
-        line = match.group(1)
-        # `landing()` 渲染过模板，所以这里看到的是**已经注入的那句话**：
-        # 0 个账号时是「现在还没有人开始用。」，若干个时是「现在有 N 个账号接好了邮箱…」。
-        self.assertTrue("现在还没有人开始用" in line or "个账号接好了邮箱" in line,
-                        f"那句话的样子变了：{line!r}")
-        self.assertNotIn("管理员", line, "这一行不该解释谁出钱")
-        # 位置：在 `#apply` 那一节里，而且**不在**首屏那段 `.lead` 里。
-        apply_at = page.index('id="apply"')
-        self.assertGreater(page.index('id="pilot-count"'), apply_at,
-                           "它又回到首屏（`#apply` 之前）去了")
+        self.assertNotIn('id="pilot-count"', page)
+        self.assertNotIn("个账号接好了邮箱", page)
         hero = page[page.index('class="lead hero-copy"'):page.index('id="how"')]
         self.assertNotIn('class="note"', hero, "首屏按钮下面又出现了说明行")
 
@@ -91,8 +76,8 @@ class HeroTests(unittest.TestCase):
         calls land in). Dropping either one makes the page wrong, not shorter.
         """
         page = landing()
-        # 同一句话的措辞改了（内测 → 在另行通知前），"管理员出钱"这个事实仍然在这页上。
-        self.assertIn("在另行通知前，默认用管理员提供的模型 key", page)
+        # 浅色卡删掉后，同一件事仍由隐私披露框说清楚。
+        self.assertIn("在另行通知前默认用管理员的 API key", page)
         self.assertIn("管理员的模型账号", page)
         self.assertIn("换成你自己的 key", page)
 
@@ -231,30 +216,17 @@ class ListingTests(unittest.TestCase):
         self.assertIn("#source li{", template)
         self.assertRegex(template, r"#source li\{[^}]*font-size:14\.5px")
 
-    def test_the_account_section_explains_that_downloading_is_not_enough(self):
-        """A visitor who just read the install steps thinks that is all there is.
-
-        It is not: the tool needs a server that keeps reading his mail, so what
-        he needs is an account, not a file. The old wording also promised that
-        applying "验证了它能收信" -- that check happens later, when the auth code
-        is entered, so the promise is gone.
-
-        **2026-09-22**: the section is a card with one button now (registration is
-        open), so what is pinned here is the *fact* it still has to carry: an
-        account on this server is what the reader is getting, and it is free
-        while the operator pays for the model calls.
-        """
+    def test_the_account_section_keeps_only_the_short_cta(self):
+        """2026-09-24：原来的浅色说明卡整块删掉，只留下深色 CTA。"""
         page = landing()
-        self.assertIn("光下载、装到手机上还用不了", page)
-        self.assertIn("任何邮箱填了就能建号", page)
-        self.assertIn("这台服务器上的一个账号", page)
-        self.assertIn("模型的钱由我出", page)
-        self.assertNotIn("顺便验证了它能收信", page)
-        # 那一节里必须有一个真的按钮指向应用，而且**没有表单**（不然又是两个入口）。
-        # 切片停在留言板之前：留言板那一节自己有一张表单，切到 #download 会把它算进来
-        # （第一版就是这么写的，于是下面那条 assertNotIn("<form") 指着别人红）。
+        self.assertIn("填一个邮箱就能建号", page)
+        self.assertIn("注册只要一个邮箱和一个密码", page)
+        self.assertNotIn("光下载、装到手机上还用不了", page)
+        self.assertNotIn("这台服务器上的一个账号", page)
+        # 那一节里必须有一个真的按钮指向应用，而且**没有表单**。
         section = page[page.index('id="apply"'):page.index('id="guestbook"')]
-        self.assertIn('<a class="btn" href="/app">创建账号', section)
+        self.assertIn('class="pill on-dark', section)
+        self.assertIn('href="/app"', section)
         self.assertNotIn("<form", section)
         self.assertNotIn("/api/signup", section)
 
@@ -344,17 +316,10 @@ class StillOpenFromTheSameAnnotations(unittest.TestCase):
         self.assertNotIn("用起来怎么样、哪里卡住了、想要什么功能", page)
 
     def test_the_account_section_says_what_happens_next(self):
-        """「申请以后会怎么样？有了名额会有什么不同？」
-
-        2026-09-22：没有「申请」了，所以钉的是**注册之后**那条路 —— 它仍然是
-        「填好转发邮箱 → 收到第一封清单」，读者要知道的是这个，不是我们这边的机制。
-        """
+        """CTA 从长卡片压短后，仍要说清注册之后会发生什么。"""
         page = landing()
-        self.assertIn("注册之后：", page)
-        self.assertIn("收到第一封清单", page)
-        self.assertIn("之后每天一封", page)
-        # …and what the quota actually buys, in the reader's terms.
-        self.assertIn("这台服务器上的一个账号", page)
+        self.assertIn("注册只要一个邮箱和一个密码", page)
+        self.assertIn("配好转发邮箱的当天，第一封清单就会到", page)
 
     def test_the_install_steps_carry_a_visible_step_marker(self):
         """「多一点步骤，比如手势那样的标识引导」.

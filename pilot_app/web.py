@@ -169,9 +169,8 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/terms": ("terms.html", "text/html; charset=utf-8"),
 }
 
-# The landing page carries a {{PILOT_COUNT}} placeholder so the "N accounts in
-# use" sentence is read from the database at request time rather than typed into
-# the file, where it would go stale the moment somebody else signed up.
+# 首页**不再**有 `{{PILOT_COUNT}}`（2026-09-24 随 PR #10 那句「N 个账号接好了邮箱」
+# 一起从页面删掉；代码里的注入点也撤了，见 `render_landing_page` 的 docstring）。
 # The legal pages carry {{CONTACT_LINK}}: the contact address is an operator
 # setting, so a self-hoster must not inherit ours (and we must not publish theirs
 # by accident). Every other static file is still served byte-for-byte.
@@ -454,37 +453,21 @@ def page_locale(request: Request) -> str:
 def render_landing_page(target: Path, locale: str = i18n.DEFAULT_LOCALE) -> bytes:
     """Fill the landing page's live numbers.
 
-    The page used to state how many accounts were in use as a written-down
-    number. That is the same mistake as a hard-coded count anywhere else: true on
-    the day it was typed and quietly false afterwards, on the one page whose claim
-    is that it tells the truth about a small pilot. So the sentence is rendered
-    from the database instead.
+    **这里曾经注入过一句「现在有 N 个账号接好了邮箱」。** 2026-09-24 随朋友那一版
+    改版（PR #10）从页面上删掉了：官网不再公布账号数。所以那次查库与
+    `{{PILOT_COUNT}}` 替换也一起撤掉 —— 留着它们是**每次渲染首页白查一次库**，
+    而这正是我们清理布告栏残留时同一个毛病（占位符没了、代码还在）。
 
-    "In use" means *an active account with an enabled mailbox*, not a count of
-    rows in `users`. Registering is one click away from doing nothing, and
-    counting those would put a number on the page the product cannot back up. The
-    definition lives in `Database.landing_user_count` and a test pins it, because
-    a number that means whatever is convenient is worse than no number.
-
-    The sentence says *接好了邮箱* rather than *在收信* on purpose: an account
-    that enabled a mailbox with a wrong auth code is counted here (it did the
-    work) but is not receiving anything, and on 2026-09-15 production had exactly
-    one such account -- so the older wording claimed 4 accounts were receiving
-    mail when 3 were. The number was right and the sentence was wrong; changing
-    the sentence keeps both the pinned definition and the claim true.
+    `Database.landing_user_count` **保留着**（它的定义与那几条测试都还在）：那是
+    「一个账号算不算用起来了」这件事的**唯一定义**，哪天要把数字放回页面（或放进
+    应用里）就直接用它。哪天真的再放回官网，**记得把那条测试也带回来** ——
+    `test_the_sentence_does_not_claim_mail_is_flowing`（2026-09-15 的事故：页面写
+    「4 个在收信」而实际只有 3 个）当时随这句话一起删掉了，它守的规矩没变：
+    **句子不许比数字说得更满**。
     """
-    count = get_db().landing_user_count()
-    if count <= 0:
-        phrase = translate_text("现在还没有人开始用。", locale)
-    elif count == 1:
-        phrase = translate_text("现在有 1 个账号接好了邮箱，那个是我自己。", locale)
-    else:
-        phrase = translate_text("现在有 {count} 个账号接好了邮箱，其中一个是我自己。",
-                                locale, count=count)
     # **翻译模板在前、注入片段在后**。反过来的话，那些片段里的中文会被当成模板
     # 的一部分，而它们带标签，匹配不上任何一条译文（key 是中文原文）。
     text = i18n.translate_file(target, locale)
-    text = text.replace("{{PILOT_COUNT}}", html.escape(phrase))
     text = text.replace("{{SOURCE_LINK}}", render_source_link(locale))
     # The nav entry and the section are decided by the same condition as the
     # footer link, so a copy of this software without a repository configured

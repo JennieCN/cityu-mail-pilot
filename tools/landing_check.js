@@ -326,7 +326,7 @@ const settleScroll = async (page) => {
   check(await cta.count() === 1, '那一节有且只有一个按钮指向 /app');
   check(/创建账号/.test(await cta.innerText()), '按钮上写着「创建账号」', await cta.innerText());
   const applyText = await applySection.innerText();
-  check(/任何邮箱填了就能建号/.test(applyText), '并且当场说清注册是开放的', applyText.replace(/\n/g, ' ').slice(0, 60));
+  check(/填一个邮箱就能建号/.test(applyText), '并且当场说清注册是开放的', applyText.replace(/\n/g, ' ').slice(0, 60));
   check(!/邀请码|邀请制/.test(await p.innerText('body')), '整页不再出现「邀请码」「邀请制」');
   await cta.click();
   await p.waitForLoadState('load');
