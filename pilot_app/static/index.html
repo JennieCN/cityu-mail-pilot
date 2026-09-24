@@ -442,6 +442,17 @@
     .metrics div{background:var(--surface-2);border:1px solid var(--tab-bg);border-radius:10px;padding:12px}
     .metrics b{display:block;font-size:19px;margin-top:3px}
     .metrics small{color:var(--muted);font-size:12px}
+    /* 「多少人是正常的」：这一屏的结论，跨整行、字号大两档（2026-09-24 用户：
+       「显示太多东西……我就想知道多少人是正常的」）。它必须**看起来像结论**，
+       否则又只是第九个小格子。 */
+    .metrics > .health-lead{grid-column:1/-1;padding:14px 16px}
+    .metrics > .health-lead .health-lead-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+    .metrics > .health-lead b{display:inline;font-size:32px;line-height:1.05;margin:0}
+    .metrics > .health-lead .health-lead-unit{font-size:15px;font-weight:650}
+    .metrics > .health-lead .help{margin-top:6px;font-size:12.5px}
+    /* 技术细节折叠块：它自己的 body 不该再套一层卡片（里面的格子才是卡片）。 */
+    .metrics > details.advanced{grid-column:1/-1;margin:0;background:transparent}
+    .metrics > details.advanced .body{background:transparent;border:0;padding:0}
     details.advanced{border:1px solid var(--line);border-radius:10px;padding:0;margin:14px 0;background:var(--panel)}
     details.advanced > summary{cursor:pointer;font-weight:650;color:var(--navy-ink);padding:13px 15px;list-style:none;min-height:44px;display:flex;align-items:center}
     details.advanced > summary::-webkit-details-marker{display:none}

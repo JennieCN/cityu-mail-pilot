@@ -348,9 +348,25 @@ async function ensurePanel(page, id) {
   // 显示他正在跑」. `last_polled_at` is written on failure too, so one figure
   // could not tell "we are polling it" from "it works"; the seed carries a
   // mailbox that is polled every few minutes and can never log in.
+  // 2026-09-24：健康卡改成「先说结论，再给细节」——第一眼是
+  // 「N / M 位在正常收信」，轮询/取信这些技术数字收进折叠块。
+  // **读之前必须先展开**：Chromium 的 innerText 不含未展开的 <details> 内容，
+  // 不展开的话下面两条断言会读到空字符串，看起来像卡片坏了。
+  const tech = page.locator('#admin-health details.advanced > summary').first();
+  if (await tech.count()) await tech.click();
   const health = await page.locator('#admin-health').innerText();
+  // 结论必须排在细节前面（用户要的就是「打开就看到一个数」）。
+  const lead = health.match(/(\d+)\s*\/\s*(\d+)\s*位在正常收信/);
+  check(lead, '健康卡第一眼是「多少人在正常收信」', health.replace(/\n/g, ' ').slice(0, 120));
+  check(health.indexOf('位在正常收信') < health.indexOf('轮询在跑'),
+    '这个结论排在技术细节前面，不用展开就能看到');
+  if (lead) {
+    check(Number(lead[1]) <= Number(lead[2]),
+      '正常的个数不会超过分母', `${lead[1]} <= ${lead[2]}`);
+  }
   check(/轮询在跑/.test(health) && /取信正常/.test(health),
-    '健康卡把「轮询在跑」和「取信正常」分成两个数', health.replace(/\n/g, ' '));
+    '技术细节里仍然把「轮询在跑」和「取信正常」分成两个数（一个数证明不了正常）',
+    health.replace(/\n/g, ' '));
   const polled = Number((health.match(/轮询在跑[\s\S]{0,40}?(\d+)\s*\//) || [])[1]);
   const healthy = Number((health.match(/取信正常[\s\S]{0,40}?(\d+)\s*\//) || [])[1]);
   check(Number.isFinite(polled) && Number.isFinite(healthy),

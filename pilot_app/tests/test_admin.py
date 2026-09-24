@@ -1025,6 +1025,82 @@ class AdminTests(unittest.TestCase):
         self.assertEqual(health["stale_mailboxes"], 0,
                          "暂停的账号不该被算成「轮询停了」——是我们不去轮询它")
 
+    # -- 「多少人是正常的」：一个数，判据在服务端（2026-09-24 用户要求简化） -----
+
+    def test_the_headline_number_counts_only_mailboxes_that_really_work(self):
+        """用户原话：「管理后台显示太多东西什么轮询正常，什么取信正常，简化一下，
+        我就想知道多少人是正常的」。
+
+        「正常」只认一种：**邮箱登得进去，而且真的收到过本校来信**。四种「不正常的」
+        各有各的说法，一个都不许并进这个数。"""
+        self._make_user("ok@example.com")
+        self._make_user("silent@example.com")
+        self._make_user("wrong@example.com")
+        self._make_user("never@example.com")          # 配好了，但一次都没轮询过
+        self._set_polled("ok@example.com", minutes_ago=1)
+        self._set_polled("silent@example.com", minutes_ago=1)
+        broken = self._set_polled("wrong@example.com", minutes_ago=1)
+        self._insert_school_mail("box-ok@example.com", hours_ago=1)
+        with db.connect() as connection:
+            connection.execute("UPDATE mailboxes SET last_error=? WHERE email=?",
+                               ("IMAP 连接失败：b'LOGIN Login error'", broken))
+        working = web._service_health()["working"]
+        self.assertEqual(working["ok"], 1, "只有「登得进 + 收到过本校来信」那一个算正常")
+        self.assertEqual(working["configured"], 4)
+        self.assertEqual(working["no_mail"], 1)
+        self.assertEqual(working["broken"], 1)
+        self.assertEqual(working["stale"], 1)
+
+    def test_the_four_kinds_of_not_working_are_never_merged(self):
+        """四档必须一直是四个数。合并成一句「N 位不正常」，运营者就不知道该找谁了：
+        找用户换授权码 / 找学校改转发规则 / 找我们查轮询 / 谁都不用找（他自己暂停的）。
+
+        四档相加必须**正好**等于分母——差一个就说明有个状态没被算进来，
+        而那正是这类汇总数字最容易骗人的地方（少算会静默地把比例说好）。"""
+        self._make_user("ok@example.com")
+        self._make_user("silent@example.com")
+        self._make_user("wrong@example.com")
+        self._set_polled("ok@example.com", minutes_ago=1)
+        self._set_polled("silent@example.com", minutes_ago=1)
+        broken = self._set_polled("wrong@example.com", minutes_ago=1)
+        self._insert_school_mail("box-ok@example.com", hours_ago=1)
+        with db.connect() as connection:
+            connection.execute("UPDATE mailboxes SET last_error=? WHERE email=?",
+                               ("IMAP 连接失败：b'LOGIN Login error'", broken))
+        working = web._service_health()["working"]
+        self.assertEqual(
+            working["ok"] + working["broken"] + working["no_mail"] + working["stale"],
+            working["configured"],
+            "四档相加必须等于分母；不等就说明有个状态没被算进去")
+
+    def test_a_paused_account_leaves_the_denominator(self):
+        """已暂停是运营者自己的决定：它按设计就不该被轮询，所以既不算正常也不算故障，
+        更不能留在分母里——留着就成了一个永远拉低比例的常数。"""
+        self._make_user("ok@example.com")
+        paused = self._make_user("paused@example.com")
+        self._set_polled("ok@example.com", minutes_ago=1)
+        self._insert_school_mail("box-ok@example.com", hours_ago=1)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET status='paused' WHERE id=?", (paused["id"],))
+        working = web._service_health()["working"]
+        self.assertEqual(working["ok"], 1)
+        self.assertEqual(working["configured"], 1, "分母只算我们本来该在轮询的邮箱")
+        self.assertEqual(working["paused"], 1)
+
+    def test_users_who_never_finished_setup_are_counted_separately(self):
+        """注册了没配完邮箱的人**收不到报告，也不会报错**——这一屏上唯一会静默消失的一类
+        （2026-09-24 生产上 64 个账号里 48 个是这种）。
+
+        他们不能进分母：那会让「正常比例」看起来像系统坏了，而实际上那一步还没走到。"""
+        self._make_user("ok@example.com")
+        self._make_user("newbie-1@example.com", mailbox=False, model=False)
+        self._make_user("newbie-2@example.com", mailbox=False, model=False)
+        self._set_polled("ok@example.com", minutes_ago=1)
+        self._insert_school_mail("box-ok@example.com", hours_ago=1)
+        working = web._service_health()["working"]
+        self.assertEqual(working["without_mailbox"], 2)
+        self.assertEqual(working["configured"], 1, "没配完的人不在分母里，单独给一个数")
+
     def test_the_card_leads_with_school_mail_actually_arriving(self):
         """证据：每个邮箱最近一次取信、最近一封本校来信、24 小时几封。
 

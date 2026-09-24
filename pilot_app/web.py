@@ -3487,6 +3487,44 @@ def _mailbox_delivery_rows(database, boxes: list[dict[str, Any]], now: dt.dateti
     }
 
 
+def _working_counts(rows: list[dict[str, Any]], boxes: list[dict[str, Any]]) -> dict[str, int]:
+    """「多少人是正常的」——运营者只要这一个数（2026-09-24 用户原话：
+
+        「管理后台显示太多东西什么轮询正常，什么取信正常，简化一下，我就想知道多少人是正常的」
+
+    所以这个数必须**有判据**，不能是前端把几个格子加起来。
+
+    「正常」只认一种状态：**邮箱登得进去，而且真的收到过本校来信**（`state == "ok"`）。
+    这是这一屏上唯一配得上「他在正常用」四个字的状态，其余各有各的说法：
+
+      * `broken`   邮箱登不进去（授权码失效）——要找的是**用户**
+      * `no_mail`  登得进去，但从没有过本校来信——要找的是**学校那一边的转发规则**
+      * `stale`    轮询停了——要找的是**我们**
+      * `paused`   用户自己暂停了——**谁都不用找**，它按设计就不轮询
+
+    **这四种绝不合并成「不正常」**：合成一个数就把「谁该动手」这件事抹掉了，
+    而运营者看这一屏就是为了知道该找谁。
+
+    分母只算**我们本来该在轮询的邮箱**（已启用 + 账号未暂停）。把还没配完邮箱的人
+    算进分母，比例会显得像系统坏了，而实际上那一步还没走到——「没配完」单独给一个数。
+    """
+    counts = {"ok": 0, "broken": 0, "no_mail": 0, "stale": 0, "paused": 0}
+    for row in rows:
+        state = str(row.get("state") or "")
+        if state in counts:
+            counts[state] += 1
+    # 分母用「不是 paused」而不是「四个数相加」：将来多一个状态时，相加会**静默少算**，
+    # 而运营者看到的分母会莫名其妙变小——那正是这类数字最容易骗人的地方。
+    counts["configured"] = sum(1 for row in rows if str(row.get("state") or "") != "paused")
+    # 注册了但还没接好邮箱的人：他们收不到任何报告，也**不会产生任何错误**，
+    # 是这一屏上唯一会静默消失的一类（2026-09-24 生产上 64 个账号里 48 个是这种）。
+    counts["without_mailbox"] = sum(
+        1 for row in boxes
+        if str(row.get("status") or "") == "active"
+        and not (row.get("mailbox_email") and row.get("mailbox_enabled")))
+    return counts
+
+
 def _service_health() -> dict[str, Any]:
     database = get_db()
     now = dt.datetime.now(dt.timezone.utc)
@@ -3532,6 +3570,7 @@ def _service_health() -> dict[str, Any]:
     # one too low on the day the operator asked about it.
     unhealthy = {str(row.get("mailbox_id") or "") for row in stale} | \
                 {str(row.get("mailbox_id") or "") for row in broken}
+    delivery = _mailbox_delivery_rows(database, with_mailbox, now)
     return {
         "checked_at": now.isoformat(timespec="seconds"),
         "users": len(boxes),
@@ -3555,7 +3594,9 @@ def _service_health() -> dict[str, Any]:
         # operator open every user to find it.
         "stale_mailbox_emails": [str(row.get("mailbox_email") or "") for row in stale],
         "paused_mailbox_emails": [str(row.get("mailbox_email") or "") for row in paused],
-        **_mailbox_delivery_rows(database, with_mailbox, now),
+        **delivery,
+        # 「多少人是正常的」：一个数，判据在 `_working_counts` 里（2026-09-24 用户要求简化）。
+        "working": _working_counts(delivery["delivery"], boxes),
         "pending_messages": sum(int(row.get("queue_depth") or 0) for row in boxes),
         "failed_reports": sum(int(row.get("failed_reports") or 0) for row in boxes),
         # 同一个数字的两种东西：逐封邮件的失败，与每日简报的失败。后者不可能出现在

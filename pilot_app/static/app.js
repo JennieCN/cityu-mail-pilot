@@ -3395,9 +3395,50 @@ function renderDeliveryEvidence(health) {
   box.appendChild(details);
 }
 
+/* 「多少人是正常的」——这一屏的结论，放在最上面（2026-09-24 用户要求）。
+ *
+ * 判据在**服务端**（`pilot_app/web.py` 的 `_working_counts`）：正常 = 邮箱登得进去
+ * **而且**真的收到过本校来信。这里只负责把它说清楚，**绝不在这边重新数一遍**——
+ * 前端再算一次，两个数迟早会不一样，而运营者只会相信他先看到的那个。
+ *
+ * 其余几档分开列，并且每一档都写明**该找谁**：找用户（授权码）/ 找学校（转发规则）/
+ * 找我们（轮询）/ 谁都不用找（他自己暂停的）。合并成一句「N 位不正常」就把这条线索
+ * 抹掉了，而这一屏存在的意义正是「我该去动谁」。 */
+function renderWorkingLead(box, health) {
+  const w = health.working;
+  if (!w) return;
+  const lead = el('div', 'health-lead');
+  const head = el('div', 'health-lead-head');
+  head.appendChild(el('b', null, `${w.ok} / ${w.configured}`));
+  head.appendChild(el('span', 'health-lead-unit', ' 位在正常收信'));
+  lead.appendChild(head);
+  lead.appendChild(el('div', 'help', '正常 = 邮箱能登录，而且真的收到过本校来信。'));
+  const rest = [];
+  if (w.broken) rest.push(`${w.broken} 位邮箱登不进去（要用户重新生成授权码）`);
+  if (w.no_mail) rest.push(`${w.no_mail} 位从没收到过本校来信（要改学校那边的转发规则）`);
+  if (w.stale) rest.push(`${w.stale} 位轮询停了（要我们查）`);
+  if (w.paused) rest.push(`${w.paused} 位你自己暂停了`);
+  if (rest.length) lead.appendChild(el('div', 'help', `其余：${rest.join(' · ')}。`));
+  if (w.without_mailbox) {
+    lead.appendChild(el('div', 'help',
+      `另有 ${w.without_mailbox} 位注册了还没接好邮箱——他们收不到报告，也不会报错。`));
+  }
+  box.appendChild(lead);
+}
+
 function renderAdminHealth(health) {
   const box = $('admin-health');
   clear(box);
+  renderWorkingLead(box, health);
+  // 这些数字一个都没删，只是收进折叠块（2026-09-24 用户：「显示太多东西……我就想知道
+  // 多少人是正常的」）。排障时它们仍然要看，而且「轮询在跑」与「取信正常」**必须分开**——
+  // 合成一个数正是 2026-09-18 修掉的那个坑（轮询成功但登不进去的邮箱会被算成正常）。
+  const tech = el('details', 'advanced');
+  const techSummary = el('summary');
+  techSummary.appendChild(el('strong', null, '技术细节'));
+  techSummary.appendChild(el('span', 'help', ' 轮询、队列、失败报告 —— 排障时才需要看'));
+  tech.appendChild(techSummary);
+  const body = el('div', 'body metrics');
   [
     ['注册用户', `${health.users} / ${health.max_users}`],
     ['启用中', `${health.active_users} 人`],
@@ -3427,8 +3468,10 @@ function renderAdminHealth(health) {
     const cell = el('div');
     cell.appendChild(el('small', null, label));
     cell.appendChild(el('b', null, value));
-    box.appendChild(cell);
+    body.appendChild(cell);
   });
+  tech.appendChild(body);
+  box.appendChild(tech);
   renderDeliveryEvidence(health);
   // Every problem gets a sentence on this one line, and they are listed rather
   // than mutually exclusive. The card used to be an if/else chain: whichever
