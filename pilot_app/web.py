@@ -52,6 +52,7 @@ from . import reports as reports_mod
 from . import snooze
 from . import taskexport
 from . import setup_reminders
+from . import worker as worker_mod
 from .database import Database, utc_now
 from . import mailpresets
 from .mailpresets import public_mailbox_help
@@ -3376,10 +3377,10 @@ DELIVERY_ORDER = {"broken": 0, "stale": 1, "no_mail": 2, "ok": 3, "paused": 4}
 def _poll_freshness_seconds(row: dict[str, Any]) -> float:
     """How long a mailbox may go without a poll before the card calls it stale.
 
-    Derived from the interval that mailbox is actually polled at (Gmail is 15
-    minutes by Google's own advice, everything else is a minute), doubled to
-    allow for one slow round, with a floor so a fast mailbox is not called stale
-    between two heartbeats.
+    Derived from the interval that mailbox is **actually polled at**
+    (`worker.poll_interval_for`: the configured `INFE_PILOT_POLL_SECONDS`, or the
+    provider's own slower floor for Gmail), doubled to allow for one slow round,
+    with a floor so a fast mailbox is not called stale between two heartbeats.
 
     It used to reuse ``alerting.stale_after_for`` -- the *alert* threshold, an
     hour for QQ -- and the operator reported the consequence in plain words:
@@ -3387,11 +3388,22 @@ def _poll_freshness_seconds(row: dict[str, Any]) -> float:
     answering a different question: "should this wake somebody up" instead of
     "is this mailbox being collected right now". A dashboard that only moves
     once an hour is a dashboard nobody trusts.
+
+    **And then it happened again, the other way round** (2026-09-24, the
+    operator: 「为什么显示只有 2 个正常收信」). The second version derived the
+    window from the *provider floor* with a 60-second fallback -- correct while
+    the site polled every 60 s, and wrong the moment that day's earlier change
+    moved the poll interval to 300 s: the window stayed 180 s, so for 120 of
+    every 300 seconds **every** QQ/163/126 mailbox looked "stopped" and dropped
+    out of the count. The only survivors were the two Gmail mailboxes (their
+    floor is 900 s, so their window was 1800 s) -- which is exactly the "2" he
+    saw. Two lessons, both now structural: the window must come from the
+    interval the poller *uses* (never from a constant read off one provider's
+    documentation), and a changed poll interval has to be followed by whoever
+    renders freshness. `test_admin.FreshnessWindowTests` pins both.
     """
     try:
-        # `minimum_poll_seconds` returns 0 for providers with no documented
-        # floor, and 0 means "no floor", not "poll constantly".
-        interval = float(mailio_mod.minimum_poll_seconds({"imap_host": row.get("imap_host")}) or 60)
+        interval = float(worker_mod.poll_interval_for({"imap_host": row.get("imap_host")}))
     except Exception:  # pragma: no cover - a malformed row must not break the card
         interval = 60.0
     return max(180.0, interval * 2.0)

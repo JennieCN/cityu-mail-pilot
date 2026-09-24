@@ -35,6 +35,7 @@ os.environ["INFE_PILOT_ADMIN_EMAILS"] = "boss@example.com"
 os.environ.pop("INFE_PILOT_ORIGIN", None)
 
 from pilot_app import setup_reminders as setup_reminders_mod  # noqa: E402
+from pilot_app import worker as worker_mod  # noqa: E402
 from pilot_app import web  # noqa: E402
 from pilot_app import database as database_mod  # noqa: E402
 from pilot_app.database import Database  # noqa: E402
@@ -1750,6 +1751,41 @@ class AdminTests(unittest.TestCase):
                                    {"audience": "selected", "user_ids": too_many})
         self.assertEqual(status, 422)
         self.assertIn(str(setup_reminders_mod.BATCH_LIMIT), body["detail"])
+
+    def test_the_stale_window_follows_the_interval_we_actually_poll_at(self):
+        """**同一个症状又犯了一次，方向相反**（2026-09-24 用户：「为什么显示只有 2 个正常收信」）。
+
+        第二版窗口是按**供应商下限**算的（没有下限就按 60 秒 ×2 = 180 秒）——在站点每 60 秒
+        轮询一次时是对的。可就在同一天早上，轮询间隔被改成了 **300 秒**，窗口没跟着改：
+        于是每 300 秒里有 120 秒，**所有** QQ/163/126 邮箱都被判成「停摆」、被踢出正常那一档，
+        只剩下两个 Gmail（它们下限 900 秒 → 窗口 1800 秒）——他看到的「2」就是这两个。
+
+        窗口必须跟着**轮询器真正用的间隔**走（`worker.poll_interval_for`），
+        绝不能再从某一家供应商的文档里读一个常数。"""
+        with _mock.patch.object(worker_mod, "POLL_SECONDS", 300):
+            self.assertEqual(web._poll_freshness_seconds({"imap_host": "imap.qq.com"}), 600.0,
+                             "300 秒轮询一次 → 窗口要 600 秒（允许慢一轮），不是 180 秒")
+            self.assertEqual(web._poll_freshness_seconds({"imap_host": "imap.163.com"}), 600.0)
+            self.assertEqual(web._poll_freshness_seconds({"imap_host": "imap.gmail.com"}), 1800.0,
+                             "Gmail 自己的下限更慢，取它")
+            self.assertEqual(web._poll_freshness_seconds({}), 600.0)
+        with _mock.patch.object(worker_mod, "POLL_SECONDS", 60):
+            self.assertEqual(web._poll_freshness_seconds({"imap_host": "imap.qq.com"}), 180.0,
+                             "回到 60 秒轮询时窗口也跟着回来")
+
+    def test_a_mailbox_polled_one_cycle_ago_is_not_called_stopped(self):
+        """同一个改动在**行为层**的判据：300 秒轮询下，5 分钟前刚取过信的邮箱
+        必须仍然算正常——旧窗口（180 秒）会把它判成停摆，用户在面板上看到的就是那半天。"""
+        self._make_user("ok@example.com")
+        self._set_polled("ok@example.com", minutes_ago=5)
+        self._insert_school_mail("box-ok@example.com", hours_ago=1)
+        with _mock.patch.object(worker_mod, "POLL_SECONDS", 300):
+            health = web._service_health()
+        rows = {row["mailbox"]: row for row in health["delivery"]}
+        self.assertEqual(rows["box-ok@example.com"]["state"], "ok",
+                         "刚过一轮（300 秒）还没轮到下一次，不是「停摆」")
+        self.assertEqual(health["working"]["ok"], 1)
+        self.assertEqual(health["working"]["stale"], 0)
 
     def test_a_working_mailbox_stops_being_called_stale_within_minutes(self):
         """「收信正常的更新频率太慢了」——判据以前借的是**告警**阈值（QQ 一小时），

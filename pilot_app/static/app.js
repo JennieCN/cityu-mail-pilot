@@ -3455,12 +3455,22 @@ function renderAdminHealth(health) {
     // too, so "轮询在跑" can be full while "收信正常" is not -- which is exactly
     // the state a wrong authorisation code produces.
     ['轮询在跑', `${health.mailboxes_polled_recently} / ${health.mailboxes} 个邮箱（含取信失败的）`],
-    // 「取信正常」说的是**我们这一侧**：登得进去、轮询没停。它是个状态计数，好日子里
+    // 「登录正常」说的是**我们这一侧**：登得进去、轮询没停。它是个状态计数，好日子里
     // 一动不动，所以它单独立着证明不了什么——旁边那格才是重点：信有没有真的到。
-    ['取信正常', `${health.healthy_mailboxes} / ${health.mailboxes} 个在用的邮箱`
+    //
+    // **它比顶上那个「正常收信」通常大几位，而且那个差就是重点**：顶上还要求「真的收到过
+    // 本校来信」，所以差出来的那几位是**学校那边**的事（转发规则没生效），不在我们这条
+    // 通道上。2026-09-24 用户就是盯着这两个数问「为什么不一样」——名字起得像、差在哪却
+    // 没写在脸上。所以标签从「取信正常」改成「登录正常」（说的是登录，不是收信），
+    // 差几位、差的是谁，直接跟在后面。
+    ['登录正常', `${health.healthy_mailboxes} / ${health.mailboxes} 个在用的邮箱`
       + (health.mailboxes_paused ? `（另有 ${health.mailboxes_paused} 个已暂停，不算在内）` : '')
       + (health.newest_poll_seconds == null ? ''
-         : `（最近一次取信 ${humanDuration(health.newest_poll_seconds)}前）`)],
+         : `（最近一次取信 ${humanDuration(health.newest_poll_seconds)}前）`)
+      + (health.working && health.healthy_mailboxes > health.working.ok
+         ? ` · 比上面「正常收信」多 ${health.healthy_mailboxes - health.working.ok} 位：`
+           + '他们登得进去，但学校那边还没转发过信来'
+         : '')],
     ['最近 24 小时本校来信', `${health.school_mail_24h || 0} 封 · 来自 `
       + `${health.mailboxes_with_school_mail_24h || 0} 个邮箱`
       + (health.school_mail_7d ? `（7 天 ${health.school_mail_7d} 封）` : '')],

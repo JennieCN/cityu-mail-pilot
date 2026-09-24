@@ -364,15 +364,15 @@ async function ensurePanel(page, id) {
     check(Number(lead[1]) <= Number(lead[2]),
       '正常的个数不会超过分母', `${lead[1]} <= ${lead[2]}`);
   }
-  check(/轮询在跑/.test(health) && /取信正常/.test(health),
-    '技术细节里仍然把「轮询在跑」和「取信正常」分成两个数（一个数证明不了正常）',
+  check(/轮询在跑/.test(health) && /登录正常/.test(health),
+    '技术细节里仍然把「轮询在跑」和「登录正常」分成两个数（一个数证明不了正常）',
     health.replace(/\n/g, ' '));
   const polled = Number((health.match(/轮询在跑[\s\S]{0,40}?(\d+)\s*\//) || [])[1]);
-  const healthy = Number((health.match(/取信正常[\s\S]{0,40}?(\d+)\s*\//) || [])[1]);
+  const healthy = Number((health.match(/登录正常[\s\S]{0,40}?(\d+)\s*\//) || [])[1]);
   check(Number.isFinite(polled) && Number.isFinite(healthy),
     '两个数都读得出来', `polled=${polled} healthy=${healthy}`);
   check(healthy < polled,
-    '轮询得到但登不进去的邮箱，不能算进「取信正常」', `${healthy} < ${polled}`);
+    '轮询得到但登不进去的邮箱，不能算进「登录正常」', `${healthy} < ${polled}`);
 
   // -- 「正常」要能确定，就得看信有没有到 -----------------------------------
   // 用户原话：「收信正常那里一直显示 4，为什么每次都会这样，我要换一个方式来确定正常情况」。
