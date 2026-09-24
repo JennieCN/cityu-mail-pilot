@@ -9,6 +9,15 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!-- 「加到主屏幕之后是不是独立窗口」取决于**这一页自己**有没有这几样，不只是 manifest。
+     iOS 会把缺 `apple-mobile-web-app-capable` 的主屏图标当成**书签**，在浏览器里打开
+     —— 2026-09-24 用户报的「iOS 装下来还是浏览器的样子」就是这个。
+     状态栏用 `default` 而不是 `black-translucent`：我们的样式没有处理顶部安全区，
+     让内容钻到状态栏下面会被裁掉。
+     **老图标不会自己升级**：改完要「删掉图标 → 重新添加」。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mail Pilot">
 <meta property="og:title" content="CityU Mail Pilot">
 <meta property="og:description" content="把 CityU 的邮件变成一份要做的事。只读收信，摘要发回。">
 <meta property="og:type" content="website">

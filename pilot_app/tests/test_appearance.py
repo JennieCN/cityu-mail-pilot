@@ -1160,3 +1160,49 @@ class ReportModeTests(unittest.TestCase):
         self.assertIn("report_mode", columns)
         row = connection.execute("SELECT report_mode FROM profiles WHERE user_id='usr_old'").fetchone()
         self.assertEqual(row[0], "", "老账号必须落成「跟随站点」，不是被改成精简或完整")
+
+
+class StandaloneInstallTests(unittest.TestCase):
+    """「加到主屏幕」之后到底是不是**独立窗口**（没有地址栏）。
+
+    2026-09-24 用户报：**iOS 上装下来还是浏览器的样子**。根因不是 manifest ——
+    我们两个入口页都链了它、`display` 也一直是 `standalone` —— 而是页面**自己**缺
+    `apple-mobile-web-app-capable`：iOS 会把这样的主屏图标当成**书签**，在浏览器里
+    打开，地址栏当然还在（见 Apple 的 Safari Web Content Guide，以及两条 2026 年
+    独立复现的 issue：nbramia/LifeOS#727、liujuanjuan1984/a2a-client-hub#162）。
+
+    所以这条测试盯的是**两页 × 三样**：链了 manifest、声明了 capable、有主屏名称。
+    外加 manifest 自身的两件事：`display` 是 standalone、**`start_url` 落在 `scope` 里**
+    （掉出 scope 时 iOS 一样会甩回浏览器）。
+
+    **修好之后老图标不会自己升级** —— 主屏那个图标是安装那一刻烤进去的，必须
+    「删掉 → 重新添加」。测试盯不了这一步，所以写在 docstring 里。
+    """
+
+    #: 三样，缺一样 iOS 那条路就断（`needle`, 缺了会怎样）。
+    LOOKS_AT = (
+        ('rel="manifest"', "没有链 manifest"),
+        ('name="apple-mobile-web-app-capable" content="yes"',
+         "缺 apple-mobile-web-app-capable —— iOS 会当书签打开（地址栏还在）"),
+        ('name="apple-mobile-web-app-title"',
+         "缺主屏名称（会拿 <title> 顶上，在图标下面被截断）"),
+    )
+
+    def test_the_two_installable_pages_carry_everything_ios_looks_at(self):
+        # 用 assertTrue(needle in text) 而不是 assertIn：后者失败时会把**整页**
+        # （index.html 五千多行）打进输出，那等于让下一个人从一屏 HTML 里找一句话。
+        for name in ("index.html", "landing.html"):
+            text = (STATIC / name).read_text(encoding="utf-8")
+            for needle, why in self.LOOKS_AT:
+                self.assertTrue(needle in text, f"{name} {why}")
+
+    def test_the_manifest_keeps_the_app_inside_its_own_container(self):
+        document = appearance.manifest_document()
+        self.assertEqual(document.get("display"), "standalone")
+        scope, start = document.get("scope") or "", document.get("start_url") or ""
+        self.assertTrue(
+            scope and start.startswith(scope),
+            f"start_url {start!r} 不在 scope {scope!r} 里 —— "
+            "iOS 打开时会掉出应用容器，就又变成浏览器了")
+        self.assertEqual(document.get("short_name"), "Mail Pilot",
+                         "主屏图标下面那行字，与页面的 apple-mobile-web-app-title 要一致")

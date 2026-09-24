@@ -53,6 +53,10 @@ def manifest_document(theme: str = DEFAULT_THEME) -> dict:
         "name": "CityU Mail Pilot",
         "short_name": "Mail Pilot",
         "start_url": "/app",
+        # `scope` 显式写出来（按规范默认就是 start_url 的目录，但写出来更清楚）：
+        # iOS 用 scope 判断「还在不在这个应用容器里」，掉出去就甩回浏览器（带地址栏）。
+        # 与 `apple-mobile-web-app-capable` 是两条独立的路，**两条都要有**。
+        "scope": "/",
         "display": "standalone",
         "background_color": background_color,
         "theme_color": theme_color,
