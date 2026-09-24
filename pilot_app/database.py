@@ -833,6 +833,19 @@ REJECTED_INDEXES = (
 RETIRED_INDEXES = ("idx_messages_queue",) + REJECTED_INDEXES
 
 
+class CapacityFull(ValueError):
+    """名额已满。
+
+    为什么要有它（2026-09-24 的只读清点指出）：名额检查原来**只在 HTTP 层**做
+    （`count_users() >= limit` → 403），而它与 `create_user` 里的 INSERT 之间是一个窗口——
+    服务器是 `ThreadingHTTPServer`，两个同时到达的注册可以双双通过检查。
+    数据层现在**在同一个事务里**再数一次，并用这个类型说清是哪一种拒绝
+    （web 层据此翻成 403，而不是 400「注册失败」）。
+
+    故意继承 `ValueError`：老的调用方按 ValueError 处理仍然说得通。
+    """
+
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -1313,7 +1326,8 @@ class Database:
             connection.execute("PRAGMA foreign_keys=ON")
 
     def create_user(self, email: str, password_hash: str, invite_hash: str = "",
-                    *, signup_extras: Optional[dict[str, str]] = None) -> dict[str, Any]:
+                    *, signup_extras: Optional[dict[str, str]] = None,
+                    max_users: Optional[int] = None) -> dict[str, Any]:
         """Create one account.
 
         ``invite_hash`` is **optional since 2026-09-22**: the invite system was
@@ -1350,11 +1364,26 @@ class Database:
                 "SELECT status FROM users WHERE email=? COLLATE NOCASE", (address,)).fetchone()
             if taken:
                 raise ValueError(_email_taken_message(str(taken["status"])))
+            # 名额（传了 `max_users` 才管）：**一条语句里同时数名额与插行**。
+            # 先 `SELECT COUNT(*)` 再 INSERT 是不够的——`SELECT` 不拿写锁，中间那一段窗口
+            # 真的能被并发注册穿过去（实测 6 个线程抢 1 个名额，3 个成功；
+            # 判据见 `test_registration_race.CapacityRaceTests`）。这一条是原子的：
+            # 写语句执行时 SQLite 持有写锁，子查询在同一把锁下求值。
+            insert_sql = "INSERT INTO users(id,email,password_hash,created_at) VALUES(?,?,?,?)"
+            insert_params: tuple = (user_id, address, password_hash, now)
+            if max_users is not None:
+                # 子查询里的谓词必须与 `count_users()`（面板与快路径看到的那个数）
+                # **逐字一致**：那边数的是 `status!='deleted'`。
+                # 2026-09-24 宿舍机复验时发现这里原来数的是**全部行**——现在不可达（删除是真
+                # DELETE，库里没有软删行），但一旦有软删行，就会变成「面板说有位置、注册 403」。
+                insert_sql = ("INSERT INTO users(id,email,password_hash,created_at) "
+                              "SELECT ?,?,?,? WHERE (SELECT COUNT(*) FROM users "
+                              "WHERE status!='deleted') < ?")
+                insert_params = (user_id, address, password_hash, now, int(max_users))
             try:
-                connection.execute(
-                    "INSERT INTO users(id,email,password_hash,created_at) VALUES(?,?,?,?)",
-                    (user_id, address, password_hash, now),
-                )
+                inserted = connection.execute(insert_sql, insert_params)
+                if max_users is not None and inserted.rowcount != 1:
+                    raise CapacityFull("当前名额已满。")
             except sqlite3.IntegrityError as exc:
                 # 兜底：两个人同一瞬间拿同一个邮箱注册时，上面那次检查会双双通过，
                 # 唯一约束才是最后一道。这里必须给同一句话，不能再变成 500。

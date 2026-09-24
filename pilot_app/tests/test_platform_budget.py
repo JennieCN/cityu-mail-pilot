@@ -537,6 +537,20 @@ class ServiceGateTests(BudgetTestCase):
         super().setUp()
         self.service = PilotService(self.db, self.secrets)
 
+    def test_the_connection_test_does_not_spend_a_dry_account(self):
+        """「测试模型」按钮也是花钱的：账上没钱时**一次调用都不该发**。
+
+        以前只有出报告那条路有这道闸，于是余额见底时点测试仍会真花钱
+        （2026-09-24 的只读清点指出：`require_available` 全树只有一个调用点）。
+        """
+        user = self._user()
+        self._reading("0.00", available=False)
+        with mock.patch.object(providers, "generate") as generate:
+            with self.assertRaises(providers.ProviderError) as caught:
+                self.service.test_model(user["id"])
+            generate.assert_not_called()
+        self.assertIn("代付的模型额度已经用尽", str(caught.exception))
+
     def test_a_users_own_key_is_never_affected_by_the_platform_balance(self):
         user = self._user(own_model=True)
         self._reading("0.00", available=False)

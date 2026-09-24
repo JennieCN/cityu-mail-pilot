@@ -158,3 +158,67 @@ class InviteRaceTests(unittest.TestCase):
         self.assertNotIn("OperationalError", outcomes,
                          "并发写同一个库时不该把 SQLITE_BUSY 直接抛出去（busy_timeout 该兜住它）")
         self.assertEqual(outcomes.count("ok"), 1)
+
+
+class CapacityRaceTests(unittest.TestCase):
+    """名额上限：最后一道防线在**数据层同一个事务**里（2026-09-24）。
+
+    以前名额只在 HTTP 层查一次（`count_users() >= limit`），而它与 `create_user` 的
+    INSERT 之间有窗口——服务器是 `ThreadingHTTPServer`，两个同时到达的注册可以双双通过。
+    修法是把复核放进同一个事务；这里两条：数字层拒绝，以及**真线程**下不超额。
+    """
+
+    def test_the_data_layer_refuses_at_the_cap(self):
+        database = _db("cap-layer")
+        base = database.count_users()
+        database.create_user("cap-a@example.com", PASSWORD_HASH, "", max_users=base + 1)
+        with self.assertRaises(database_mod.CapacityFull):
+            database.create_user("cap-b@example.com", PASSWORD_HASH, "", max_users=base + 1)
+        self.assertEqual(database.count_users(), base + 1, "被拒的那次不许建号")
+
+    def test_concurrent_registrations_cannot_exceed_the_cap(self):
+        database = _db("cap-race")
+        cap = database.count_users() + 1        # 只还剩**一个**名额
+        outcomes: list[str] = []
+        lock = threading.Lock()
+
+        def worker(index: int) -> None:
+            try:
+                database.create_user(f"cap-race-{index}@example.com", PASSWORD_HASH, "",
+                                     max_users=cap)
+                result = "ok"
+            except database_mod.CapacityFull:
+                result = "full"
+            except Exception as exc:            # noqa: BLE001 - 任何别的异常都要看得见
+                result = f"boom:{type(exc).__name__}"
+            with lock:
+                outcomes.append(result)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        self.assertEqual(sorted(outcomes), ["full"] * 5 + ["ok"], outcomes)
+        self.assertEqual(database.count_users(), cap, "并发注册突破了名额上限")
+
+    def test_a_soft_deleted_row_does_not_eat_a_slot(self):
+        """名额数的必须是「没删除的账号」，与 `count_users()`（面板/快路径）**同一个集合**。
+
+        2026-09-24 宿舍机复验时发现那条原子语句数的是 `COUNT(*) FROM users` 全部行，
+        而 `count_users()` 数的是 `status!='deleted'`。现在不可达（删除走的是真 DELETE，
+        库里不存在软删行），但这是一颗地雷：一旦有软删行，面板会说「还有位置」，
+        而注册会 403——**同一件事两个数字**。这条用一行直接 SQL 造出那种历史行来钉住它。
+        """
+        database = _db("cap-soft-deleted")
+        with database.connect() as connection:
+            connection.execute(
+                "INSERT INTO users(id,email,password_hash,created_at,status) VALUES(?,?,?,?,?)",
+                ("legacy-ghost", "ghost@example.com", PASSWORD_HASH, "2020-01-01T00:00:00+00:00", "deleted"))
+        base = database.count_users()
+        self.assertEqual(base, 0, "软删的行不该出现在 count_users() 里（这条是前提）")
+        # 名额 = 1：那个软删行若能占位，这一行就会抛 CapacityFull
+        database.create_user("cap-live@example.com", PASSWORD_HASH, "", max_users=base + 1)
+        self.assertEqual(database.count_users(), 1)
+        with self.assertRaises(database_mod.CapacityFull):
+            database.create_user("cap-live-2@example.com", PASSWORD_HASH, "", max_users=base + 1)

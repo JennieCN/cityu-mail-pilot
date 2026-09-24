@@ -160,6 +160,22 @@ class SynthesizeTests(unittest.TestCase):
         self.assertEqual(usage, {})
         self.assertIsNone(connection)
 
+    def test_a_dry_platform_account_is_not_poked_either(self):
+        """日报综览走的是同一个钱闸（2026-09-24 补）：账上没钱就不该再花一次。"""
+        self.db.key_circuit_open.return_value = False
+        self.service.model_connection = mock.Mock(return_value={
+            "provider": "deepseek", "model": "deepseek-flash", "base_url": "",
+            "platform": True, "config_json": "{}", "encrypted_api_key": b"x"})
+        self.service.connection_key = mock.Mock(return_value="k")
+        self.service.require_budget_for = mock.Mock(
+            side_effect=providers.ProviderError("代付的模型额度已经用尽"))
+        with mock.patch.object(providers, "generate") as called:
+            text, usage, connection = digest_synthesis.synthesize(
+                self.service, self._user(), empty_digest())
+        called.assert_not_called()
+        self.assertEqual(text, "")
+        self.assertIsNone(connection)
+
     def test_an_open_circuit_is_not_poked_again(self):
         self.db.key_circuit_open.return_value = True
         self.service.model_connection = mock.Mock()

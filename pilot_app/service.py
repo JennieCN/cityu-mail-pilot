@@ -188,6 +188,24 @@ class PilotService:
         return (isinstance(exc, providers.ProviderError)
                 and not isinstance(exc, providers.TransientProviderError))
 
+    def require_budget_for(self, connection: dict) -> None:
+        """要拿**管理员那把 key** 去花钱之前，唯一的一道闸（三条花钱路径都走它）。
+
+        为什么抽出来：这道闸原来只写在 `_generate_with_retry`（出报告那条路）里，
+        而「测试模型」按钮与日报综览各自直接调 `providers.generate`——于是**账上没钱时
+        它们照样真花一次调用**（2026-06-24 的只读清点指出，`require_available` 全树只有
+        一个调用点）。本机那台不过这道闸：它没有账户，问它只会「读不到 → 放行」，
+        而它本来也不花钱。
+
+        **故意不过闸的还有两处**（2026-09-24 宿舍机复验时问出来的；边界写死在这里，
+        并由 `test_budget_gate_coverage` 按源码清点盯着）：AI 助手走自己的日上限
+        （`agent.budget_state`，默认 30 次/天，调用前先读）；三个运维探针
+        （`check-model` / `check-localmodel` / `check-search`）各花一次调用——
+        它们是「这把 key 还活着吗」的诊断，余额见底时探针失败本身就是那个答案。
+        """
+        if connection.get("platform") and providers.is_metered(connection):
+            budget.require_available(self.db)
+
     def _generate_with_retry(self, user_id: str, *,
                              attempts: Optional[list[dict[str, Any]]] = None,
                              **kwargs: Any) -> tuple[Any, dict[str, Any]]:
@@ -226,10 +244,7 @@ class PilotService:
             call.update(provider=connection["provider"], model=connection["model"],
                         base_url=connection.get("base_url") or "",
                         api_key=self.connection_key(connection))
-            if connection.get("platform") and providers.is_metered(connection):
-                # 借用管理员这把 key（**花账户里的钱**）之前的那道闸。本机那台不过这道闸：
-                # 它没有账户，问它只会得到「读不到 → 放行」，而它本来也不花钱。
-                budget.require_available(self.db)
+            self.require_budget_for(connection)
             for attempt in range(1, per_credential + 1):
                 try:
                     result = providers.generate(**call)
@@ -1053,6 +1068,8 @@ class PilotService:
         connection = self.model_connection(user_id)
         if not connection:
             raise providers.ProviderError("尚未配置模型 API。")
+        # 账上没钱时**连测试也不该真花一次调用**（以前只有出报告那条路有这道闸）。
+        self.require_budget_for(connection)
         answer = providers.generate(
             provider=connection["provider"], model=connection["model"], base_url=connection["base_url"],
             api_key=self.connection_key(connection), prompt="只回复：连接成功 / Connection successful",

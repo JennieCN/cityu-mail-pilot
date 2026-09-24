@@ -67,6 +67,7 @@ from .security import (
     generate_temporary_password,
     hash_password,
     new_token,
+    spend_verification_time,
     token_hash,
     validate_public_host,
     verify_password,
@@ -2037,7 +2038,10 @@ def register(request: Request) -> Response:
     code = invite_code.strip()
     try:
         user = database.create_user(email, hash_password(password), token_hash(code) if code else "",
-                                    signup_extras=extras)
+                                    signup_extras=extras, max_users=limit)
+    except database_mod.CapacityFull as exc:
+        # 上面那次 `count_users()` 只是快路径；真正守住的是数据层同一个事务里的复核。
+        raise ApiError(403, i18n.mark("当前名额已满。")) from exc
     except (ValueError, SecurityError) as exc:
         raise ApiError(400, str(exc)) from exc
     return json_response(user, cookies=[_session_cookie(user["id"])])
@@ -2051,7 +2055,14 @@ def login(request: Request) -> Response:
     attempt_key = token_hash(email)
     _rate_limit(attempt_key)
     user = get_db().find_user_for_login(email)
-    if not user or not verify_password(password, user["password_hash"]):
+    if not user:
+        # **不是** `not user or not verify_password(...)`：那样会短路，账号不存在时一次
+        # PBKDF2 都不跑，于是两条失败路径的耗时差一个数量级——文案恒定挡不住计时这一路。
+        # 现在两条路都恰好跑一次（见 `security.spend_verification_time` 的注释）。
+        spend_verification_time(password)
+        _rate_limit(attempt_key, failed=True)
+        raise ApiError(401, i18n.mark("邮箱或密码错误。"))
+    if not verify_password(password, user["password_hash"]):
         _rate_limit(attempt_key, failed=True)
         raise ApiError(401, i18n.mark("邮箱或密码错误。"))
     _clear_attempts(attempt_key)

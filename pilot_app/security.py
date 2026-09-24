@@ -49,6 +49,25 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+#: 一个**固定的假哈希**，唯一用途是「把该花的时间花掉」：账号不存在时也照跑一次
+#: 同参数（600k 次迭代）的 PBKDF2。为什么需要它（2026-09-24 的只读清点指出）：
+#: 登录原来是 `if not user or not verify_password(...)` —— 账号不存在时**短路**，
+#: 一次 PBKDF2 都不跑，于是「账号不存在」比「密码错」快一个数量级；响应文案再恒定
+#: 也挡不住**计时**这条侧信道，那就是一个可用的账号枚举 oracle。
+#: 口令本身不重要（它不是任何人的密码），唯一要求是格式合法、迭代数与真哈希一致。
+TIMING_EQUALIZER_HASH = (
+    "pbkdf2_sha256$600000$_ZmTRV90U2UQtjHTrbTXUw==$L2IlyEm1bAmWP2bC0dG-IqAK1C1BqU5scnlD3G6HYZo="
+)
+
+
+def spend_verification_time(password: str) -> None:
+    """照跑一次口令校验、丢弃结果（见 `TIMING_EQUALIZER_HASH`）。
+
+    调用点是登录时「账号不存在」那一支：它保证两条失败路径的**计算量相同**。
+    """
+    verify_password(password, TIMING_EQUALIZER_HASH)
+
+
 # 临时密码的字符表：**故意去掉 0 O 1 l I**。这串东西要走的路是「运营者念出来／微信
 # 发过去 → 用户在手机上敲一遍」，而 `0` 和 `O` 在这条路上分不清是最常见的一次失败。
 # 它的表现是「用户说**还是**登不上」——我们会去查服务器，服务器一切正常，因为密码

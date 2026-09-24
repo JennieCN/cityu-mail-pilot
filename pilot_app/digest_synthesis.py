@@ -123,6 +123,8 @@ def synthesize(service: Any, user: dict[str, Any],
         connection = service.model_connection(user["id"])
         if not connection:
             return "", {}, None
+        # 与出报告、连接测试同一条钱闸：走平台那把 key 时，账上没钱就不花。
+        service.require_budget_for(connection)
         result = providers.generate(
             provider=connection["provider"], model=connection["model"],
             base_url=connection["base_url"], api_key=service.connection_key(connection),

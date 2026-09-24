@@ -411,6 +411,48 @@ class WebTests(unittest.TestCase):
         finally:
             os.environ["INFE_PILOT_MAX_USERS"] = "50"
 
+    def test_an_unknown_account_still_spends_the_password_time(self):
+        """账号不存在时也要跑一次 PBKDF2——否则响应耗时本身就是账号枚举 oracle。
+
+        判据不看时间（会飘），看**它真的被调用了**（`security.spend_verification_time`）。
+        """
+        with mock.patch.object(web, "spend_verification_time") as equalizer:
+            status, _, _ = self.client.post("/api/auth/login", {
+                "email": "nobody-in-this-install@example.com",
+                "password": "a-long-pilot-password"})
+        self.assertEqual(status, 401)
+        equalizer.assert_called_once()
+
+    def test_a_wrong_password_does_not_run_the_equalizer(self):
+        """两条失败路径互斥：密码错时跑的是**真**校验，不是那次等时的。"""
+        status, user, _ = self.client.post("/api/auth/register", {
+            "email": "timing@example.com", "password": "a-long-pilot-password",
+            "accepted_terms": True})
+        self.assertEqual(status, 200, user)
+        with mock.patch.object(web, "spend_verification_time") as equalizer:
+            status, _, _ = self.client.post("/api/auth/login", {
+                "email": "timing@example.com", "password": "definitely-not-it"})
+        self.assertEqual(status, 401)
+        equalizer.assert_not_called()
+
+    def test_the_data_layer_is_the_one_that_really_holds_the_cap(self):
+        """把 HTTP 层那次快检查骗过去，数据层仍然要拒，而且仍然翻成 403。
+
+        真正的防线是 `create_user(max_users=…)` 里那条**原子**语句；上面那次
+        `count_users()` 只是给人一句快话，两者之间有并发窗口
+        （见 `test_registration_race.CapacityRaceTests`）。
+        """
+        os.environ["INFE_PILOT_MAX_USERS"] = str(db.count_users())
+        try:
+            web.reset_signup_rate_limit()
+            with mock.patch.object(db, "count_users", return_value=0):
+                status, body, _ = self.client.post("/api/auth/register", {
+                    "email": "cap-race@example.com", "password": "a-long-pilot-password",
+                    "accepted_terms": True})
+            self.assertEqual(status, 403, body)
+        finally:
+            os.environ["INFE_PILOT_MAX_USERS"] = "50"
+
 
     def test_missing_api_key_is_reported_clearly(self):
         self.invite("key-invite")
