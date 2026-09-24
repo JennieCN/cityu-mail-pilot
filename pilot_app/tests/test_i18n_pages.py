@@ -255,9 +255,14 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(i18n.t("这句话还没译过。", "zh-Hans"), "这句话还没译过。")
 
     def test_parameters_are_substituted_from_the_translation(self):
-        self.assertEqual(i18n.t("现在有 {count} 个账号接好了邮箱，其中一个是我自己。",
-                                "en", count=7),
-                         "There are 7 accounts with an inbox connected, one of which is mine.")
+        """占位符按**译文**那一份来填：译文可以换顺序、可以丢掉中文的量词。
+
+        这条以前拿「现在有 {count} 个账号接好了邮箱…」当载体；那句 2026-09-24 随 PR #10
+        从页面上删掉了（四本词典里的孤儿也一起清了），所以换成还在用的客服群日期那句 ——
+        它的英文是 `before {month}/{day}`：顺序换了、中文的「月/日」也没了，
+        正好是这条测试要钉的东西。
+        """
+        self.assertEqual(i18n.t("{month} 月 {day} 日前", "en", month=9, day=29), "before 9/29")
 
 
 class NegotiationTests(unittest.TestCase):
