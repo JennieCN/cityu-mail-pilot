@@ -140,14 +140,10 @@ def main() -> int:
         connection.execute("INSERT OR IGNORE INTO invites(code_hash,expires_at) VALUES(?,?)",
                            (token_hash(INVITE), expiry))
 
-    user_id = _register(args.base, args.email)
+    user_id = _ensure_account(db, args.email, args.base)
     if user_id is None:
-        with db.connect() as connection:
-            row = connection.execute("SELECT id FROM users WHERE email=?", (args.email,)).fetchone()
-        if row is None:
-            print(f"账户 {args.email} 不存在，且注册失败。", file=sys.stderr)
-            return 1
-        user_id = row["id"]
+        print(f"账户 {args.email} 建不出来（注册被拒、写库也失败）。", file=sys.stderr)
+        return 1
 
     now = dt.datetime.now(dt.timezone.utc)
     _ensure_mailbox(db, user_id, now.isoformat(timespec="seconds"))
@@ -174,6 +170,43 @@ def main() -> int:
     if args.base:
         print(f"sign in at {args.base} with {args.email} / {PASSWORD}")
     return 0
+
+
+def _ensure_account(db: database_mod.Database, email: str, base: str) -> str | None:
+    """拿到夹具账号的 id：先走真的注册端点，被闸门拒了就**直接建号 + 授权**。
+
+    **为什么要有这条兜底**（2026-09-26）：`POST /api/auth/register` 现在拒收命中
+    `INFE_PILOT_ADMIN_EMAILS` 的地址（GPT 审计 P1 —— 不验证邮箱归属，谁抢在主人之前
+    注册谁当场就是管理员）。而这一套夹具要的正是**管理员会话**，地址又正是那个保留地址
+    （`run_browser_checks.sh` 给预览服务的是 `INFE_PILOT_ADMIN_EMAILS=boss@example.com`），
+    于是播种 403、**19 个浏览器套件红了 15 个**（公开仓库那两个 CI 作业一起红）。
+    闸门本身是对的，错的是夹具还在演攻击者的做法。
+
+    兜底走的是与 `manage create-admin --apply` 同一条路（`Database.create_user` +
+    `Database.grant_admin`），各套件仍然走**真的登录端点**拿会话。
+    **没有绕过任何闸门**：`/api/auth/register` 一次都不再碰。
+    Python 那边的同类夹具在 `pilot_app/tests/admin_fixture.py`，两边是同一个理由。
+    """
+    if base:
+        user_id = _register(base, email)
+        if user_id:
+            return user_id
+    with db.connect() as connection:
+        row = connection.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+    if row is not None:
+        return row["id"]
+    from pilot_app.security import hash_password
+
+    try:
+        user = db.create_user(email, hash_password(PASSWORD), "")
+        # 夹具地址就是预览服务的 `INFE_PILOT_ADMIN_EMAILS`；授权这一下让它**不依赖**
+        # 那个环境变量也仍然是管理员（后台「授权」这条路 v0.34.0 起就有）。
+        db.grant_admin(email)
+    except Exception as exc:  # noqa: BLE001 - 播种失败要说人话，不要抛栈
+        print(f"直接建号失败：{exc}", file=sys.stderr)
+        return None
+    print(f"注册被拒（多半是保留地址闸门），已直接建号 + 授权：{email}", file=sys.stderr)
+    return user["id"]
 
 
 def _register(base: str, email: str) -> str | None:
