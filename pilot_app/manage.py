@@ -14,6 +14,7 @@ import argparse
 import base64
 import datetime as dt
 import getpass
+from getpass import getpass as _prompt_password  # 见 create-admin：main() 里有一处局部 import 遮蔽了模块名
 import hashlib
 import os
 import json
@@ -1658,6 +1659,64 @@ def check_metrics(db: Database) -> int:
     return 0
 
 
+def poll_interval(db: Database, *, as_json: bool = False) -> int:
+    """把「轮询间隔」这一个旋钮的账算出来：现在多快、代价多大、规模上来会怎样。
+
+    **为什么要有这条命令**（2026-09-26）：生产在 2026-09-24 把这一个值从 60 秒改成 300 秒，
+    理由是按 **1500 个邮箱**算的（1500 ÷ 60 = 25 次登录/秒，一轮 94 秒 > 60 秒跑不完），
+    而当时真实的规模是 15 个邮箱。**为 80 倍于当时的规模提前付的代价，账是用户在日常里付的**：
+    2026-09-26 用户报「从收到转发邮件到收到处理好的邮件太久了」，实测那一段就是
+    「等下一次轮询」（中位 113–659 秒；端到端里模型只占 6–10 秒）。
+
+    这个值是 `INFE_PILOT_POLL_SECONDS`，落在 `/etc/cityu-mail-pilot/pilot.env`，改完要重启
+    **worker 与 web 两个单元**（后台「正常收信」的新鲜度窗口按它算，只重启 worker 会让那个数
+    显示错 —— 2026-09-24 真的发生过）。而在那之前，**没有任何地方告诉你现在这个值意味着
+    多少次登录、一轮跑不跑得完**。这条命令就是那个地方。
+
+    只读：只数库里的邮箱。不连任何邮箱、不写库、不需要主密钥。
+    """
+    from pilot_app import mailio as mailio_mod
+    from pilot_app import worker as worker_mod
+
+    rows = [row for row in db.all_mailboxes() if int(row.get("enabled") or 0)]
+    interval = worker_mod.POLL_SECONDS
+    slower = [row for row in rows if mailio_mod.minimum_poll_seconds(row) > interval]
+    budget = worker_mod.poll_budget(len(rows), interval=interval,
+                                    workers=worker_mod.POLL_WORKERS)
+    scale = worker_mod.poll_budget(worker_mod.SCALE_TARGET_MAILBOXES, interval=interval,
+                                   workers=worker_mod.POLL_WORKERS)
+    if as_json:
+        print(json.dumps({"now": budget, "at_scale_target": scale,
+                          "paused_or_disabled_ignored": True,
+                          "slower_provider_floor": len(slower)}, ensure_ascii=False))
+        return 0 if budget["fits"] else 1
+
+    print(f"轮询间隔    {interval} 秒（INFE_PILOT_POLL_SECONDS；代码默认 60）"
+          f" · 轮询线程 {budget['workers']}")
+    print(f"在用邮箱    {budget['mailboxes']} 个"
+          + (f"（其中 {len(slower)} 个有更慢的供应商下限，Gmail 是 900 秒）" if slower else ""))
+    print(f"登录量      {budget['logins_per_second']:.2f} 次/秒"
+          f" ≈ {budget['logins_per_day']:,.0f} 次/天（按 QQ/163 那一档算；Gmail 更少）")
+    print(f"一轮轮询    约 {budget['round_seconds']} 秒"
+          f"（ceil({budget['mailboxes']} ÷ {budget['workers']}) × 每邮箱约 "
+          f"{budget['cost_seconds']} 秒的估计）"
+          + ("≤ 间隔 ✓" if budget["fits"] else " > 间隔 ✗ **跑不完**"))
+    print(f"发现延迟    0–{budget['worst_delay_seconds']:.0f} 秒"
+          f"（均匀到达时中位约 {budget['median_delay_seconds']:.0f} 秒）"
+          f" + 模型 6–10 秒")
+    print(f"到 {scale['mailboxes']} 个邮箱、同样的设置："
+          f"{scale['logins_per_second']:.0f} 次/秒 · 一轮约 {scale['round_seconds']} 秒"
+          + ("≤ 间隔 ✓" if scale["fits"] else " > 间隔 ✗ —— 那时要么抬 POLL_WORKERS，"
+             "要么把间隔拉长（2026-09-24 就是拉了间隔，2026-09-26 又拉回来了）"))
+    if not budget["fits"]:
+        print("\n✗ 一轮轮询比间隔还长：实际间隔会被拉成一轮的真实耗时，"
+              "邮箱会一路显示成「轮询停了」。先把间隔调大或把轮询线程调多。")
+        return 1
+    print("\n✓ 一轮跑得完。要更快就把间隔调小（代价是登录量按比例上去）；"
+          "供应商侧的风控阈值四家都没公布，见 docs/poll-latency-2026-09-26.md。")
+    return 0
+
+
 # Identifies this program to the download host. See the note where it is used:
 # DB-IP refuses urllib's default agent with a 403.
 _DOWNLOAD_USER_AGENT = ("Mozilla/5.0 (compatible; cityu-mail-pilot; "
@@ -1910,6 +1969,63 @@ def _stdout_is_a_journal() -> bool:
     return bool(inode) and fd1 == f"socket:[{inode}]"
 
 
+def create_admin(database: Database, user_email: str, password: str, *, apply: bool = False) -> int:
+    """给环境变量点名的**保留地址**建号（开放注册已经被闸门堵住了）。
+
+    为什么要有这条命令：**开放注册绝不能产生管理员**（2026-09-26 外部审计的 P1）。
+    `_is_admin()` 按邮箱**字符串**认人，而注册不验证邮箱归属 —— 所以「抢在主人之前
+    用他的地址注册」曾经是一条真的提权路。`web.register` 里的闸门把那条路堵了，
+    这条命令是留给**真正拥有这台机器的人**的出路：它需要 shell 权限，
+    而 shell 权限正是我们唯一能当作"归属证明"的东西。
+
+    与 `Database.grant_admin` 的分工：那边只给**已有**账号加权限（它的 docstring 已经
+    写明了同一个道理：给一个还没注册的地址授权，等于给"以后可能有人用错拼的地址注册"
+    留了一个静默的承诺）；这边负责**先把账号建出来**，正是那条规则堵住的那一步。
+
+    不做的事：不打印密码、不把密码写进审计、不接受密码出现在 argv 里
+    （CLI 从 stdin 读，见下）。默认只预演，`--apply` 才写。
+    """
+    address = str(user_email or "").strip()
+    if "@" not in address or len(address) > 254:
+        print("请给一个像邮箱的地址（--email）。")
+        return 2
+    if not password:
+        print("没有读到密码。密码从 stdin 读一行（不回显），不要写在命令行上。")
+        return 2
+    from .security import hash_password  # 与 web 层同一个哈希函数，不另写一份
+
+    existing = database.find_user_for_login(address)
+    if existing:
+        print(f"{_mask(address)} 已经有账号了。")
+        plan = "把管理员权限记到它的 is_admin 上（环境变量那份本来就是按邮箱生效的）。"
+    else:
+        plan = "建一个新账号，并把它记成管理员。"
+    print(f"将要做：{plan}")
+    print("  写库前会先备份（部署脚本负责）；这条命令自己只写 users 一行 + profiles 一行。")
+    if not apply:
+        print("这是预演（没有加 --apply）。")
+        return 0
+    if not existing:
+        try:
+            # `max_users=None`：名额上限管的是"还能收多少用户"，**不该拦管理员自己的号**。
+            user = database.create_user(address, hash_password(password), "")
+        except ValueError as exc:
+            print(f"建号失败：{exc}")
+            return 2
+        print(f"已建号：{_mask(address)}")
+    else:
+        user = existing
+    try:
+        row = database.grant_admin(address)
+    except (KeyError, ValueError) as exc:
+        print(f"授权失败：{exc}")
+        return 2
+    if int(row.get("is_admin") or 0):
+        print(f"{_mask(address)} 现在是管理员（is_admin=1）。")
+    print("别忘了：环境变量 INFE_PILOT_ADMIN_EMAILS 里也要有它，或者走后台的授权按钮。")
+    return 0
+
+
 def reset_password(database: Database, user_email: str, *, note: str = "",
                    apply: bool = False) -> int:
     """Give one existing user a fresh temporary password, from the shell.
@@ -2003,6 +2119,13 @@ def main() -> int:
     invite = sub.add_parser("create-invite")
     invite.add_argument("--label", default="pilot")
     invite.add_argument("--days", type=int, default=7)
+    create_admin_parser = sub.add_parser(
+        "create-admin",
+        help="给环境变量点名的保留地址建号（开放注册进不来；默认只预演）",
+    )
+    create_admin_parser.add_argument("--email", required=True,
+                                     help="管理员邮箱；应当与 INFE_PILOT_ADMIN_EMAILS 里的一致")
+    create_admin_parser.add_argument("--apply", action="store_true", help="真的写库；省略时只预演")
     reset = sub.add_parser(
         "reset-password",
         help="给某个已注册用户重设一个临时密码（只有能登服务器的人用得了；默认只预演）",
@@ -2166,6 +2289,11 @@ def main() -> int:
         "check-metrics",
         help="在真机上采一次主机指标并核对读数（浏览器套件跳过的那几条由它负责）",
     )
+    poll_parser = sub.add_parser(
+        "poll-interval",
+        help="算「轮询间隔」这一个旋钮的账：登录量、一轮跑不跑得完、发现延迟、规模上来会怎样",
+    )
+    poll_parser.add_argument("--json", action="store_true", help="给脚本读的机器可读输出")
     geo = sub.add_parser(
         "geoip-update",
         help="下载 DB-IP Lite 并建出离线国家/城市库（访问统计的“地址”靠它，不用注册）",
@@ -2233,6 +2361,11 @@ def main() -> int:
         return invitations(db, limit=args.limit)
     if args.command == "platform-cost":
         return platform_cost(db, refresh_now=args.refresh, as_json=args.json)
+    if args.command == "create-admin":
+        # 密码**只能**从标准输入读：写进 argv 就会进进程表、shell 历史与 journal。
+        # 预演时不需要真密码，但也不能是空串（免得被"没读到密码"那条拒绝挡住预演）。
+        password = _prompt_password("管理员密码（不回显）：") if args.apply else "x" * 12
+        return create_admin(db, args.email, password, apply=args.apply)
     if args.command == "reset-password":
         return reset_password(db, args.user_email, note=args.note, apply=args.apply)
     if args.command == "master-key-verified":
@@ -2243,6 +2376,8 @@ def main() -> int:
         return restore_drill(db, args.backup)
     if args.command == "check-metrics":
         return check_metrics(db)
+    if args.command == "poll-interval":
+        return poll_interval(db, as_json=args.json)
     if args.command == "check-providers":
         return check_providers(db, timeout=max(3, int(args.timeout or providercheck.PROBE_TIMEOUT)))
     if args.command == "check-mailboxes":

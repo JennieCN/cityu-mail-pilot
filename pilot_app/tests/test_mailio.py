@@ -1,5 +1,7 @@
 """IMAP failure-message tests: pilot users must get actionable advice."""
 
+import datetime
+import email.utils
 import imaplib
 import ssl
 import unittest
@@ -536,3 +538,56 @@ class FetchOriginalTests(unittest.TestCase):
         result = self._fetch(fake)
         self.assertTrue(result["truncated"])
         self.assertEqual(len(result["message"]["body"]), mailio.MESSAGE_BODY_LIMIT)
+
+
+class OutboundRequiredHeadersTests(unittest.TestCase):
+    """发出去的信必须有 `Date` —— 这条是从**收件方留存的报头**里发现的。
+
+    2026-09-26 的经过：用户报「刚刚那封 AI 摘要没收到」。把 QQ 收件箱里那一封的**原始报头**
+    拉下来看（`INBOX` uid 2646，`Received: … by newxmesmtplogicsvrszc50-0.qq.com … 00:32:46 +0800`），
+    `Received` 是 QQ 自己盖的，而 **`Date` 一行都没有** —— `EmailMessage()` 不会替你补，
+    `smtplib` 也不补。也就是说从上线起发出去的每一封（报告 / 邀请码 / 提醒 / 告警 / 广播）
+    都缺这个字段，只是收件端都恰好替我们兜住了（QQ 拿 Received 排序，所以没人看出来）。
+
+    RFC 5322 §3.6：`Date` 与 `From` 是仅有的两个**必填**字段。收件方不替我们兜的时候，
+    这是白送出去的一条垃圾邮件规则（SpamAssassin 的 MISSING_DATE 一类）。
+    """
+
+    def sent_message(self, **kwargs):
+        """跑真的 `send_report`，但 SMTP 是假的；返回**装配好的那一封**。"""
+        captured = {}
+
+        class FakeSMTP:
+            def __init__(self, *args, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def login(self, *args): pass
+            def send_message(self, message): captured["message"] = message
+
+        with mock.patch.object(mailio.smtplib, "SMTP_SSL", FakeSMTP):
+            mailio.send_report(
+                {"email": "me@example.com", "report_to": "you@example.com",
+                 "smtp_host": "smtp.example.com", "smtp_port": 465},
+                "a-password", "主题", "正文", **kwargs)
+        return captured["message"]
+
+    def test_the_required_headers_are_all_there(self):
+        message = self.sent_message()
+        for name in ("Date", "From", "To", "Subject", "Message-ID"):
+            self.assertTrue(message[name], f"{name} 缺失（RFC 5322 §3.6）")
+
+    def test_the_date_is_the_moment_of_sending_with_a_real_offset(self):
+        """`-0000` 那种「不知道时区」不算：我们知道自己那一刻的偏移，就如实写。"""
+        message = self.sent_message()
+        when = email.utils.parsedate_to_datetime(message["Date"])
+        self.assertIsNotNone(when, f"Date 解析不出来：{message['Date']!r}")
+        self.assertIsNotNone(when.tzinfo, "Date 要带时区偏移，不能是裸的本地时间")
+        drift = abs((datetime.datetime.now(datetime.timezone.utc) - when).total_seconds())
+        self.assertLess(drift, 120, f"Date 与发送时刻差了 {drift:.0f} 秒")
+
+    def test_the_operator_mails_take_the_same_road(self):
+        """邀请码/提醒走的是同一个装配点（`alerting.send_as_operator` → 这里）。"""
+        message = self.sent_message(html_body="<div>正文</div>", from_name="CityU Mail Pilot",
+                                    reply_to="me@example.com")
+        self.assertTrue(message["Date"], "运营者的信也缺 Date")
+        self.assertEqual(message["Reply-To"], "me@example.com")

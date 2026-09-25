@@ -125,5 +125,68 @@ class EveryConsumerIsTaughtTests(unittest.TestCase):
         self.assertIsNotNone(record.exc_info)
 
 
+class PollBudgetTests(unittest.TestCase):
+    """「轮询间隔」这一个旋钮的账，必须能被算出来（`manage poll-interval` 的心脏）。
+
+    2026-09-24 为了 1500 个邮箱的规模，生产把这一个值从 60 秒改成 300 秒 —— 而当时真实
+    规模是 15 个邮箱。**为 80 倍于当时的规模提前付的代价，账是用户在日常里付的**：
+    2026-09-26 用户报「从收到转发邮件到收到处理好的邮件太久了」，实测就是「等下一次轮询」。
+
+    这几条钉的是那两个式子本身（`docs/scale-1500-2026-09-24.md` §1.4），
+    以及那条唯一的硬判据：**一轮要跑得完**（`round_seconds ≤ interval`）。跑不完不会报错，
+    它只是把实际间隔悄悄拉成一轮的真实耗时。
+    """
+
+    def test_a_small_fleet_polls_every_minute_with_room_to_spare(self):
+        budget = worker.poll_budget(20, interval=60, workers=4, cost_seconds=2)
+        self.assertEqual(budget["rounds"], 5)          # ceil(20 / 4)
+        self.assertEqual(budget["round_seconds"], 10)
+        self.assertTrue(budget["fits"])
+        self.assertAlmostEqual(budget["logins_per_second"], 20 / 60, places=6)
+        self.assertEqual(budget["logins_per_day"], 20 / 60 * 86400)   # 28 800
+        self.assertEqual(budget["median_delay_seconds"], 30.0)
+        self.assertEqual(budget["worst_delay_seconds"], 60.0)
+
+    def test_the_fifteen_hundred_mailbox_target_is_why_the_interval_went_up(self):
+        """60 秒 × 1500 个邮箱跑不完 —— 这就是 2026-09-24 那次降频的理由，不是拍脑袋。"""
+        tight = worker.poll_budget(worker.SCALE_TARGET_MAILBOXES, interval=60, workers=4,
+                                   cost_seconds=2)
+        self.assertFalse(tight["fits"])
+        self.assertEqual(tight["round_seconds"], 750)   # ceil(1500 / 4) × 2
+        # 同一个目标换成 16 个线程 + 300 秒就装得下 —— 也就是当初那两个数字的来历。
+        roomy = worker.poll_budget(worker.SCALE_TARGET_MAILBOXES, interval=300, workers=16,
+                                   cost_seconds=2)
+        self.assertTrue(roomy["fits"])
+        self.assertEqual(roomy["round_seconds"], 188)   # ceil(1500 / 16) × 2
+
+    def test_an_empty_fleet_does_not_divide_by_zero(self):
+        budget = worker.poll_budget(0, interval=60, workers=4)
+        self.assertTrue(budget["fits"])
+        self.assertEqual(budget["logins_per_day"], 0)
+        self.assertEqual(budget["median_delay_seconds"], 30.0)
+
+    def test_a_nonsense_input_is_clamped_rather_than_raising(self):
+        """操作者手滑（0 个线程、0 秒间隔）不该让诊断命令自己崩掉。"""
+        budget = worker.poll_budget(5, interval=0, workers=0, cost_seconds=0)
+        self.assertEqual(budget["workers"], 1)
+        self.assertEqual(budget["interval"], 1)
+        self.assertEqual(budget["cost_seconds"], 1)
+
+    def test_the_budget_describes_the_interval_the_poller_really_uses(self):
+        """算的是**轮询器真会用的那个间隔**，不是另写一份常量。
+
+        `poll_interval_for` 是唯一的事实源（web 的新鲜度窗口、告警阈值都从它取）；
+        这条把 `poll_budget` 的入参和它钉在一起，防止将来有人在这里另起一个数。
+        """
+        with mock.patch.object(worker, "POLL_SECONDS", 60):
+            self.assertEqual(worker.poll_interval_for({"imap_host": "imap.qq.com"}), 60)
+            self.assertEqual(
+                worker.poll_budget(20, interval=worker.POLL_SECONDS,
+                                   workers=worker.POLL_WORKERS)["interval"], 60)
+        gmail = {"imap_host": "imap.gmail.com"}
+        self.assertEqual(worker.poll_interval_for(gmail), mailio.GMAIL_MIN_POLL_SECONDS)
+        self.assertGreater(worker.poll_interval_for(gmail), 60)
+
+
 if __name__ == "__main__":
     unittest.main()

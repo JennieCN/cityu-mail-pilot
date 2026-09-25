@@ -66,6 +66,14 @@ POLL_TICK_SECONDS = _int_env("INFE_PILOT_POLL_TICK_SECONDS", 15, 1, 300)
 # forever, which is exactly the connection volume the providers throttle.
 MAX_POLL_BACKOFF_SECONDS = _int_env("INFE_PILOT_POLL_MAX_BACKOFF_SECONDS", 3600, 60, 86400)
 
+#: 单次轮询大约花多久（秒）。**这是个估计，不是实测**，只用来把「一轮跑不跑得完」
+#: 算给人看（`manage poll-interval`）。QQ/163 实测 1–3 秒（登录 + SELECT + UID SEARCH）。
+POLL_COST_SECONDS = _int_env("INFE_PILOT_POLL_COST_SECONDS", 2, 1, 60)
+
+#: 容量设计目标，`docs/scale-1500-2026-09-24.md` 用的就是这个数。只用在
+#: `manage poll-interval` 的「规模上来会怎样」那段。
+SCALE_TARGET_MAILBOXES = 1500
+
 QUEUE_SECONDS = _int_env("INFE_PILOT_QUEUE_SECONDS", 5, 1, 300)
 POLL_WORKERS = _int_env("INFE_PILOT_POLL_WORKERS", 4, 1, 16)
 REPORT_WORKERS = _int_env("INFE_PILOT_REPORT_WORKERS", 6, 1, 32)
@@ -101,6 +109,46 @@ def next_poll_delay(mailbox: dict[str, Any], consecutive_failures: int) -> int:
     if consecutive_failures <= 0:
         return base
     return min(base * (2 ** min(consecutive_failures, 16)), MAX_POLL_BACKOFF_SECONDS)
+
+
+def poll_budget(mailboxes: int, *, interval: int, workers: int,
+                cost_seconds: int = POLL_COST_SECONDS) -> dict[str, Any]:
+    """把「轮询间隔」这一个旋钮的账算出来（纯函数，喂数字就能断言）。
+
+    两个式子就是全部，就是 `docs/scale-1500-2026-09-24.md` §1.4 里那一对：
+
+        登录率 = 邮箱数 ÷ 间隔        一轮墙钟 ≈ ceil(邮箱数 ÷ 线程数) × 单次墙钟
+
+    唯一的**硬判据**是「一轮要跑得完」：`round_seconds ≤ interval`。跑不完不会报错，
+    它只是把实际间隔悄悄拉成一轮的真实耗时，而 `last_polled_at` 会一路往后漂 ——
+    所以这条要能被算出来、被看一眼，而不是等人去感觉「怎么越来越慢」。
+
+    单次墙钟是**估计**不是实测（`cost_seconds`）：它只用来做量级判断，所以每个数字都
+    原样打印出来，读的人可以自己质疑那个假设。
+    """
+    import math
+
+    mailboxes = max(0, int(mailboxes))
+    workers = max(1, int(workers))
+    interval = max(1, int(interval))
+    cost_seconds = max(1, int(cost_seconds))
+    rounds = math.ceil(mailboxes / workers)
+    round_seconds = rounds * cost_seconds
+    rate = mailboxes / interval
+    return {
+        "mailboxes": mailboxes,
+        "interval": interval,
+        "workers": workers,
+        "cost_seconds": cost_seconds,
+        "rounds": rounds,
+        "round_seconds": round_seconds,
+        "fits": round_seconds <= interval,
+        "logins_per_second": rate,
+        "logins_per_day": rate * 86400,
+        # 均匀到达时，等到下一次轮询的期望是间隔的一半，最坏是整个间隔。
+        "median_delay_seconds": interval / 2.0,
+        "worst_delay_seconds": float(interval),
+    }
 
 
 def poll_all(service: PilotService,

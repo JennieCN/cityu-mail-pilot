@@ -676,3 +676,89 @@ def web_module_path() -> str:
     from pilot_app import web as web_module
 
     return web_module.__file__
+
+
+class ReservedAdminAddressTests(unittest.TestCase):
+    """开放注册**绝不能**产生管理员（2026-09-26 外部审计 GPT 报的 P1）。
+
+    机制：`_is_admin()` 按邮箱**字符串**认人（环境变量那一份），而注册不验证邮箱归属。
+    于是在「那个地址还没有账号」时用它注册，立刻就拿到 `/api/admin/*`，
+    再用自己设的密码走 `_confirm_operator()` 重设别人的登录密码、撤销会话。
+    注册完全开放（2026-09-23）之前这一步还需要一张邀请码 —— 是那次放开把它变成真路的。
+
+    审计当天**生产没有被利用的条件**（环境变量里 1 个地址、已有账号、0 个未认领）。
+    但换管理员或那个账号被真删除（删除走真 DELETE）就重新出现，所以闸门按"永远不允许"设。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # 起自己的服务器（照 `WebTests` 的写法）：一类一个干净进程内的服务，
+        # 不依赖外部脚本设的环境变量——那种"我以为有人会设"的变量，
+        # 单跑这个文件时就是一个 KeyError。
+        cls.server = web.create_server("127.0.0.1", 0)
+        cls.base = "http://127.0.0.1:%d" % cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def setUp(self):
+        web.reset_signup_rate_limit()   # 限速按 IP，单测得自己清
+
+    def test_anonymous_registration_cannot_claim_a_reserved_address(self):
+        reserved = "owner-reserved@example.com"
+        with mock.patch.dict(os.environ, {"INFE_PILOT_ADMIN_EMAILS": reserved}):
+            client = Client(self.base)
+            status, body, _ = client.post("/api/auth/register", {
+                "email": reserved, "password": "a-long-enough-password", "accepted_terms": True})
+            self.assertEqual(status, 403, body)
+            # **最关键的一条：库里不能有这个账号。** 只测 `_is_admin()` 是不够的——
+            # 洞在于"账号能被建出来"，而不是权限函数算错了。
+            self.assertIsNone(db.find_user_for_login(reserved),
+                              "保留地址被开放注册建出来了——这就是那个提权洞")
+            # 而且这个会话进不了管理端（匿名一律 401）
+            status, _, _ = client.get("/api/admin/users")
+            self.assertEqual(status, 401)
+            # 不误伤：普通地址照旧能注册
+            web.reset_signup_rate_limit()
+            status, user, _ = client.post("/api/auth/register", {
+                "email": "ordinary@example.com", "password": "a-long-enough-password",
+                "accepted_terms": True})
+            self.assertEqual(status, 200, user)
+
+    def test_create_admin_is_the_way_through_and_it_really_grants(self):
+        """出路：`manage create-admin`（需要机器权限 = 归属证明）。默认预演。"""
+        import subprocess
+        import sys as _sys
+        reserved = "owner-cli@example.com"
+        env = dict(os.environ, INFE_PILOT_ADMIN_EMAILS=reserved)
+        env["PYTHONPATH"] = str(pathlib.Path(web.__file__).resolve().parent.parent)
+
+        def run(*extra):
+            return subprocess.run(
+                [_sys.executable, "-m", "pilot_app.manage", "create-admin",
+                 "--email", reserved, *extra],
+                env=env, input="a-long-enough-password\n", capture_output=True, text=True, timeout=120)
+
+        preview = run()
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn("预演", preview.stdout)
+        self.assertIsNone(db.find_user_for_login(reserved), "预演不许写库")
+
+        real = run("--apply")
+        self.assertEqual(real.returncode, 0, real.stderr)
+        user = db.find_user_for_login(reserved)
+        self.assertIsNotNone(user, "create-admin --apply 应当把账号建出来")
+        self.assertTrue(user["is_admin"], "建出来的账号要是管理员")
+        # **密码不能出现在输出里**（这条命令的规矩：只从 stdin 读、不回显、不落日志）
+        self.assertNotIn("a-long-enough-password", real.stdout + real.stderr)
+        # 这个账号真的进得了管理端
+        client = Client(self.base)
+        status, _, _ = client.post("/api/auth/login", {
+            "email": reserved, "password": "a-long-enough-password"})
+        self.assertEqual(status, 200)
+        status, _, _ = client.get("/api/admin/users")
+        self.assertEqual(status, 200)

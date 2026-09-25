@@ -18,6 +18,7 @@ import base64
 import contextlib
 import datetime as dt
 import io
+import json
 import os
 import pathlib
 import sys
@@ -25,7 +26,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pilot_app import manage
+from pilot_app import manage, worker
 
 _TMP = tempfile.mkdtemp()
 _TEST_KEY = base64.urlsafe_b64encode(b"\x00" * 32).decode()
@@ -729,3 +730,72 @@ class CheckNativeSearchTests(unittest.TestCase):
              mock.patch.object(manage.providers, "platform_model_key", return_value="k"):
             main("check-native-search", "--provider", "deepseek")
         database.assert_not_called()
+
+
+class PollIntervalCommandTests(unittest.TestCase):
+    """`manage poll-interval`：把「轮询间隔」这个旋钮的账印出来。
+
+    2026-09-26 的由来：这个值在 2026-09-24 为了 1500 个邮箱的规模从 60 秒被改成 300 秒，
+    而当时真实的规模是 15 个邮箱；用户两天后报「从收到转发邮件到收到处理好的邮件太久了」。
+    改动本身没错，错在这个值**只写在一个环境变量里，没有任何地方告诉你它的代价**。
+    这几条钉住那条命令说得对：数字算得对、把 Gmail 那一档分出来、跑不完时非零退出。
+    """
+
+    @staticmethod
+    def _boxes(count, *, host="imap.qq.com", enabled=1):
+        return [{"id": f"mbx_{i}", "email": f"u{i}@qq.com", "report_to": f"u{i}@qq.com",
+                 "imap_host": host, "imap_port": 993, "enabled": enabled,
+                 "status": "active"} for i in range(count)]
+
+    def _run(self, boxes, *argv, **worker_values):
+        database = mock.MagicMock()
+        database.all_mailboxes.return_value = list(boxes)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(manage, "Database", return_value=database))
+            for name, value in worker_values.items():
+                stack.enter_context(mock.patch.object(worker, name, value))
+            return main("poll-interval", *argv)
+
+    def test_it_prints_the_rate_the_round_and_the_delay(self):
+        code, out, _ = self._run(self._boxes(20), POLL_SECONDS=60, POLL_WORKERS=4)
+        self.assertEqual(code, 0)
+        self.assertIn("轮询间隔    60 秒", out)
+        self.assertIn("在用邮箱    20 个", out)
+        self.assertIn("0.33 次/秒", out)
+        self.assertIn("28,800 次/天", out)
+        self.assertIn("一轮轮询    约 10 秒", out)
+        self.assertIn("发现延迟    0–60 秒", out)
+        self.assertIn("中位约 30 秒", out)
+
+    def test_a_round_that_cannot_finish_exits_non_zero(self):
+        """一轮比间隔还长 = 实际间隔会被悄悄拉长、邮箱会一路显示成「轮询停了」。"""
+        code, out, _ = self._run(self._boxes(100), POLL_SECONDS=60, POLL_WORKERS=1)
+        self.assertEqual(code, 1)
+        self.assertIn("跑不完", out)
+
+    def test_the_slower_provider_floor_is_named_not_smoothed_over(self):
+        """Gmail 的 900 秒是供应商的红线：同一句「间隔」下它其实是另一档。"""
+        boxes = self._boxes(4) + self._boxes(2, host="imap.gmail.com")
+        code, out, _ = self._run(boxes, POLL_SECONDS=60, POLL_WORKERS=4)
+        self.assertEqual(code, 0)
+        self.assertIn("其中 2 个有更慢的供应商下限", out)
+
+    def test_paused_mailboxes_are_not_counted_as_load(self):
+        """暂停的邮箱我们按设计不轮询 —— 算进登录量就是把账算多了。"""
+        _, out, _ = self._run(self._boxes(3) + self._boxes(7, enabled=0),
+                              POLL_SECONDS=60, POLL_WORKERS=4)
+        self.assertIn("在用邮箱    3 个", out)
+        self.assertIn("0.05 次/秒", out)
+
+    def test_json_output_is_machine_readable(self):
+        code, out, _ = self._run(self._boxes(20), "--json", POLL_SECONDS=60, POLL_WORKERS=4)
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["now"]["mailboxes"], 20)
+        self.assertTrue(payload["now"]["fits"])
+        self.assertEqual(payload["at_scale_target"]["mailboxes"],
+                         worker.SCALE_TARGET_MAILBOXES)
+        # 这条命令**不连任何邮箱**：没有网络调用、没有探针。
+        self.assertEqual(set(payload), {"now", "at_scale_target",
+                                        "paused_or_disabled_ignored",
+                                        "slower_provider_floor"})

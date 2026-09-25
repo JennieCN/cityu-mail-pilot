@@ -349,3 +349,23 @@ step "上线完成"
 log "版本 $VERSION 已经在 $ORIGIN 上跑着，上面每一条都是刚量的。"
 log "回退：拿上一版的 tar.gz 再走一遍；判断见 docs/deploy-runbook-2026-09-17.md §6。"
 log "会公开的东西（pilot_app/、tools/、docs/）改了要跟着推一次 GitHub —— tools/publish_push.sh。"
+
+# ---------------------------------------------------------------- 7. 打扫服务器上的临时目录
+# **为什么必须要有这一步**：每部署一次就在服务器 `/tmp` 留下一棵解开的树（一万五千个文件、
+# 约 7 MB）和一份 tar.gz，而**没有任何东西会删它们**。2026-09-26 数了一下：**21 棵**
+# （1.5.0 → 1.5.21）+ 50 份 tar.gz = **781 MB**，而 `/tmp` 是 **tmpfs** —— 那 781 MB 是
+# **这台 2 GB 机器的内存**（也解释了它为什么在 swap 里蹲着）。那天在 `/tmp` 里解一个 12 MB
+# 的包直接报 `Disk quota exceeded`：**下一次部署可能就死在这里**，而症状看起来像包坏了。
+#
+# 只删**验收通过之后**的（上面 `verify_production` 失败已经 exit 1，那时留着给人看现场）。
+# tar.gz 留最近 3 份：回退按手册是拿**本机** dist/ 那一份再来一遍，服务器这份只是就近的保险。
+step "打扫服务器上的临时目录（留最近 3 份 tar.gz）"
+ssh -i "$SSH_KEY" -o BatchMode=yes "$HOST" bash -s -- "$REMOTE_DIR" <<'REMOTE' || warn "打扫没做成（不影响这次上线）"
+set -euo pipefail
+DIR="$1"
+rm -rf "$DIR"
+cd /tmp
+ls -1t cityu-mail-pilot-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+ls -1t cityu-mail-pilot-*.tar.gz.sha256 2>/dev/null | tail -n +4 | xargs -r rm -f
+df -h /tmp | tail -1
+REMOTE

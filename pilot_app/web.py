@@ -1497,6 +1497,23 @@ def _admin_emails() -> set[str]:
     return alerting.admin_emails()
 
 
+def _reserved_admin_email(email: str) -> bool:
+    """这个邮箱是不是环境变量点名的**管理员保留地址**？
+
+    2026-09-26 外部审计（GPT）报的 P1：`_is_admin()` 只看邮箱**字符串**，而开放注册
+    不验证邮箱归属 —— 于是任何人只要在「那个地址还没有账号」时用它注册，
+    立刻就是管理员，再用自己设的密码走 `_confirm_operator()` 重设别人的登录密码、
+    撤销会话。注册完全开放（2026-09-23）之前，这一步还需要一张邀请码，
+    所以是那次放开把它变成了一条真的提权路。
+
+    **审计当天生产没有被利用的条件**：`INFE_PILOT_ADMIN_EMAILS` 只有 1 个地址，
+    它已经有账号（0 个未认领）；库里 `is_admin=1` 的 2 个账号都不是近期新建的。
+    但换管理员、或者那个账号被真删除（删除走真 DELETE，2026-09-24 见过 9 个），
+    洞就重新出现 —— 所以闸门按"永远不允许"来设，而不是按"现在没风险"。
+    """
+    return str(email or "").strip().lower() in _admin_emails()
+
+
 def _is_admin(user: dict[str, Any]) -> bool:
     """Owner-named accounts, plus anyone granted rights from the console.
 
@@ -2062,6 +2079,19 @@ def register(request: Request) -> Response:
     # 和申请书共用同一个计数器 —— 同一 IP 每小时 5 次。它是内存里的，不落盘（见 `_client_label`）。
     _signup_rate_limit(request.client or "unknown")
     database = get_db()
+    # **保留地址不许从这里进来**（2026-09-26 外部审计的 P1，判据见 `_reserved_admin_email`）。
+    # 这条**不区分**「已有账号」和「还没有账号」：连"删号后重新认领"也一并堵上，
+    # 因为 `_is_admin()` 认的是邮箱字符串，账号一建出来就生效。
+    # **代价是新装的人不能再用"注册保留地址"给自己开管理员**了 —— 改用
+    # `manage create-admin`（多一步 shell 命令，换来的是"注册永远不能产生管理员"这条不变量）。
+    # 这条改动同时暴露了测试套件的一个坏习惯：21 个文件、62 处夹具都是"用保留地址走 HTTP
+    # 注册"来拿管理员会话 —— 那正是攻击者的做法（见本轮提交信息）。夹具已另行改造。
+    # 放在限速之后：探测保留地址也要先花掉一次配额。
+    # 出路由 `manage create-admin` 提供：那需要**机器权限**，也就是归属证明。
+    if _reserved_admin_email(email):
+        raise ApiError(403, i18n.mark(
+            "这个邮箱是本站的保留地址，不能通过开放注册使用。"
+            "如果你是管理员，请在服务器上运行 `manage create-admin` 建号。"))
     limit, _source = _max_users()
     if database.count_users() >= limit:
         raise ApiError(403, i18n.mark("当前名额已满。"))

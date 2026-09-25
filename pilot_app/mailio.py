@@ -731,6 +731,20 @@ def send_report(config: dict[str, Any], password: str, subject: str, markdown: s
         # provider has that the message was wanted.
         message["Reply-To"] = reply_to
     message["Subject"] = subject
+    # **每一封都要有 Date**：RFC 5322 §3.6 里只有 `Date` 与 `From` 是必填的两项，
+    # 而 `EmailMessage()` **不会**替你补（`smtplib` 也不补）。
+    #
+    # 这一条是 2026-09-26 从**收件方留存的报头**里读出来的，不是从我们自己的代码里推的：
+    # 用户在 QQ 邮箱里说「刚刚那封 AI 摘要没收到」，把 INBOX 里那一封（uid 2646）的报头
+    # 拉下来看，`Received` 是 QQ 自己盖的，而 `Date` **一行都没有** —— 也就是说从
+    # 2026-09-13 上线以来，报告、邀请码、提醒、告警**每一封**都缺这个字段，
+    # 收件端只是恰好都替我们兜住了（QQ 用 Received 排序，所以没人看出来）。
+    # 代价是白白吃垃圾邮件的 MISSING_DATE 一类规则，在别的收件方不一定有人兜。
+    #
+    # 用本地时间带数值偏移（`+0800`/`+0000`），而不是 `-0000`：后者按 RFC 的意思是
+    # 「不知道时区」，我们把知道的那部分如实写出来。重试会生成新的 Date，这是对的
+    # ——重试是另一次投递，不像 Message-ID 那样必须稳定。
+    message["Date"] = email.utils.formatdate(localtime=True)
     domain = str(config["email"]).split("@")[-1] or None
     # 调用方给了就用它：**重试同一份报告要复用同一个 Message-ID**，否则同一件事在收件人
     # 那边是两封不同的信（客户端不去重，但人看得出来是同一封，运维对日志也有个可比的 id）。
