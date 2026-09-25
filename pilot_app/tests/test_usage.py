@@ -16,6 +16,7 @@ import unittest
 
 from pilot_app import pricing, web
 from pilot_app.database import Database, utc_now
+from pilot_app.tests import admin_fixture
 
 DEEPSEEK_USAGE = {
     "input": 778, "output": 589, "total": 1367, "cached_input": 640, "reasoning": 0,
@@ -251,8 +252,12 @@ class UsageEndpointTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return self.client
 
+    def _admin(self):
+        """保留地址走「建号 + 授权」（见 admin_fixture），不走开放注册。"""
+        return admin_fixture.admin_session(self.db, self.client, "boss@example.com")
+
     def test_operator_sees_usage_and_can_set_a_price(self):
-        self._login("boss@example.com")
+        self._admin()
         status, body = self.client.get("/api/admin/usage?days=30")
         self.assertEqual(status, 200, body)
         self.assertIn("grand_total", body)
@@ -367,7 +372,7 @@ class UsageEndpointTests(unittest.TestCase):
         self.assertEqual(body["timezone"], "UTC+8")
 
     def test_price_changes_are_audited(self):
-        self._login("boss@example.com")
+        self._admin()
         self.client.put("/api/admin/prices", {
             "provider": "deepseek", "model": "m1", "input_cache_hit": 1, "input_cache_miss": 1, "output": 1})
         actions = {row["action"] for row in self.db.list_audit(20)}

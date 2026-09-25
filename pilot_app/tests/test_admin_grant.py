@@ -39,6 +39,7 @@ os.environ.pop("INFE_PILOT_ORIGIN", None)
 
 from pilot_app import web  # noqa: E402
 from pilot_app.security import token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 PASSWORD = "a-long-enough-password"
@@ -94,6 +95,21 @@ def register(base: str, email: str) -> Client:
     return client
 
 
+def admin_client(base: str, email: str) -> Client:
+    """The environment owner's session: **create + grant + sign in**.
+
+    `owner@example.com` is the address `INFE_PILOT_ADMIN_EMAILS` names, so the
+    open registration route refuses it outright (403, no account) -- that is the
+    P1 from 2026-09-26, and the fixture must not re-enact the attack. See
+    ``admin_fixture``. Rights still come from the environment list at request
+    time; only the account's *existence* is arranged here.
+    """
+    client = Client(base)
+    user = admin_fixture.create_admin(db, email, PASSWORD)
+    client.user_id = user["id"]
+    return admin_fixture.sign_in(client, email, PASSWORD)
+
+
 class AdminGrantTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -111,7 +127,7 @@ class AdminGrantTests(unittest.TestCase):
         # eighteen, and the whole suite shares one database with a pilot cap of
         # fifty: the extra rows push later modules over it and they fail with a
         # message about the cap rather than about anything they did.
-        cls.owner = register(cls.base, OWNER_EMAIL)
+        cls.owner = admin_client(cls.base, OWNER_EMAIL)
         cls.member = register(cls.base, f"member-{dt.datetime.now().timestamp()}@example.com")
 
     @classmethod

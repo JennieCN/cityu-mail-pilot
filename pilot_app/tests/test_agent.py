@@ -49,6 +49,7 @@ from pilot_app import alerting  # noqa: E402
 from pilot_app import web  # noqa: E402
 from pilot_app.database import Database  # noqa: E402
 from pilot_app.security import SecretBox, hash_password, token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 CANNED = ("【看到的】排队 3 封，上次收信 40 分钟前。\n"
@@ -514,6 +515,11 @@ class AgentEndpointTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return client
 
+    def _admin(self) -> Client:
+        """保留地址走「建号 + 授权」（见 admin_fixture），不走开放注册 ——
+        后者现在对 `INFE_PILOT_ADMIN_EMAILS` 点名的地址一律 403。"""
+        return admin_fixture.admin_session(db, Client(self.base), "boss@example.com")
+
     def _make_a_real_finding(self) -> None:
         """Give the sentinel something real to complain about.
 
@@ -552,7 +558,7 @@ class AgentEndpointTests(unittest.TestCase):
         second lands inside the cooldown and takes the reused path. A test that
         only ran the first would have been green throughout.
         """
-        boss = self._register("boss@example.com")
+        boss = self._admin()
         self._make_a_real_finding()
         agent.set_enabled(db, True)
         # `analyse` only reads `.text` and `.usage` off this, so a stand-in keeps
@@ -598,7 +604,7 @@ class AgentEndpointTests(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_the_operator_can_read_toggle_and_run(self):
-        boss = self._register("boss@example.com")
+        boss = self._admin()
         status, body, _ = boss.get("/api/admin/agent")
         self.assertEqual(status, 200, body)
         self.assertIn("enabled", body)
@@ -626,7 +632,7 @@ class AgentEndpointTests(unittest.TestCase):
         self.assertEqual(status, 422, "缺少字段要明确拒绝")
 
     def test_the_toggle_is_audited(self):
-        boss = self._register("boss@example.com")
+        boss = self._admin()
         boss.put("/api/admin/agent", {"enabled": True})
         actions = [row.get("action") for row in db.list_audit(20)]
         self.assertIn("agent_toggled", actions)

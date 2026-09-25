@@ -31,6 +31,7 @@ from pilot_app import database as database_mod  # noqa: E402
 from pilot_app import invites  # noqa: E402
 from pilot_app import web  # noqa: E402
 from pilot_app.security import token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 
@@ -161,20 +162,15 @@ class SignupTests(unittest.TestCase):
         return self.client.post("/api/signup", {"email": email, "note": note})
 
     def _as_admin(self) -> Client:
-        code = f"signup-admin-{self.stamp}"
-        expiry = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
-        with db.connect() as connection:
-            connection.execute("INSERT INTO invites(code_hash,expires_at) VALUES(?,?)",
-                               (token_hash(code), expiry))
-        admin = Client(self.base)
-        email = f"signup-boss-{self.stamp}@example.com"
-        os.environ["INFE_PILOT_ADMIN_EMAILS"] = email
-        status, body, _ = admin.post("/api/auth/register", {
-            "email": email, "password": "a-long-enough-password",
-            "invite_code": code, "accepted_terms": True,
-        })
-        self.assertEqual(status, 200, body)
-        return admin
+        """一个管理员会话，**不经过开放注册**（见 admin_fixture）。
+
+        以前这里先把 `INFE_PILOT_ADMIN_EMAILS` 指到一个新地址、再用那个地址注册 ——
+        那正是 2026-09-26 那条 P1 攻击路径（注册不验证邮箱归属，谁先注册谁是管理员），
+        所以注册端点现在对保留地址一律 403。改成建号 + 授权：权限同样是真的，
+        但走的是后台「授权」那条路。
+        """
+        client = Client(self.base)
+        return admin_fixture.admin_session(db, client, f"signup-boss-{self.stamp}@example.com")
 
     def tearDown(self):
         os.environ.pop("INFE_PILOT_ADMIN_EMAILS", None)

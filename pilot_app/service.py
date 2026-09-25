@@ -1116,13 +1116,29 @@ class PilotService:
         promise untrue.** Nothing here may write: no cache, no copy in the row,
         no body in a log line. If a future change wants to "speed this up by
         caching it", that is a privacy decision, not an optimisation.
+
+        **也没有「太大的信也先读回来再说」这条捷径**（GPT 审计第二条 P1）：
+        超过 `mailio.MAX_MESSAGE_BYTES` 的邮件在 `mailio` 里就被挡住（正文一个
+        字节都不取），这里把它翻成一句用户能照着做的话。**明确拒绝，不静默截断**
+        ——半封信显示出来像「信就到这里」，那是用成功的样子骗人。
         """
         row = self.db.message_for_user(user_id, message_id)
         if not row:
             raise KeyError(message_id)
         config = {"imap_host": row["imap_host"], "imap_port": row["imap_port"], "email": row["mailbox_email"]}
-        return mailio.fetch_message_by_uid(config, self.mailbox_password(row), int(row["imap_uid"]),
-                                           uid_validity=row.get("uid_validity") or "")
+        result = mailio.fetch_message_by_uid(config, self.mailbox_password(row), int(row["imap_uid"]),
+                                             uid_validity=row.get("uid_validity") or "")
+        if result.get("state") == mailio.ORIGINAL_TOO_LARGE:
+            limit_mb = int(result.get("limit_bytes") or mailio.MAX_MESSAGE_BYTES) // 1048576
+            size = int(result.get("size_bytes") or 0)
+            # 尺寸是精确值时说出来；只有下界时（有界 partial 拿满）说「至少」，
+            # 不把「我们的上限+1」当成服务器报的大小。
+            reported = (f"{size / 1048576:.1f} MB" if result.get("size_exact")
+                        else f"至少 {size / 1048576:.0f} MB")
+            raise mailio.MailError(
+                f"这封邮件太大（{reported}），超过了 {limit_mb} MB 的上限，无法在网页里打开。"
+                "请直接在你的邮箱里查看这封信。")
+        return result
 
     ASSIST_KINDS = ("translate", "summary")
 
@@ -1234,6 +1250,8 @@ class PilotService:
         if kind not in self.ASSIST_KINDS:
             raise ValueError("不支持的助手动作。")
         # 取不到就照实把状态（gone/moved）交回给路由，和「看原信」说一样的话。
+        # 过大那一档在 `read_original` 里当场抛 `MailError`（同样一句话），
+        # 所以**翻译/总结也走同一道体积闸门**，不会把整封信拉进 web 进程。
         fetched = self.read_original(user_id, message_id)
         if fetched.get("state") != "ok":
             return fetched

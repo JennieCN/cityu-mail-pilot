@@ -33,6 +33,7 @@ from pilot_app import analytics as analytics_mod  # noqa: E402
 BROWSER = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
            "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
 from pilot_app import web  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 
@@ -91,14 +92,8 @@ class AdminAnalyticsTests(unittest.TestCase):
         self.stamp = dt.datetime.now().timestamp()
 
     def _admin(self) -> Client:
-        invite = db.create_invite(f"analytics-{self.stamp}", 1)
-        client = Client(self.base)
-        web.reset_signup_rate_limit()  # 见 web.reset_signup_rate_limit：限速按 IP，单测得自己清
-        status, body = client.post("/api/auth/register", {
-            "email": "boss@example.com", "password": "a-long-enough-password",
-            "invite_code": invite, "accepted_terms": True})
-        self.assertEqual(status, 200, body)
-        return client
+        """保留地址不能走开放注册（见 admin_fixture）：建号 + 授权 + 登录。"""
+        return admin_fixture.admin_session(db, Client(self.base), "boss@example.com")
 
     def _stored_rows(self) -> list[dict]:
         with db.connect() as connection:

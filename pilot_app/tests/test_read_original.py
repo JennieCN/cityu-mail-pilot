@@ -260,9 +260,16 @@ class OriginalRouteTests(unittest.TestCase):
         stored = self._stored_body()
         self.assertFalse(stored, "正文不许被写回数据库")
         self.assertNotIn("请在周五", str(stored), "取回来的那封信一个字都不许落库")
-        # 取信本身必须是只读的：EXAMINE + BODY.PEEK[]
+        # 取信本身必须是只读的：EXAMINE + BODY.PEEK[]。P1（GPT 审计第二条）之后
+        # 前面多了一句 `RFC822.SIZE` 预检、正文取法在问不出大小时还会带上限
+        # （`<0.N>`），所以这里钉**性质**——PEEK、正文只取一次——而不是整串字面。
         self.assertIn(("EXAMINE", ("INBOX",)), fake.commands)
-        self.assertEqual(fake.uid_calls, [("fetch", ("7", "(BODY.PEEK[])"))])
+        self.assertIn(("fetch", ("7", "(RFC822.SIZE)")), fake.uid_calls, "取正文前先问大小")
+        specs = [args[1] for verb, args in fake.uid_calls
+                 if verb == "fetch" and "RFC822.SIZE" not in args[1]]
+        self.assertEqual(len(specs), 1, f"正文只该取一次：{fake.uid_calls}")
+        self.assertIn("BODY.PEEK[]", specs[0])
+        self.assertNotIn("BODY[]", specs[0], "不许用会把信标成已读的 BODY[]")
 
     def test_the_response_says_it_was_read_live_and_where_else_to_look(self):
         fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', raw_message()))

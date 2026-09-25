@@ -36,6 +36,7 @@ from pilot_app import manage as manage_mod  # noqa: E402
 from pilot_app import metrics as metrics_mod  # noqa: E402
 from pilot_app import web  # noqa: E402
 from pilot_app.security import hash_password, token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 
@@ -377,8 +378,12 @@ class AdminMetricsEndpointTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return client
 
+    def _admin(self) -> Client:
+        """保留地址走「建号 + 授权」（见 admin_fixture），不走开放注册。"""
+        return admin_fixture.admin_session(db, Client(self.base), "boss@example.com")
+
     def test_operator_gets_the_snapshot(self):
-        client = self._register("boss@example.com")
+        client = self._admin()
         status, body = client.get("/api/admin/metrics")
         self.assertEqual(status, 200, body)
         for key in ("collected_at", "host", "process", "application", "service"):
@@ -397,7 +402,7 @@ class AdminMetricsEndpointTests(unittest.TestCase):
         self.assertEqual(status, 401)
 
     def test_snapshot_never_contains_secrets_or_mail_content(self):
-        client = self._register("boss@example.com")
+        client = self._admin()
         status, body = client.get("/api/admin/metrics")
         self.assertEqual(status, 200)
         blob = json.dumps(body)

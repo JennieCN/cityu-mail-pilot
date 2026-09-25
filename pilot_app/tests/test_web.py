@@ -736,6 +736,12 @@ class ReservedAdminAddressTests(unittest.TestCase):
         reserved = "owner-cli@example.com"
         env = dict(os.environ, INFE_PILOT_ADMIN_EMAILS=reserved)
         env["PYTHONPATH"] = str(pathlib.Path(web.__file__).resolve().parent.parent)
+        # **子进程必须写这个服务真正在用的那个库。** 每个测试模块都在导入时改写
+        # `INFE_PILOT_DB`，而 `web.db` 是第一个导入的模块打开的那个文件；整套跑起来时
+        # 环境变量早就被后面的模块改掉了（单跑这个文件看不出来 —— 那时两者恰好相同）。
+        # 之前这里继承了被改过的环境变量，于是账号建在了**另一个文件**里，
+        # 断言报的是 "create-admin --apply 应当把账号建出来"。
+        env["INFE_PILOT_DB"] = db.path
 
         def run(*extra):
             return subprocess.run(

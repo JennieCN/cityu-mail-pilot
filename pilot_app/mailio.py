@@ -246,11 +246,19 @@ MAX_MESSAGES_PER_POLL = int(os.environ.get("INFE_PILOT_MAX_MESSAGES_PER_POLL", "
 #: 单封邮件的字节上限（先用 `RFC822.SIZE` 问一句）。超过就**不取正文**：只取报头，
 #: 把它记成一条**可见的**「过大」记录，而不是整个读进内存。25 MB 是带大附件邮件的量级；
 #: 报告只需要正文，而附件往往是误转发进来的。
+#:
+#: **按需读取（看原信 / 翻译 / 总结）也共用这一个数**：worker 在取信之前用它做预检，
+#: `fetch_message_by_uid` 在取正文之前用它做同一道预检（GPT 审计第二条 P1，2026-09-26）。
+#: 两处各写一个数，迟早出现「报告里看得到、点开原信时却把 web 进程读爆」。
 MAX_MESSAGE_BYTES = int(os.environ.get("INFE_PILOT_MAX_MESSAGE_BYTES", str(25 * 1024 * 1024)))
 
 
 def _declared_size(client, uid: int) -> int:
-    """问服务器这封多大（`RFC822.SIZE`）。问不出来就返回 0（照常取）。"""
+    """问服务器这封多大（`RFC822.SIZE`）。问不出来就返回 0。
+
+    0 是「不知道」，不是「很小」：取信那条路照常取（有些服务器就是不说），
+    而按需读取那条路会改用**有界**的 partial FETCH 兜底（见 `_fetch_body_bounded`）。
+    """
     try:
         status, data = client.uid("fetch", str(uid), "(RFC822.SIZE)")
     except Exception:      # pragma: no cover - 服务器脾气，测试里由替身覆盖
@@ -432,10 +440,50 @@ def fetch_recent_messages(config: dict[str, Any], password: str, *, count: int =
                 pass
 
 
-# 「看原信」的两种「取不到」。放在 mailio 里是因为**只有这里知道为什么取不到**：
-# 网页层要按这两种分别说人话，而不是一律「加载失败」。
+# 「看原信」的三种「取不到」。放在 mailio 里是因为**只有这里知道为什么取不到**：
+# 网页层要按这几种分别说人话，而不是一律「加载失败」。
 ORIGINAL_GONE = "gone"      # 邮箱里已经没有这一封了（被删/被移走）
 ORIGINAL_MOVED = "moved"    # 邮箱被重建过（UIDVALIDITY 变了），这串 UID 指的是别的信
+#: 超过 `MAX_MESSAGE_BYTES`：**一个字节正文都不取**（GPT 审计第二条 P1）。
+ORIGINAL_TOO_LARGE = "too_large"
+
+
+def _fetch_body_bounded(client, uid: int) -> tuple[str, bytes | None, int, bool]:
+    """取回整封正文，但**永远读不超过 `MAX_MESSAGE_BYTES`**。
+
+    worker 取信那条路一直有这道预检（`fetch_new_messages` 先问 `RFC822.SIZE`），
+    而按需读取（看原信 / 翻译 / 总结 → `fetch_message_by_uid`）原来没有：它直接
+    `BODY.PEEK[]`，一封带大附件的邮件会在 **web 进程**里整封进内存（生产 2 GB），
+    少量并发就能把服务拖垮（2026-09-26 GPT 审计第二条 P1）。
+
+    返回 ``(state, raw, size_bytes, size_exact)``，``state`` 是 ``"ok"`` /
+    ``ORIGINAL_TOO_LARGE`` / ``ORIGINAL_GONE``。四条规矩：
+
+    ① 先问 `RFC822.SIZE`；超限就直接返回，**一字节正文都不取**——不是取回来再截断；
+    ② 尺寸问不出来时**不退化成无上限整封读**：改用有界的 partial FETCH，并且多要
+       一个字节（``<0.MAX+1>``）——"正好拿回 MAX+1 个字节"本身就是"这封信比上限大"
+       的证据，而更短的应答就是完整的一封；
+    ③ 应答仍然超过上限时（服务器把尺寸说小了）同样按超限处理，正文不交给调用方；
+    ④ partial 被服务器拒绝时**报错，不回头去取整封**——宁可说取不到，也不赌。
+    """
+    size = _declared_size(client, uid)
+    if size and size > MAX_MESSAGE_BYTES:
+        return ORIGINAL_TOO_LARGE, None, size, True
+    if size:
+        status, content = client.uid("fetch", str(uid), "(BODY.PEEK[])")
+    else:
+        cap = MAX_MESSAGE_BYTES + 1
+        status, content = client.uid("fetch", str(uid), f"(BODY.PEEK[]<0.{cap}>)")
+        if status != "OK":
+            raise MailError("邮箱不肯在不知道大小的情况下安全地取回这一封，已经中止（不会整封读）。")
+    if status != "OK":
+        raise MailError("IMAP 取回这一封失败。")
+    raw = next((item[1] for item in content if isinstance(item, tuple) and isinstance(item[1], bytes)), None)
+    if raw is None:
+        return ORIGINAL_GONE, None, 0, True
+    if len(raw) > MAX_MESSAGE_BYTES:
+        return ORIGINAL_TOO_LARGE, None, len(raw), False
+    return "ok", raw, size or len(raw), True
 
 
 def fetch_message_by_uid(config: dict[str, Any], password: str, uid: int, *,
@@ -451,6 +499,12 @@ def fetch_message_by_uid(config: dict[str, Any], password: str, uid: int, *,
     the same UID string points at a *different* message. Showing that other
     message under this task would be worse than showing nothing, so a mismatch
     comes back as ``ORIGINAL_MOVED`` and we never fetch in that case.
+
+    **There is a size gate here too** (``ORIGINAL_TOO_LARGE``), and it is not
+    advisory: an on-demand read is still a read in the web process, and one
+    forwarded attachment is enough to take the service down. A message over the
+    line comes back as a state, never as a silently cut-off half letter. The
+    bound itself is `_fetch_body_bounded`.
     """
     client = None
     try:
@@ -471,12 +525,16 @@ def fetch_message_by_uid(config: dict[str, Any], password: str, uid: int, *,
             live = first.decode(errors="ignore") if isinstance(first, bytes) else str(first)
         if uid_validity and live and live != str(uid_validity):
             return {"state": ORIGINAL_MOVED, "uid_validity": live}
-        status, content = client.uid("fetch", str(uid), "(BODY.PEEK[])")
-        if status != "OK":
-            raise MailError("IMAP 取回这一封失败。")
-        raw = next((item[1] for item in content if isinstance(item, tuple) and isinstance(item[1], bytes)), None)
-        if raw is None:
+        state, raw, size, exact = _fetch_body_bounded(client, uid)
+        if state == ORIGINAL_GONE:
             return {"state": ORIGINAL_GONE}
+        if state == ORIGINAL_TOO_LARGE:
+            # 日志里只有大小与 UID，**没有正文**（正文根本没取）。
+            logging.info("original uid %s is %s%.1f MB — over the %s MB cap, body not read",
+                         uid, "" if exact else "at least ", size / 1048576,
+                         MAX_MESSAGE_BYTES // 1048576)
+            return {"state": ORIGINAL_TOO_LARGE, "size_bytes": size, "size_exact": exact,
+                    "limit_bytes": MAX_MESSAGE_BYTES}
         message = normalize_message(raw)
         return {"state": "ok", "message": message,
                 "truncated": len(message["body"]) >= MESSAGE_BODY_LIMIT}

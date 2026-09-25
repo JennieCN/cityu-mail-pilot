@@ -41,6 +41,7 @@ from pilot_app import providers  # noqa: E402
 from pilot_app import web  # noqa: E402
 from pilot_app.security import SecretBox, token_hash  # noqa: E402
 from pilot_app.service import PilotService  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 # Named like the stand-in it is. The packaging gate refuses any file carrying an
@@ -380,19 +381,8 @@ class PlatformKeyResponseTests(unittest.TestCase):
         saved = os.environ.get("INFE_PILOT_ADMIN_EMAILS")
         os.environ["INFE_PILOT_ADMIN_EMAILS"] = email
         try:
-            admin = Client(self.base)
-            code = f"platform-admin-{secrets.token_hex(4)}"
-            expiry = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
-            with db.connect() as connection:
-                connection.execute(
-                    "INSERT INTO invites(code_hash,expires_at) VALUES(?,?)", (token_hash(code), expiry))
-            web.reset_signup_rate_limit()  # 见 web.reset_signup_rate_limit：限速按 IP，单测得自己清
-            status, user = admin.post("/api/auth/register", {
-                "email": email,
-                "password": "a-long-enough-password",
-                "invite_code": code, "accepted_terms": True,
-            })
-            self.assertEqual(status, 200, user)
+            # 保留地址不能走开放注册（见 admin_fixture）：建号 + 授权 + 登录。
+            admin = admin_fixture.admin_session(db, Client(self.base), email)
             status, users = admin.get("/api/admin/users")
             self.assertEqual(status, 200, users)
             rendered = json.dumps(users, ensure_ascii=False)

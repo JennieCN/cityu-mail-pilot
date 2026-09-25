@@ -29,6 +29,7 @@ os.environ.pop("INFE_PILOT_ORIGIN", None)
 
 from pilot_app import imageguard, web  # noqa: E402
 from pilot_app.security import token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -132,9 +133,9 @@ class BroadcastImageTests(unittest.TestCase):
                           "users", "invites"):
                 connection.execute(f"DELETE FROM {table}")
         os.environ["INFE_PILOT_ADMIN_EMAILS"] = "boss@example.com"
-        self.admin = Client(self.base)
-        self.admin.register("boss@example.com", f"admin-{id(self)}")
-        self.admin.login("boss@example.com")
+        # 保留地址走「建号 + 授权」，不走开放注册（见 admin_fixture）：
+        # 后者现在对保留地址一律 403，而那正是攻击者的做法。
+        self.admin = admin_fixture.admin_session(db, Client(self.base), "boss@example.com")
         self.reader = Client(self.base)
         reader = self.reader.register("reader@example.com", f"reader-{id(self)}")
         self.reader.login("reader@example.com")

@@ -151,10 +151,15 @@ class FakeImap:
 
     REFUSAL = b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"
 
-    def __init__(self, capabilities=("IMAP4REV1", "ID"), require_id=True, uid_rows=b""):
+    def __init__(self, capabilities=("IMAP4REV1", "ID"), require_id=True, uid_rows=b"",
+                 sizes=None, size_supported=True, partial_supported=True):
         self.capabilities = capabilities
         self.require_id = require_id
         self.uid_rows = uid_rows
+        #: uid → `RFC822.SIZE`。不在里面就是「这封问不出来」。
+        self.sizes = sizes or {}
+        self.size_supported = size_supported
+        self.partial_supported = partial_supported
         self.identified = False
         self.commands = []
         self.uid_calls = []
@@ -180,6 +185,15 @@ class FakeImap:
 
     def uid(self, verb, *args):
         self.uid_calls.append((verb, args))
+        if verb == "fetch" and "RFC822.SIZE" in args[1]:
+            if not self.size_supported:
+                return ("NO", [b"no size"])
+            uid = int(args[0])
+            if uid in self.sizes:
+                return ("OK", [f"1 (RFC822.SIZE {self.sizes[uid]})".encode()])
+            return ("NO", [b"no size"])
+        if verb == "fetch" and "<0." in args[1] and not self.partial_supported:
+            return ("NO", [b"partial not supported"])
         return ("OK", [self.uid_rows])
 
     def close(self): pass
@@ -488,8 +502,15 @@ class FetchOriginalTests(unittest.TestCase):
         self.assertEqual(result["state"], "ok")
         self.assertIn("请提交作业", result["message"]["body"])
         self.assertEqual(result["message"]["subject"], "作业截止")
-        self.assertEqual(fake.uid_calls, [("fetch", ("7", "(BODY.PEEK[])"))],
-                         "取的是第 7 封，而且用的是 PEEK（不改已读标记）")
+        # 先问一句 `RFC822.SIZE`（P1：按需读也要有体积上限），再取正文。这个桩问不出
+        # 大小，所以正文走的是**有界** partial FETCH——两种都是只读取法。
+        self.assertIn(("fetch", ("7", "(RFC822.SIZE)")), fake.uid_calls,
+                      "取正文之前必须先问大小")
+        specs = [args[1] for verb, args in fake.uid_calls
+                 if verb == "fetch" and "RFC822.SIZE" not in args[1]]
+        self.assertEqual(len(specs), 1, f"正文只该取一次：{fake.uid_calls}")
+        self.assertIn("BODY.PEEK[]", specs[0], "用的是 PEEK（不改已读标记）")
+        self.assertNotIn("BODY[]", specs[0], "绝不能用会把信标成已读的 BODY[]")
         self.assertFalse(result["truncated"])
 
     def test_it_opens_the_mailbox_read_only(self):
@@ -591,3 +612,159 @@ class OutboundRequiredHeadersTests(unittest.TestCase):
                                     reply_to="me@example.com")
         self.assertTrue(message["Date"], "运营者的信也缺 Date")
         self.assertEqual(message["Reply-To"], "me@example.com")
+
+
+class OriginalSizeGateTests(unittest.TestCase):
+    """P1（GPT 审计第二条）：**按需读原信也要有体积上限**。
+
+    worker 取信那条路一直先问 `RFC822.SIZE`（`fetch_new_messages`），而「看原信 /
+    翻译 / 总结」走的 `fetch_message_by_uid` 原来直接 `BODY.PEEK[]`：一封带大附件的
+    邮件会在 **web 进程**里整封进内存（生产 2 GB），少量并发就能把服务拖垮。
+
+    这里钉住三件事：
+
+    ① 超限的邮件**一个字节正文都不取**——不是「取回来再返回一个错误」；
+    ② 正常小邮件照旧可读；
+    ③ `RFC822.SIZE` 问不出来时走**有界**的 partial FETCH，硬上限就是
+       `mailio.MAX_MESSAGE_BYTES`（与 worker 同一个常量），partial 被拒也不回头取整封。
+    """
+
+    @staticmethod
+    def _raw(subject: str = "作业截止", body: str = "请提交作业。") -> bytes:
+        return FetchOriginalTests._raw(subject, body)
+
+    @staticmethod
+    def _config() -> dict:
+        return FetchOriginalTests._config()
+
+    def _fetch(self, fake, **kwargs):
+        with mock.patch.object(mailio.imaplib, "IMAP4_SSL", return_value=fake):
+            return mailio.fetch_message_by_uid(self._config(), "授权码", kwargs.pop("uid", 7), **kwargs)
+
+    @staticmethod
+    def _body_specs(fake) -> list[str]:
+        """真正取正文用的取法（问大小那一句不算）。"""
+        return [args[1] for verb, args in fake.uid_calls
+                if verb == "fetch" and "RFC822.SIZE" not in args[1]]
+
+    def test_an_oversized_letter_is_refused_without_fetching_the_body(self):
+        """关键断言：**不许出现任何取正文的命令**。
+
+        只测「返回了错误」是不够的——最坏的那种改法就是先整封取回来、再报一句
+        「太大了」，内存已经花掉了。
+        """
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', self._raw()),
+                        sizes={7: mailio.MAX_MESSAGE_BYTES + 1})
+        result = self._fetch(fake)
+        self.assertEqual(result["state"], mailio.ORIGINAL_TOO_LARGE)
+        self.assertEqual(self._body_specs(fake), [],
+                         f"超限时连取正文的命令都不该出现，实际：{fake.uid_calls}")
+        self.assertNotIn("message", result, "拒绝时不许带回任何正文")
+        self.assertEqual(result["size_bytes"], mailio.MAX_MESSAGE_BYTES + 1)
+        self.assertEqual(result["limit_bytes"], mailio.MAX_MESSAGE_BYTES)
+        self.assertTrue(result["size_exact"])
+
+    def test_a_normal_letter_is_still_readable(self):
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', self._raw()), sizes={7: 40000})
+        result = self._fetch(fake)
+        self.assertEqual(result["state"], "ok")
+        self.assertIn("请提交作业", result["message"]["body"])
+        self.assertEqual(self._body_specs(fake), ["(BODY.PEEK[])"],
+                         "限内照旧整封取，而且只用 PEEK")
+
+    def test_without_size_support_the_fetch_is_still_bounded(self):
+        """问不出大小**不能**退化成无上限整封读：改取有界的一段。"""
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', self._raw()), size_supported=False)
+        result = self._fetch(fake)
+        self.assertEqual(result["state"], "ok", "问不出大小的小邮件仍然要能读")
+        self.assertIn("请提交作业", result["message"]["body"])
+        self.assertEqual(self._body_specs(fake),
+                         [f"(BODY.PEEK[]<0.{mailio.MAX_MESSAGE_BYTES + 1}>)"],
+                         "硬上限与 worker 是同一个常量")
+
+    def test_without_size_support_a_huge_answer_is_refused(self):
+        """有界 partial 拿满「上限+1」⇒ 这封信比上限大，按超限拒绝。"""
+        cap = 4096                     # 用小上限，免得单测真的搬 25 MB
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {99999}', b"x" * (cap + 1)),
+                        size_supported=False)
+        with mock.patch.object(mailio, "MAX_MESSAGE_BYTES", cap):
+            result = self._fetch(fake)
+        self.assertEqual(result["state"], mailio.ORIGINAL_TOO_LARGE)
+        self.assertEqual(self._body_specs(fake), [f"(BODY.PEEK[]<0.{cap + 1}>)"],
+                         "只允许这一次有界取法，不许回头再取整封")
+        self.assertFalse(result["size_exact"], "它只是「至少这么大」，不是精确大小")
+
+    def test_a_server_that_refuses_partial_never_falls_back_to_the_whole_body(self):
+        """partial 被拒时报错——**不赌**、也不改取整封。"""
+        fake = FakeImap(uid_rows=(b'1 (BODY[] {123}', self._raw()),
+                        size_supported=False, partial_supported=False)
+        with self.assertRaises(mailio.MailError):
+            self._fetch(fake)
+        unbounded = [spec for spec in self._body_specs(fake) if "<0." not in spec]
+        self.assertEqual(unbounded, [], f"partial 被拒之后不许改取整封：{fake.uid_calls}")
+
+
+class _StubDb:
+    def __init__(self, row):
+        self.row = row
+
+    def message_for_user(self, user_id, message_id):
+        return self.row
+
+
+class OversizedRefusalWordingTests(unittest.TestCase):
+    """过大的信到用户眼前必须是**一句能照着做的话**，而不是一片空白的原信。
+
+    网页层只认 gone/moved；过大这一档由 `service.read_original` 当场翻成
+    `MailError`（两个路由都是 `MailError` → 400 说人话）。翻译/总结与看原信共用
+    `read_original`，所以这里连**装配**一起测：拒绝之后绝不许再去调模型（那是花钱，
+    而且是把一整封信发出去）。
+    """
+
+    TOO_LARGE = {"state": mailio.ORIGINAL_TOO_LARGE, "size_bytes": 30 * 1024 * 1024,
+                 "size_exact": True, "limit_bytes": mailio.MAX_MESSAGE_BYTES}
+
+    @staticmethod
+    def _service():
+        from pilot_app import service as service_mod
+        from pilot_app.security import SecretBox
+
+        db = _StubDb({"imap_host": "imap.example.com", "imap_port": 993,
+                      "mailbox_email": "me@example.com", "imap_uid": 7, "uid_validity": "1"})
+        service = service_mod.PilotService(db, SecretBox(b"7" * 32))
+        service.mailbox_password = lambda row: "授权码"
+        return service
+
+    def test_reading_an_oversized_letter_says_what_to_do_instead(self):
+        service = self._service()
+        with mock.patch.object(mailio, "fetch_message_by_uid", return_value=self.TOO_LARGE):
+            with self.assertRaises(mailio.MailError) as caught:
+                service.read_original("usr_1", "msg_1")
+        text = str(caught.exception)
+        self.assertIn("太大", text)
+        self.assertIn("30.0 MB", text, "服务器报了多少就说多少")
+        self.assertIn(f"{mailio.MAX_MESSAGE_BYTES // 1048576} MB", text)
+        self.assertIn("无法在网页里打开", text)
+        self.assertIn("邮箱", text, "要给下一步：去哪儿还能看到这封信")
+
+    def test_an_unknown_size_is_reported_as_a_lower_bound(self):
+        """有界 partial 拿满时，那个数只是下界，不能写成「服务器报的大小」。"""
+        service = self._service()
+        lower = {**self.TOO_LARGE, "size_bytes": mailio.MAX_MESSAGE_BYTES + 1, "size_exact": False}
+        with mock.patch.object(mailio, "fetch_message_by_uid", return_value=lower):
+            with self.assertRaises(mailio.MailError) as caught:
+                service.read_original("usr_1", "msg_1")
+        self.assertIn("至少", str(caught.exception))
+
+    def test_translate_and_summary_share_the_same_gate(self):
+        from pilot_app import service as service_mod
+
+        for kind in service_mod.PilotService.ASSIST_KINDS:
+            with self.subTest(kind=kind):
+                service = self._service()
+                service.model_connection = mock.Mock(
+                    side_effect=AssertionError("拒绝之后不许再调模型"))
+                with mock.patch.object(mailio, "fetch_message_by_uid", return_value=self.TOO_LARGE):
+                    with self.assertRaises(mailio.MailError) as caught:
+                        service.assist("usr_1", "msg_1", kind)
+                self.assertIn("无法在网页里打开", str(caught.exception))

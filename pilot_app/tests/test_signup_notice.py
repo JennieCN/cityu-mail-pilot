@@ -40,6 +40,7 @@ os.environ.pop("INFE_PILOT_ORIGIN", None)
 from pilot_app import alerting, signup_notice, web  # noqa: E402
 from pilot_app.database import Database  # noqa: E402
 from pilot_app.security import SecretBox, hash_password, token_hash  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.web import db as web_db  # noqa: E402
 
 OWNER = "owner@example.com"
@@ -266,7 +267,7 @@ class SignupNoticeApiTests(unittest.TestCase):
         # a module-level assignment is whatever the last imported module wrote.
         cls.saved_admin_emails = os.environ.get("INFE_PILOT_ADMIN_EMAILS")
         os.environ["INFE_PILOT_ADMIN_EMAILS"] = OWNER
-        cls.owner = register(cls.base, OWNER)
+        cls.owner = admin_client(cls.base, OWNER)
         cls.member = register(cls.base, f"member-{dt.datetime.now().timestamp()}@example.com")
 
     @classmethod
@@ -449,6 +450,18 @@ class Client:
 
     def get(self, path):
         return self.request("GET", path)
+
+
+def admin_client(base: str, email: str) -> Client:
+    """管理员的会话：**建号 + 授权 + 登录**，不经过开放注册（见 admin_fixture）。
+
+    `owner@example.com` 正是 `INFE_PILOT_ADMIN_EMAILS` 点名的保留地址，注册端点
+    现在对它一律 403 —— 那正是 2026-09-26 那条 P1 堵掉的路。
+    """
+    client = Client(base)
+    user = admin_fixture.create_admin(web_db, email, PASSWORD)
+    client.user_id = user["id"]
+    return admin_fixture.sign_in(client, email, PASSWORD)
 
 
 def register(base: str, email: str) -> Client:

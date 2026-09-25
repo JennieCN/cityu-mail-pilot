@@ -35,6 +35,7 @@ os.environ.pop("INFE_PILOT_ORIGIN", None)
 
 from pilot_app import agent, alerting, backup, web, worker  # noqa: E402
 from pilot_app.database import Database, utc_now  # noqa: E402
+from pilot_app.tests import admin_fixture  # noqa: E402
 from pilot_app.security import SecretBox, hash_password, token_hash  # noqa: E402
 from pilot_app.web import db  # noqa: E402
 
@@ -346,16 +347,9 @@ class ConfirmActionTests(unittest.TestCase):
             os.environ["INFE_PILOT_ADMIN_EMAILS"] = self._saved
 
     def _admin(self) -> Client:
-        invite = db.create_invite(f"ops-{self.stamp}", 1)
-        client = Client(self.base)
-        web.reset_signup_rate_limit()  # 见 web.reset_signup_rate_limit：限速按 IP，单测得自己清
-        client.post("/api/auth/register", {
-            "email": "boss@example.com", "password": PASSWORD,
-            "invite_code": invite, "accepted_terms": True})
-        status, body = client.post("/api/auth/login",
-                                   {"email": "boss@example.com", "password": PASSWORD})
-        self.assertEqual(status, 200, body)
-        return client
+        """保留地址不能再走开放注册（那正是攻击者的做法，见 admin_fixture）：
+        建号 + 授权，再走真的登录端点拿会话。"""
+        return admin_fixture.admin_session(db, Client(self.base), "boss@example.com", PASSWORD)
 
     def _report(self, action: str = "restart_worker") -> str:
         return db.record_agent_report(
