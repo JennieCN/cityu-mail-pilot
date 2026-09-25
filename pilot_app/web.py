@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -264,8 +265,44 @@ def error_response(status: int, detail: str, *, cookies: Optional[list[str]] = N
     return json_response({"detail": detail}, status=status, cookies=cookies)
 
 
-def file_response(target: Path, content_type: str, *, download_name: str = "") -> Response:
-    data = target.read_bytes()
+def _etag_matches(request: "Request", etag: str) -> bool:
+    """Does the client already hold exactly these bytes?
+
+    Only ``If-None-Match`` is consulted when it is present, which is what
+    RFC 9110 requires (a stale ``If-Modified-Since`` must not override a fresh
+    ETag comparison). ``W/`` prefixes are stripped before comparing: our tags are
+    strong, and answering a weak comparison with a 304 is safe because the bytes
+    are identical by construction.
+    """
+    header = str((request.headers.get("If-None-Match") or "")).strip()
+    if not header:
+        return False
+    candidates = {tag.strip().removeprefix("W/") for tag in header.split(",")}
+    return "*" in candidates or etag in candidates
+
+
+def _file_validators(target: Path) -> dict[str, str]:
+    """Validators for a file served off disk, so a repeat visit costs a 304.
+
+    ``Cache-Control: no-cache`` stays: these URLs carry no version, so a phone
+    **must** revalidate — otherwise a deploy would leave it running last week's
+    JavaScript. What changed (2026-09-24, the operator: 「为什么我打开视频和软件
+    很慢」) is that revalidating used to mean re-downloading: the app sent no
+    validator at all, so every open of the app pulled the whole 320 KB
+    `app.js` over a mobile network. mtime+size is the right validator here --
+    the bytes change exactly when a deploy replaces the file, and hashing a
+    320 KB file on every request would cost more than the 304 saves.
+    """
+    info = target.stat()
+    stamp = dt.datetime.fromtimestamp(info.st_mtime, dt.timezone.utc)
+    return {
+        "ETag": '"%x-%x"' % (info.st_mtime_ns, info.st_size),
+        "Last-Modified": stamp.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+    }
+
+
+def file_response(target: Path, content_type: str, *, download_name: str = "",
+                  request: Optional["Request"] = None) -> Response:
     headers = {"Cache-Control": "no-cache"}
     if download_name:
         # `attachment` so no browser ever tries to render the bytes, and the
@@ -273,6 +310,15 @@ def file_response(target: Path, content_type: str, *, download_name: str = "") -
         # `"` would end the header early and let the rest be read as a new one.
         headers["Content-Disposition"] = (
             'attachment; filename="' + download_name.replace('"', "").replace("\\", "") + '"')
+    try:
+        headers.update(_file_validators(target))
+    except OSError:  # pragma: no cover - a race with a deploy must not 500
+        pass
+    if request is not None and "ETag" in headers and _etag_matches(request, headers["ETag"]):
+        # No body at all: `_respond` announces `len(body)`, so an empty body is
+        # an honest `Content-Length: 0` on a 304.
+        return Response(status=304, body=b"", content_type=content_type, headers=headers)
+    data = target.read_bytes()
     return Response(status=200, body=data, content_type=content_type, headers=headers)
 
 
@@ -5135,7 +5181,8 @@ def dispatch(request: Request) -> Response:
         target = apk_path()
         if target is None:
             return fail(request, 404, "安装包尚未提供。")
-        return file_response(target, APK_MEDIA_TYPE, download_name=APK_FILENAME)
+        return file_response(target, APK_MEDIA_TYPE, download_name=APK_FILENAME,
+                             request=request)
     if request.path in STATIC_FILES and request.method in {"GET", "HEAD"}:
         name, content_type = STATIC_FILES[request.path]
         target = (STATIC_ROOT / name).resolve()
@@ -5165,14 +5212,21 @@ def dispatch(request: Request) -> Response:
                 body = render_legal_page(target, locale)
             # `_with_language` 是必须的：**`?lang=en` 的意义就是「以后都用英文」**，
             # 只在这一次请求上生效等于没记住——换一页又变回中文。
+            headers = {"Cache-Control": "no-cache",
+                       # 让缓存/CDN 知道这一页是分语言的：同一个 URL 对不同
+                       # `Accept-Language` 是不同的内容。
+                       "Vary": "Accept-Language, Cookie",
+                       "Content-Language": locale}
+            # 页面是**当场渲染**的（按语言、按配置），所以验证器只能是正文的哈希：
+            # 手机重复打开时这一步把 50 KB 变成一次 304（2026-09-24 用户报手机上慢）。
+            etag = '"%s"' % hashlib.sha1(body).hexdigest()[:20]
+            headers["ETag"] = etag
+            if _etag_matches(request, etag):
+                return Response(status=304, body=b"", content_type=content_type,
+                                headers=headers)
             return _with_language(request, Response(
-                status=200, body=body, content_type=content_type,
-                headers={"Cache-Control": "no-cache",
-                         # 让缓存/CDN 知道这一页是分语言的：同一个 URL 对不同
-                         # `Accept-Language` 是不同的内容。
-                         "Vary": "Accept-Language, Cookie",
-                         "Content-Language": locale}))
-        return file_response(target, content_type)
+                status=200, body=body, content_type=content_type, headers=headers))
+        return file_response(target, content_type, request=request)
     candidates = ROUTES.get(request.method, [])
     path_matched = False
     for pattern, handler in candidates:

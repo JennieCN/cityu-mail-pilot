@@ -262,6 +262,25 @@ class ApplyBeforeInstallTests(unittest.TestCase):
         self.assertLess(nav.index('href="#apply"'), nav.index('href="#download"'),
                         "导航里「创建账号」又排到「装到手机」后面了")
 
+    def test_the_app_entry_survives_the_narrow_screen_rule(self):
+        """回访的人要的那一个入口，手机上必须看得见（2026-09-25 用户截图问：
+
+            「能不能在这加一个打开应用的按钮，要不然很不方便」
+
+        顶栏里其实一直有「打开应用」，但它挂着 `wide-only` —— 窄屏的 CSS
+        （`.nav-links ul li:not(.keep){display:none}`）只保留 `.keep`，于是手机上它被藏掉，
+        回访的人得先展开右上角抽屉才进得去应用。那条 CSS 很容易顺手再藏一次东西
+        （上面站名那条就是同一个坑写出来的），所以这里同时钉住三件事：
+        **在导航里**、**带着 `keep`**、**且不在 `wide-only` 里**。"""
+        page = landing()
+        start = page.index('<header class="top"')
+        nav = page[start:page.index("</header>", start)]
+        self.assertIn('href="/app"', nav, "导航里没有进应用的入口了")
+        self.assertIn('class="keep"><a href="/app"', nav,
+                      "「打开应用」必须带 keep，否则窄屏那条规则会把它藏掉（手机上就只剩抽屉里那条）")
+        self.assertNotIn('class="wide-only"><a href="/app"', nav,
+                         "「打开应用」又被放回 wide-only 了——那样手机上就看不见它")
+
     def test_the_first_screen_offers_applying_before_installing(self):
         page = landing()
         # `.lead` 是**契约**（`tools/landing_check.js` 按它量首屏按钮的坐标），但它

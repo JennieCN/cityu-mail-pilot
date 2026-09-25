@@ -239,6 +239,64 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.client.get("/manifest.webmanifest")
         self.assertEqual(status, 200)
 
+    # -- 「再打开一次」不该重下整份（2026-09-24 用户：「我打开视频和软件很慢」）----
+
+    def test_a_static_file_answers_304_instead_of_being_downloaded_again(self):
+        """慢的根因不是缓存策略，是**没有验证器**。
+
+        `Cache-Control: no-cache` 一直是对的——这些 URL 不带版本，手机必须先回源问一次
+        （否则一次部署之后它会一直跑上周的 JavaScript）。但「回源问一次」不等于
+        **把 320 KB 的 app.js 重下一遍**：在这条之前响应里既没有 ETag 也没有
+        Last-Modified，浏览器除了整份重下没有别的选择。"""
+        status, script, headers = self.client.get("/app.js")
+        self.assertEqual(status, 200)
+        etag = headers.get("ETag")
+        self.assertTrue(etag, "静态文件必须带 ETag，否则手机每次打开都要重下")
+        self.assertIn("Last-Modified", headers)
+
+        status, body, again = self.client.get("/app.js", headers={"If-None-Match": etag})
+        self.assertEqual(status, 304, "带着同一个 ETag 再要一次应当是 304")
+        # 这个测试客户端的 `_decode` 会把空正文解成 `{}`，所以判据用「假值 +
+        # Content-Length 是 0」两条，而不是比字符串。
+        self.assertFalse(body, "304 不能带正文")
+        self.assertEqual(again.get("Content-Length"), "0", "304 的 Content-Length 必须是 0")
+        self.assertEqual(again.get("ETag"), etag, "304 也要回验证器")
+        self.assertEqual(again.get("Cache-Control"), "no-cache", "仍然要回源问一次")
+
+        status, body, _ = self.client.get("/app.js", headers={"If-None-Match": '"stale-tag"'})
+        self.assertEqual(status, 200, "ETag 对不上时必须老老实实发正文")
+        self.assertIn("api(", body)
+
+    def test_a_rendered_page_answers_304_too_and_keeps_its_language_vary(self):
+        """/ 与 /app 是**当场渲染**的（按语言、按配置），所以验证器只能是正文的哈希。
+        50 KB 的页面在手机上重复打开同样不该重下；而 `Vary` 必须跟着 304 一起回，
+        否则共享缓存会把英文页发给中文用户。"""
+        status, page, headers = self.client.get("/app")
+        self.assertEqual(status, 200)
+        etag = headers.get("ETag")
+        self.assertTrue(etag, "页面也要有 ETag")
+        status, body, again = self.client.get("/app", headers={"If-None-Match": etag})
+        self.assertEqual(status, 304)
+        self.assertFalse(body, "304 不能带正文")
+        self.assertEqual(again.get("Vary"), headers.get("Vary"))
+        self.assertEqual(again.get("Content-Language"), headers.get("Content-Language"))
+        # 换一种语言 = 换一份正文，不能共用同一个 ETag（同 URL 不同内容）。
+        _, _, other = self.client.get("/app?lang=en")
+        self.assertNotEqual(other.get("ETag"), etag, "不同语言是不同的正文，ETag 必须不同")
+
+    def test_etag_matching_follows_the_header_rules(self):
+        """`*`、弱标签（`W/`）与逗号列表都要认——浏览器真的会发这些形式。"""
+        class _Fake:
+            def __init__(self, value):
+                self.headers = {} if value is None else {"If-None-Match": value}
+
+        self.assertTrue(web._etag_matches(_Fake("*"), '"x"'))
+        self.assertTrue(web._etag_matches(_Fake('W/"x"'), '"x"'))
+        self.assertTrue(web._etag_matches(_Fake('"a", "x"'), '"x"'))
+        self.assertFalse(web._etag_matches(_Fake('"a"'), '"x"'))
+        self.assertFalse(web._etag_matches(_Fake(None), '"x"'))
+        self.assertFalse(web._etag_matches(_Fake(""), '"x"'))
+
     def test_unknown_and_traversal_paths_are_not_served(self):
         for path in ("/nope", "/../pilot_app/web.py", "/static/app.js"):
             status, body, _ = self.client.get(path)

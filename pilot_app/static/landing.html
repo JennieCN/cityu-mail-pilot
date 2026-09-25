@@ -1020,10 +1020,19 @@ figure.shot figcaption{font-size:13px;color:var(--muted);margin-top:8px}
           <li><a href="#privacy" data-nav="privacy"><i class="fg" aria-hidden="true"></i><span class="lb">隐私说明</span></a></li>
           <li><a href="#faq" data-nav="faq"><i class="fg" aria-hidden="true"></i><span class="lb">常见问题</span></a></li>
           <li class="keep"><a class="pill-ghost nav-cta" href="#apply" data-nav="apply">创建账号</a></li>
+          <!-- 「打开应用」必须在**手机上**也看得见（2026-09-25 用户截图问：
+               「能不能在这加一个打开应用的按钮，要不然很不方便」）。它原来挂在
+               `wide-only` 上——手机上被 CSS 藏掉，只能展开右上角抽屉才点得到，
+               而**回访的人要的正是这一个入口**。所以给它 `keep`（窄屏保留），
+               位置紧挨「创建账号」：新访客点左边、老用户点右边。
+               **不加 `data-nav`**：那个属性是给 scroll-spy 找同名小节的，
+               `/app` 不是本页的章节，加了会让高亮逻辑去找一个不存在的小节。
+               「创建账号」排在「装到手机」前面这条契约没动（单测与
+               `tools/landing_check.js` 都在量它）。 -->
+          <li class="keep"><a href="/app">打开应用</a></li>
           <li class="keep"><a href="#download" data-nav="download"><i class="fg" aria-hidden="true"></i><span class="lb">装到手机</span></a></li>
           <!-- 配置了仓库才会有这一条（自建的人不该被指向别人的源码）。 -->
           <li class="wide-only">{{SOURCE_NAV}}</li>
-          <li class="wide-only"><a href="/app">打开应用</a></li>
         </ul>
       </nav>
       <!-- 语言切换器在导航这一行**里面**：挂在外面的那次，顶栏被它顶成了两行，

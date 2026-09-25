@@ -93,6 +93,13 @@ const settleScroll = async (page) => {
   check(brandHref === '/', '站名指向 `/`（点一下顺手丢掉地址栏里的 #how / #faq）', String(brandHref));
   check(await brand.isVisible(), '手机上站名没有被窄屏规则藏掉（这一条就是为它写的）');
 
+  // 回访的人要的那一个入口（2026-09-25 用户截图问：「能不能在这加一个打开应用的按钮，
+  // 要不然很不方便」）。它原来挂在 `wide-only` 上，窄屏被 CSS 藏掉，只能展开抽屉才点得到。
+  // 与上面站名那条同样两问：href 对不对、**手机上真的看得见吗**。
+  const appNav = p.locator('header.top nav a[href="/app"]');
+  check(await appNav.count() === 1, '顶栏里「打开应用」只有一个入口', String(await appNav.count()));
+  check(await appNav.first().isVisible(), '手机上「打开应用」看得见（没有被窄屏规则藏掉）');
+
   // A stranger must be able to read it without running any script.
   const noJs = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
   const blind = await noJs.newPage();
