@@ -353,7 +353,7 @@ class OfflineCorpusTests(unittest.TestCase):
     def test_both_case_sets_are_wellformed_and_share_the_same_sources(self):
         sources={s["id"] for s in rag.load_manifest(ROOT/'tools/rag_data/sources.json')}
         seen=set()
-        for name in ("eval_cases.json","heldout_cases.json"):
+        for name in ("eval_cases.json","heldout_cases.json","heldout_independent_cases.json"):
             cases=json.loads((ROOT/"tools/rag_data"/name).read_text(encoding="utf-8"))
             self.assertGreaterEqual(len(cases),30,name)
             self.assertEqual(len({c["id"] for c in cases}),len(cases),name)
@@ -364,6 +364,24 @@ class OfflineCorpusTests(unittest.TestCase):
                 self.assertTrue(set(c["expected"]).issubset(sources),(name,c["id"]))
                 self.assertIn(c["language"],("en","zh","mixed"),(name,c["id"]))
                 self.assertTrue(c["query"].strip(),(name,c["id"]))
+
+    def test_the_independent_set_still_covers_traditional_chinese(self):
+        """The one gap that set exposed must stay visible, not get quietly dropped.
+
+        The glossary is simplified-only, so these cases measure a real student need
+        the expansion currently does nothing for. Deleting them would hide that.
+        """
+        cases=json.loads((ROOT/"tools/rag_data/heldout_independent_cases.json").read_text(encoding="utf-8"))
+        traditional=[c for c in cases if c["id"].startswith("dorm-zht")]
+        self.assertGreaterEqual(len(traditional),5,"traditional Chinese cases vanished from the independent set")
+        # Characters whose simplified form differs, so their presence proves the text is
+        # traditional rather than a mislabelled simplified sentence. One case of slack is
+        # allowed for a sentence that happens to use only shared characters.
+        traditional_only=set("課學時幾單邊點開讀選會為對這個們麼規則績試報請")
+        marked=[c for c in traditional if traditional_only & set(c["query"])]
+        self.assertGreaterEqual(len(marked),len(traditional)-1,"these are labelled traditional but are not")
+        for c in traditional:
+            self.assertEqual(c["language"],"zh",c["id"])
 
 
 if __name__ == "__main__": unittest.main()

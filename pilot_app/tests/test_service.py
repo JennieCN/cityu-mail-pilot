@@ -184,6 +184,37 @@ class ServiceTests(unittest.TestCase):
         self.assertIsInstance(report, str)
         self.assertIn("https://example.com/a", report)
 
+    def test_an_external_search_call_is_recorded_in_the_ledger(self):
+        """搜索调用以前**一行都不记**（2026-09-26）。
+
+        出报告那条路（非内置搜索的供应商）每次都会调一次 `providers.web_search`，
+        它和模型走同一个账号计费 —— 而 `token_usage` 里此前只有模型调用。于是
+        「平台 key 的余额为什么掉得比账本快」根本没法回答。这条钉住：调了就要记一行，
+        而且**单价记 NULL**（按次计费的搜索我们没有可核实的价目，填 0 才是撒谎）。
+        """
+        self.db.get_profile.return_value = {}
+        # deepseek：**没有**内置联网搜索，所以才会走外部搜索那条路（anthropic 有，会跳过）。
+        self.db.get_connection.side_effect = lambda user_id, kind: (
+            self._model_connection("deepseek") if kind == "model" else
+            {"id": "con_s", "user_id": "usr", "kind": "search", "provider": "doubao",
+             "model": "", "base_url": "", "config_json": "{}", "enabled": 1,
+             "encrypted_api_key": self.box.encrypt("search-key", context="connection:usr:search"),
+             "platform": True}
+        )
+        hits = [{"title": "t", "url": "https://example.com/a", "summary": "s"}]
+        with mock.patch("pilot_app.service.providers.generate",
+                        return_value=providers.Generation("## 3. 邮件内容总结\n参见 https://example.com/a", [], "external")), \
+                mock.patch("pilot_app.service.prompts.public_search_query", return_value="CityU notice"), \
+                mock.patch("pilot_app.service.providers.web_search", return_value=hits) as web_search:
+            self.service._analyse("usr", {"id": "msg_1", "subject": "s", "body": "b"})
+        self.assertTrue(web_search.called, "这一档没有内置搜索，就必须走外部搜索")
+        recorded = [call.kwargs for call in self.db.record_usage.call_args_list]
+        search_rows = [row for row in recorded if row.get("kind") == "search"]
+        self.assertEqual(len(search_rows), 1, "搜索要正好记一行")
+        self.assertIsNone(search_rows[0]["cost"], "按次计费、我们没有价目 → 记 NULL 而不是 0")
+        self.assertEqual(search_rows[0]["message_id"], "msg_1", "要能追到那封信")
+        self.assertTrue(search_rows[0]["on_platform"], "用的是平台那把搜索 key")
+
     def test_analyse_survives_native_search_failure(self):
         self.db.get_profile.return_value = {}
         self.db.get_connection.side_effect = lambda user_id, kind: (

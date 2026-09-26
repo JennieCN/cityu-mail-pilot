@@ -32,9 +32,12 @@ Use a new output filename every time; existing files are deliberately refused.
 # Opt in to abstention for one run only:
 .venv-pilot/bin/python tools/rag_corpus.py evaluate \
   --corpus /tmp/cityu-corpus-new.sqlite --cases tools/rag_data/eval_cases.json --glossary --min-coverage 0.5
-# The set that is allowed to disagree with the one above (see "The held-out set"):
+# The set that is allowed to disagree with the one above (see "The held-out sets"):
 .venv-pilot/bin/python tools/rag_corpus.py evaluate \
   --corpus /tmp/cityu-corpus-new.sqlite --cases tools/rag_data/heldout_cases.json --glossary
+# And the one written by a machine that never read the glossary, on both settings:
+.venv-pilot/bin/python tools/rag_corpus.py evaluate \
+  --corpus /tmp/cityu-corpus-new.sqlite --cases tools/rag_data/heldout_independent_cases.json --glossary
 .venv-pilot/bin/python -m unittest pilot_app.tests.test_rag_offline -v
 ```
 
@@ -132,19 +135,20 @@ it was reviewed against", nothing more. The negatives are unchanged at 2/4, so
 abstention is untouched here: the glossary did not make the tool worse at refusing,
 but it did not help either.
 
-## The held-out set, and what it says (2026-09-26)
+## The held-out sets, and what they say (2026-09-26)
 
-`heldout_cases.json` — 32 different questions (14 Chinese, 13 English, 2 mixed, 4
-negatives), written **from the page text** after the glossary was committed, and
-deliberately using Chinese vocabulary the glossary was not built around
-(时间票, 候补名单, 上课时间, 星期六, 学院, 学费, 双主修, 通识课程 …):
+`heldout_cases.json` — **33** questions (14 Chinese, 13 English, 2 mixed, 4
+negatives; the earlier "32" in this file and in the commit message was an arithmetic
+slip — the parenthetical sums to 33 and the file has 33), written **from the page text**
+after the glossary was committed, and deliberately using Chinese vocabulary the glossary
+was not built around (时间票, 候补名单, 上课时间, 星期六, 学院, 学费, 双主修, 通识课程 …):
 
 | set | glossary | hit@1 | hit@3 | Chinese hit@3 | English | mixed | negative false hits |
 |---|---|---|---|---|---|---|---|
 | dev (30) | off | 0.654 | 0.692 | 0.0 | 1.0 | 1.0 | 2/4 |
 | dev (30) | on | 0.846 | 1.000 | 1.00 | 1.0 | 1.0 | 2/4 |
-| **held-out (32)** | off | 0.414 | 0.517 | 0.07 | 0.92 | 1.0 | 2/4 |
-| **held-out (32)** | **on** | **0.552** | **0.759** | **0.57** | 0.92 | 1.0 | 2/4 |
+| **held-out (33)** | off | 0.414 | 0.517 | 0.07 | 0.92 | 1.0 | 2/4 |
+| **held-out (33)** | **on** | **0.552** | **0.759** | **0.57** | 0.92 | 1.0 | 2/4 |
 
 **The 1.000 does not survive.** The glossary still multiplies Chinese retrieval (0.07
 -> 0.57), but six of fourteen held-out Chinese questions return **an empty set**, not a
@@ -166,8 +170,37 @@ Provenance limit, stated rather than implied: the glossary was committed (`40b1f
 before these questions were written, and `test_the_reviewed_glossary_is_frozen` pins its
 SHA-256 so any later edit invalidates the numbers — but **the same author wrote both**,
 so this set catches tuning to the 30 development queries, not tuning to the glossary
-itself. A genuinely independent author (the second machine, which has not read the
-glossary) is still the next step; it was unreachable when this was measured.
+itself.
+
+## The independent set: written by a machine that never read the glossary
+
+`heldout_independent_cases.json` — **49** questions (21 Chinese of which **9 traditional**,
+23 English, 5 mixed, 5 unanswerable) produced on the second machine, which was given the
+five page URLs and **explicitly forbidden from reading `glossary.json`,
+`eval_cases.json` or `heldout_cases.json`**. It also found, without being told to, that
+Hong Kong students write their questions with English acronyms mixed in
+(`AIMS`, `DegreeWorks`, `CGPA`, `CRN`) and in Cantonese (`課堂係咪逢整點開始？`).
+
+| set | glossary | hit@1 | hit@3 | Chinese hit@3 | traditional hit@3 | English | mixed | negative false hits |
+|---|---|---|---|---|---|---|---|---|
+| **independent (49)** | off | 0.727 | 0.773 | 0.53 | 0.62 | 0.95 | 1.00 | **4/5** |
+| **independent (49)** | **on** | **0.795** | **0.864** | **0.74** | **0.62** | 0.95 | 1.00 | **5/5** |
+
+Three things this set says that the first two could not:
+
+1. **Chinese is 0.74 here, not 0.57** — and 0.53 *with the glossary off*. Both numbers
+   are driven by the same thing: these questions carry Latin tokens (`CGPA`, `CRN`,
+   `minor`, `sem`) that an English corpus matches directly. So the honest headline is not
+   "0.57" or "0.74" but **"it depends how much English the asker mixes in"**, and the
+   earlier 0.07 was an artefact of a set written in pure Chinese.
+2. **The glossary does nothing for traditional Chinese: 0.62 -> 0.62.** It is
+   simplified-only. The 0.62 comes entirely from the embedded Latin tokens. Adding
+   traditional variants is mechanical work that has not been done, and until it is, a
+   Hong Kong student writing in traditional characters gets no benefit from it.
+3. **The glossary costs precision: negative false hits go 4/5 -> 5/5.** Expanding a
+   Chinese question into English terms pulls pages into scope that the raw query did not
+   reach. This is the same trade the calibration curve shows, now with a price tag on the
+   recall side rather than the abstention side.
 
 ## Abstention: what the numbers allow and what they forbid (measured 2026-09-26)
 
@@ -214,8 +247,12 @@ holdout. Do not tune synonyms to it then claim general accuracy. Add separately
 reviewed passage/effective-year labels and held-out questions before deployment.
 `peak_process_rss_bytes` is the CLI process high-water RSS, **not incremental
 server memory**. The 30-query p95 on five pages is not a scale/load benchmark.
-The report includes corpus SHA-256 for reproducibility; no artificial pass gate
-turns a failed retrieval benchmark into a production approval.
+The report includes a corpus SHA-256, but it identifies a **build**, not a content
+snapshot: the database stores each source's fetch time, so two builds of the same pages
+give different hashes with identical byte size and identical readings (measured twice on
+the second machine: `e4481378…` vs `3568da38…`, and twice on this one: `a4db98d0…` vs
+`fd6b6be5…`, all four at 401 408 bytes). Never use it to claim two runs share a corpus.
+No artificial pass gate turns a failed retrieval benchmark into a production approval.
 
 ## Open-source review
 
@@ -242,24 +279,25 @@ turns a failed retrieval benchmark into a production approval.
 
 ## Next gate (partly done, 2026-09-26)
 
-Done: cross-language matching has a first, measured answer (`glossary.json`, opt-in,
-Chinese 0/8 -> 8/8 on the development set and 0.07 -> 0.57 on the held-out set),
+Done: cross-language matching has a first, measured answer (`glossary.json`, opt-in),
 `diagnose` separates a vocabulary gap from a ranking miss, abstention is a measured
 opt-in gate with a calibration curve, one negative class is proven to be out of the
-retriever's reach, and the glossary is frozen by hash against a second case set.
+retriever's reach, the glossary is frozen by hash, and the case sets now include one
+written by a machine that never read the glossary.
 
 Not done, in the order they should be attacked:
 
-1. **Raise Chinese coverage past the glossary.** 0.57 is the honest ceiling of a
-   hand-curated term list, and the six remaining failures are all empty results from
-   vocabulary it never covered. This is the fork the README has deferred since the
-   start: grow the glossary by review, or evaluate multilingual embeddings (a new
-   dependency, and not on the small VPS) or LLM query rewriting (needs the model, so
-   the eval can no longer run offline). Compare on `heldout_cases.json`, which is
-   already frozen.
-2. **An independent author for the case set.** Both current sets were written by the
-   same person who wrote the glossary. Only the second machine can fix that, and it
-   must not read `glossary.json` while writing.
+1. **Traditional Chinese.** The glossary is simplified-only and helps traditional
+   questions by exactly nothing (0.62 -> 0.62 on 9 traditional cases in the independent
+   set). Adding traditional key variants is mechanical, testable review work with a
+   known target, and it is the cheapest uncovered win on this list.
+2. **Raise Chinese coverage past the glossary**, knowing it is not free: the independent
+   set shows the expansion buying recall (zh 0.53 -> 0.74) while **costing precision**
+   (negative false hits 4/5 -> 5/5). The fork the README has deferred since the start:
+   grow the glossary by review, or evaluate multilingual embeddings (a new dependency —
+   the second machine's owner plans a dedicated CPU embedder on their own box, not on the
+   VPS) or LLM query rewriting (needs the model, so the eval can no longer run offline).
+   Compare on the frozen sets, never on `eval_cases.json`.
 3. **Citation validation at answer time** — the only place the `none03` class can be
    refused (see the abstention section). That work belongs to the answer step this tool
    deliberately does not have, and it needs prompt-injection isolation first.

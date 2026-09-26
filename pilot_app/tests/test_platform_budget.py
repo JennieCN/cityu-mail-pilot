@@ -195,6 +195,62 @@ class LocalServiceSpendTests(BudgetTestCase):
         self.assertIn("1 次调用走的是运营者自建的模型服务", found["platform_cost_high"]["detail"])
 
 
+class SearchAndAgentSpendTests(BudgetTestCase):
+    """2026-09-26：用户问「余额为什么掉得比我们记的账快 45 倍」。
+
+    查下来账本里少了**两类调用**：**联网搜索**（每次出报告都会调一次豆包搜索，与模型
+    同一个账号按次计费）与**运维助手**（`agent_reports` 里有 tokens/cost，但从不进这一本账）。
+    这两条判据钉住「它们被看见了，而且没有被算错桶」——搜索的 provider 是 doubao、
+    不在模型定价表里，**不显式排掉就会被算进「本机那档不花钱」**。
+    """
+
+    def _search(self, *, on_platform: bool = True, cost: float | None = None) -> str:
+        rows = self.db.list_users_overview()
+        return self.db.record_usage(
+            user_id=(rows[0]["id"] if rows else "usr_x"), kind="search", provider="doubao",
+            model="web-search", usage={"total": 0},
+            cost=None if cost is None else {"total_cost": cost, "currency": "CNY"},
+            on_platform=on_platform)
+
+    def _agent(self, cost: float = 0.02) -> str:
+        return self.db.record_agent_report(
+            finding_key="k", severity="warning", title="t", fingerprint="f",
+            provider="deepseek", model="deepseek-flash",
+            tokens={"input": 1000, "output": 200, "total": 1200},
+            cost=cost, currency="USD", body="b", created_at=NOW,
+            action="", )
+
+    def test_a_search_is_counted_and_is_not_mistaken_for_a_free_local_call(self):
+        self._user()
+        self._search()
+        month = budget.spend(self.db, now=NOW)
+        self.assertEqual(month["search_calls"], 1, "搜索要被数出来")
+        self.assertEqual(month["local_calls"], 0,
+                         "搜索不是「本机那台不花钱的服务」——它按次计费")
+        self.assertEqual(month["calls"], 0, "它也不该混进模型调用的那个数")
+
+    def test_the_ledger_says_searches_are_unpriced_rather_than_free(self):
+        self._user()
+        self._search()
+        month = budget.spend(self.db, now=NOW)
+        self.assertEqual(month["cost"], 0.0)
+        self.assertEqual(month["unpriced_calls"], 0,
+                         "未计价要单独说（搜索那一行），不能靠模型那栏的 unpriced 去兜")
+
+    def test_an_agent_call_shows_up_in_the_same_month(self):
+        self._user()
+        self._agent(0.03)
+        month = budget.spend(self.db, now=NOW)
+        self.assertEqual(month["agent_calls"], 1)
+        self.assertAlmostEqual(month["agent_cost"], 0.03, places=4)
+
+    def test_a_users_own_search_is_not_the_operators_money(self):
+        self._user()
+        self._search(on_platform=False)
+        month = budget.spend(self.db, now=NOW)
+        self.assertEqual(month["search_calls"], 0)
+
+
 class MonthWindowTests(BudgetTestCase):
     def test_the_month_is_cut_in_hong_kong_time_not_utc(self):
         """运营者说「这个月」时指的是本地那个月。用 UTC 切，9 月 30 日晚上 8 点之后的

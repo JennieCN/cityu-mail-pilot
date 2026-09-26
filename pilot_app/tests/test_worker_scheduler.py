@@ -212,16 +212,41 @@ class PollingIntervalTests(unittest.TestCase):
     def test_a_failing_mailbox_backs_off_and_recovers(self):
         with mock.patch.object(worker, "POLL_SECONDS", 60), \
                 mock.patch.object(mailio, "GMAIL_MIN_POLL_SECONDS", 900), \
-                mock.patch.object(worker, "MAX_POLL_BACKOFF_SECONDS", 3600):
+                mock.patch.object(worker, "MAX_POLL_BACKOFF_SECONDS", 3600), \
+                mock.patch.object(worker, "MIN_RETRY_BACKOFF_SECONDS", 600):
             qq = {"imap_host": "imap.qq.com"}
             self.assertEqual(worker.next_poll_delay(qq, 0), 60, "首次失败前不打退避")
-            self.assertEqual(worker.next_poll_delay(qq, 1), 120)
-            self.assertEqual(worker.next_poll_delay(qq, 2), 240)
+            self.assertEqual(worker.next_poll_delay(qq, 1), 600, "第一次失败就至少 10 分钟")
+            self.assertEqual(worker.next_poll_delay(qq, 2), 1200)
             self.assertEqual(worker.next_poll_delay(qq, 10), 3600, "必须有上限")
             # Backing off must never make a mailbox poll faster than its floor.
             gmail = {"imap_host": "imap.gmail.com"}
             for failures in (0, 1, 2, 20):
                 self.assertGreaterEqual(worker.next_poll_delay(gmail, failures), 900)
+
+    def test_the_shipped_retry_floor_is_at_least_ten_minutes(self):
+        """**默认值本身也要钉住**：机制对、但默认被调回 60 秒，等于没修。
+
+        下面那条测的是「下限不跟间隔走」，而它自己 `mock.patch` 了那个常量 ——
+        所以它证明不了出厂值是多少。这条补上：生产那个数至少是 10 分钟。
+        """
+        self.assertGreaterEqual(worker.MIN_RETRY_BACKOFF_SECONDS, 600)
+
+    def test_the_retry_floor_does_not_follow_the_poll_interval_down(self):
+        """**间隔是给健康邮箱调的，退避起点不是**（2026-09-26 踩到的那条）。
+
+        2026-09-26 把轮询间隔从 300 秒调到 60 秒之后，一个「授权码被拒」的邮箱从
+        **每 10 分钟**一次重试变成**每 2 分钟**一次 —— 实测那 3 个坏邮箱一小时贡献
+        **33 次失败登录**，而供应商风控最敏感的就是这个形状（QQ 官方点名的
+        「脚本 / 批量 / 频繁」）。这条钉住：**间隔调到多小，失败重试都不会跟着变小**。
+        """
+        qq = {"imap_host": "imap.qq.com"}
+        with mock.patch.object(worker, "MIN_RETRY_BACKOFF_SECONDS", 600):
+            for interval in (60, 120, 300, 900):
+                with mock.patch.object(worker, "POLL_SECONDS", interval):
+                    self.assertGreaterEqual(
+                        worker.next_poll_delay(qq, 1), 600,
+                        f"间隔 {interval} 秒时，第一次失败的重试间隔仍不能低于 10 分钟")
 
     def test_the_stale_threshold_follows_the_providers_interval(self):
         """Alerting and polling must agree, or a healthy Gmail mailbox would be

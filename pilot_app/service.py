@@ -630,6 +630,8 @@ class PilotService:
                 try:
                     search_results = providers.web_search(search["provider"], self.connection_key(search), query, count=5)
                     search_status = "live results supplied" if search_results else "provider returned no results"
+                    # 搜索是**按次**计费、与模型同一个账号，以前一行都不记（见该方法）。
+                    self._record_search_usage(user_id, search, message_id=str(message.get("id") or ""))
                 except Exception as exc:
                     # Search must never block the mail summary.
                     logging.warning("search failed for user %s: %s", user_id, exc)
@@ -751,6 +753,33 @@ class PilotService:
         except Exception:
             logging.exception("could not record token usage for user %s", user_id)
 
+    def _record_search_usage(self, user_id: str, connection: dict[str, Any] | None, *,
+                             message_id: str = "") -> None:
+        """把**搜索调用**也记一行 —— 在此之前它完全不在账本里。
+
+        2026-09-26：用户问「平台 key 的余额为什么掉得比我们记的账快 45 倍」。查下来
+        账本（`token_usage`）里只有模型调用，而**每次出报告都会调一次豆包联网搜索**
+        （`providers.web_search`，与模型同一个火山账号计费）—— 这一类调用从来没写过行。
+        运维助手（`agent`）那 30 次/天的额度同样没记。于是「钱花在哪」只能靠猜。
+
+        **不编单价**：搜索是**按次**计费，而我们手上没有一份可核实的价目表，所以
+        `cost` 记 NULL —— 用量页把 NULL 显示成「未计价」，那是诚实的，填个 0 才是撒谎。
+        这一行首先提供的是**次数**：有了它，余额下降第一次能对着账本解释。
+
+        也**不记查询词**：那个词是从用户邮件里推出来的（`prompts.public_search_query`），
+        隐私政策只承诺把元数据留在我们这边。
+        """
+        try:
+            self.db.record_usage(
+                user_id=user_id, kind="search",
+                provider=str((connection or {}).get("provider") or ""),
+                model=str((connection or {}).get("model") or "web-search"),
+                usage={"total": 0}, cost=None, message_id=message_id,
+                on_platform=bool((connection or {}).get("platform")),
+            )
+        except Exception:
+            logging.exception("could not record search usage for user %s", user_id)
+
     def _send_arrival_alert(self, mailbox: dict, password: str, message: dict, *,
                            full_follows: bool = True) -> bool:
         """Send the instant heads-up, before the slow report is generated.
@@ -821,6 +850,7 @@ class PilotService:
                     search_results = providers.web_search(
                         search["provider"], self.connection_key(search), query, count=3)
                     search_status = "live results supplied" if search_results else "provider returned no results"
+                    self._record_search_usage(user_id, search, message_id=str(message.get("id") or ""))
                 except Exception as exc:
                     logging.warning("search failed for user %s: %s", user_id, exc)
                     search_status = "live search failed; no verification available"

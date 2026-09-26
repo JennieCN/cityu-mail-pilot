@@ -1299,6 +1299,18 @@ def platform_cost(db: Database, *, refresh_now: bool = False, as_json: bool = Fa
     if month["unknown_calls"]:
         print(f"                  另有 {month['unknown_calls']} 次调用没记是谁的 key 付的"
               f"（{budget.money(month['unknown_cost'], month['currency'])}），不计入上面这个数")
+    if month.get("search_calls"):
+        # 2026-09-26：这一类调用**以前一行都不记**，于是「余额为什么掉得比账本快」说不清。
+        # 搜索按次计费、我们手上没有可核实的价目 → 不编金额，只报次数。
+        print(f"                  另有 {month['search_calls']} 次联网搜索（同一个账号按次计费，"
+              "我们手上没有可核实的价目 → **未计价**，所以上面那个金额里没有它）")
+    if month.get("agent_calls"):
+        print(f"                  另有 {month['agent_calls']} 次是运维助手"
+              f"（{budget.money(month['agent_cost'], month['currency'])}，记在 agent_reports）"
+              "，同一把 key 花的钱，不计入上面这个数")
+    if month.get("search_calls") or month.get("agent_calls"):
+        print("                  说明：上面「本月代付」只数**模型调用**；把这三行加起来才接近"
+              "余额实际掉的速度（对不上就说明还有别的调用方在用这个账号）。")
     reading_now = current["reading"]
     if not current["balance_readable"]:
         print(f"  账上余额        读不到：供应商「{current['provider']}」没有余额查询接口"

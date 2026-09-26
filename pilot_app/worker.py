@@ -66,6 +66,11 @@ POLL_TICK_SECONDS = _int_env("INFE_PILOT_POLL_TICK_SECONDS", 15, 1, 300)
 # forever, which is exactly the connection volume the providers throttle.
 MAX_POLL_BACKOFF_SECONDS = _int_env("INFE_PILOT_POLL_MAX_BACKOFF_SECONDS", 3600, 60, 86400)
 
+#: 失败重试的**起点**（秒），与轮询间隔无关。2026-09-26 加：间隔调到 60 秒之后，
+#: 「授权码被拒」的邮箱从 10 分钟一次重试变成 2 分钟一次（一小时 33 次失败登录）——
+#: 那是供应商风控最敏感的形状。间隔管的是健康邮箱的快慢，这一条管的是「别把自己弄进黑名单」。
+MIN_RETRY_BACKOFF_SECONDS = _int_env("INFE_PILOT_POLL_MIN_BACKOFF_SECONDS", 600, 60, 86400)
+
 #: 单次轮询大约花多久（秒）。**这是个估计，不是实测**，只用来把「一轮跑不跑得完」
 #: 算给人看（`manage poll-interval`）。QQ/163 实测 1–3 秒（登录 + SELECT + UID SEARCH）。
 POLL_COST_SECONDS = _int_env("INFE_PILOT_POLL_COST_SECONDS", 2, 1, 60)
@@ -104,11 +109,20 @@ def next_poll_delay(mailbox: dict[str, Any], consecutive_failures: int) -> int:
     that, a revoked app password means a failing IMAP login every minute for as
     long as nobody notices — which is exactly the runaway connection volume the
     providers throttle, aimed at an account that is already in trouble.
+
+    **起点与轮询间隔解耦**（2026-09-26）。以前第一档退避是 `2 × 间隔`，于是
+    2026-09-26 把间隔从 300 秒调到 60 秒时，一个「授权码被拒」的邮箱从**每 10 分钟**一次
+    重试变成**每 2 分钟**一次：实测那 3 个坏邮箱一小时贡献 **33 次失败登录**，
+    而供应商风控最敏感的就是这个形状（QQ 官方点名的「脚本 / 批量 / 频繁」）。
+    间隔是给**健康**邮箱调快慢的旋钮，失败重试的节奏该由「别把自己弄进黑名单」决定，
+    所以这里改用 `MIN_RETRY_BACKOFF_SECONDS` 当起点（默认 10 分钟），
+    仍然逐次翻倍、仍然有 `MAX_POLL_BACKOFF_SECONDS` 上限。
     """
     base = poll_interval_for(mailbox)
     if consecutive_failures <= 0:
         return base
-    return min(base * (2 ** min(consecutive_failures, 16)), MAX_POLL_BACKOFF_SECONDS)
+    step = max(base, MIN_RETRY_BACKOFF_SECONDS)
+    return min(step * (2 ** min(consecutive_failures - 1, 16)), MAX_POLL_BACKOFF_SECONDS)
 
 
 def poll_budget(mailboxes: int, *, interval: int, workers: int,

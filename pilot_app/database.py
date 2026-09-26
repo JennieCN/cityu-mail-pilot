@@ -3064,10 +3064,25 @@ class Database:
                            MAX(currency) AS currency
                     FROM token_usage WHERE on_platform=1 AND created_at >= ?{only}""",
                 params).fetchone()
+            # 本机那台（不花钱）—— **必须排掉搜索**：搜索的 provider 是 doubao，
+            # 不在模型定价表里，不排掉就会被算进「本机那档，不产生账单」（2026-09-26）。
             local = connection.execute(
                 f"""SELECT COUNT(*) AS calls FROM token_usage
-                    WHERE on_platform=1 AND created_at >= ?{local_only}""",
+                    WHERE on_platform=1 AND kind != 'search' AND created_at >= ?{local_only}""",
                 params).fetchone()
+            # 搜索调用（按次计费、与模型同一个账号）：2026-09-26 之前**一行都不记**，
+            # 于是余额掉得比账本快几十倍也说不清。单价我们没有可核实的来源 → cost 为 NULL，
+            # 这里只报**次数**（用法见 `manage platform-cost`）。
+            search = connection.execute(
+                """SELECT COUNT(*) AS calls FROM token_usage
+                   WHERE on_platform=1 AND kind='search' AND created_at >= ?""",
+                (since,)).fetchone()
+            # 运维助手的调用记在自己的表里（`agent_reports` 有 tokens/cost/created_at），
+            # 同一个平台 key 花的钱，所以也算进「本月代付」的说明面。
+            agent = connection.execute(
+                """SELECT COUNT(*) AS calls, COALESCE(SUM(cost),0) AS cost
+                   FROM agent_reports WHERE created_at >= ?""",
+                (since,)).fetchone()
             unknown = connection.execute(
                 """SELECT COUNT(*) AS calls, COALESCE(SUM(cost),0) AS cost
                    FROM token_usage WHERE on_platform IS NULL AND created_at >= ?""",
@@ -3078,7 +3093,10 @@ class Database:
                 "local_calls": int(local["calls"] or 0),
                 "currency": str(row["currency"] or "USD"),
                 "unknown_calls": int(unknown["calls"] or 0),
-                "unknown_cost": round(float(unknown["cost"] or 0.0), 4)}
+                "unknown_cost": round(float(unknown["cost"] or 0.0), 4),
+                "search_calls": int(search["calls"] or 0),
+                "agent_calls": int(agent["calls"] or 0),
+                "agent_cost": round(float(agent["cost"] or 0.0), 4)}
 
     def usage_overview(self, days: int = 30, timezone_offset_hours: int = 8) -> dict[str, Any]:
         """Per-user token totals and cost, with daily and per-model breakdowns.
