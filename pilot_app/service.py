@@ -152,6 +152,62 @@ def is_allowed_sender(address: str) -> bool:
     return any(domain == allowed or domain.endswith("." + allowed) for allowed in ALLOWED_SENDER_DOMAINS)
 
 
+def _collect_guard(collector: dict[str, Any] | None, generation: Any) -> None:
+    """把本机护栏对这次生成的结论收进调用方给的字典里。
+
+    为什么不改返回值：`_analyse` / `_analyse_brief` 的返回值被 `manage verify-e2e` 与
+    一堆测试当字符串用，为了一行日志去改签名不划算；而一个**调用方给的字典**是调用内
+    局部的（多线程下各写各的，没有共享状态），也不会漏掉「护栏没说话」这件事
+    （空字典 = 没结论，与 `ok=true` 是两回事，见 `guard_note`）。
+    """
+    if collector is None or generation is None:
+        return
+    verdict = getattr(generation, "guard", None)
+    if verdict:
+        collector.update(verdict)
+
+
+def guard_note(guard: dict[str, Any] | None) -> str:
+    """护栏结论的一行摘要，只给日志用。
+
+    ``none`` 与 ``ok`` 必须分开：``none`` = **这一次没有护栏结论**（比如用的是平台
+    DeepSeek，那条路根本没有护栏），``ok`` = 有护栏而且它说没问题。混成一个字会让
+    「护栏是不是在工作」这个问题永远答不出来。
+    """
+    if not guard:
+        return "none"
+    issues = guard.get("issues")
+    count = len(issues) if isinstance(issues, (list, tuple)) else issues
+    state = "ok" if guard.get("ok") else "ESCALATE"
+    return (f"{state}(issues={count if count is not None else '?'}"
+            f",retried={'yes' if guard.get('retried') else 'no'})")
+
+
+def log_guard_escalation(guard: dict[str, Any] | None, *, user_id: str, report_id: str = "",
+                         message_id: str = "", kind: str = "") -> None:
+    """护栏说「这条该看一眼」而**我们照常交付**时，留一行能追到人的记录。
+
+    **为什么要有它**（2026-09-26 用户问「网站侧到底按不按 `guard.ok=false` 分流」）：
+    答案是**不按** —— `ok=false` 是业务升级不是错误（见 `providers.Generation.guard`），
+    报告照发、照进 App。但在这一行之前，全仓只有 `manage check-model` 打印这个结论，
+    于是**运营者事后连「哪个人哪封信被升级过」都查不到**：护栏的日志在**另一台**机器上，
+    它只知道「有一批请求被 escalate」，不知道对应的是谁的报告。这一行把两边接上 ——
+    `report=` 与 `reports` 行对齐，`user=`/`message=` 追到人和信。
+
+    **它不做别的**：不改交付、不改重试、不写库（所以一次升级不会让报告变成失败）。
+    要不要因此改行为是产品决定，见 `docs/guard-escalation-2026-09-26.md`。
+    """
+    if not guard or guard.get("ok") is not False:
+        return
+    logging.warning(
+        "guard ESCALATE 已交付：report=%s user=%s message=%s kind=%s issues=%s retried=%s"
+        " —— 本机护栏说这条要人看一眼，而网站侧**不按它分流**（照常发信/入库）；"
+        "改不改这个行为是产品决定，见 docs/guard-escalation-2026-09-26.md",
+        report_id or "-", user_id, message_id or "-", kind or "-",
+        guard.get("issues"), bool(guard.get("retried")),
+    )
+
+
 class PilotService:
     def __init__(self, database: Database, secrets: SecretBox):
         self.db = database
@@ -515,7 +571,9 @@ class PilotService:
                 )
         return total, errors
 
-    def _analyse(self, user_id: str, message: dict) -> str:
+    def _analyse(self, user_id: str, message: dict, *,
+                 guard: dict[str, Any] | None = None) -> str:
+        """生成一份完整报告。``guard`` 是**调用方给的收集器**（见 `_collect_guard`）。"""
         profile = self.db.get_profile(user_id)
         # 报告正文用哪种语言写（2026-09-23 起与界面语言合并成一个设置）。
         # 默认是中文，所以**存量用户一个字都不变**。
@@ -593,14 +651,15 @@ class PilotService:
             usage = result.usage
             timings["generate"] = time.monotonic() - started
 
+        _collect_guard(guard, result)
         # One line that makes the 5-minute question answerable from journalctl:
         # how long search took, how long generation took, and how many tokens.
         logging.info(
             "analysis for user %s used %s search with %d source(s); search=%.1fs generate=%.1fs "
-            "prompt=%d chars answer=%d chars tokens=%s",
+            "prompt=%d chars answer=%d chars tokens=%s guard=%s",
             user_id, "native" if native else "external", len(search_results),
             timings.get("search", 0.0), timings.get("generate", 0.0),
-            len(prompt), len(generated), usage or "n/a",
+            len(prompt), len(generated), usage or "n/a", guard_note(guard),
         )
         self._record_usage(user_id, "immediate", model, usage, message_id=str(message.get("id") or ""))
         generated = prompts.sanitize_calendar_dates(generated, prompt)
@@ -722,7 +781,8 @@ class PilotService:
             logging.warning("arrival alert failed for message %s: %s", message.get("id"), exc)
             return False
 
-    def _analyse_brief(self, user_id: str, message: dict) -> str:
+    def _analyse_brief(self, user_id: str, message: dict, *,
+                       guard: dict[str, Any] | None = None) -> str:
         """Condensed three-section report: importance, actions, key points.
 
         Deliberately reuses the same provider plumbing and search fallback as
@@ -768,14 +828,16 @@ class PilotService:
                 search_status = "no privacy-safe public query could be derived"
             prompt = prompts.brief_prompt(profile, message, search_results, search_status,
                                           triage_hint=hint, locale=locale)
-            brief, model = self._generate_with_retry(
+            result, model = self._generate_with_retry(
                 user_id, attempts=candidates, prompt=prompt, config=config,
                 max_output_tokens=BRIEF_MAX_TOKENS, native_search=False, guard_task="summarize",
             )
-            generated = brief.text
-            usage = brief.usage or {}
+            generated = result.text
+            usage = result.usage or {}
+        _collect_guard(guard, result)
         self._record_usage(user_id, "brief", model, usage, message_id=str(message.get("id") or ""))
-        logging.info("brief analysis for user %s produced %d chars", user_id, len(generated or ""))
+        logging.info("brief analysis for user %s produced %d chars guard=%s",
+                     user_id, len(generated or ""), guard_note(guard))
         return prompts.normalize_brief_report(prompts.sanitize_calendar_dates(generated, prompt))
 
     def process_message(self, message: dict) -> bool:
@@ -813,6 +875,9 @@ class PilotService:
                 subject, report_id = existing["subject"], existing["id"]
                 brief_mode = reports.is_brief(report)
             else:
+                # 本机护栏对这次生成的结论（`ok=false` = 业务升级）。**只用来记日志**：
+                # 交付行为一个字节都不改，见 `_collect_guard` 与 `guard_note`。
+                guard: dict[str, Any] = {}
                 payload = {
                     "subject": message["subject"], "sender_name": message["sender_name"],
                     "sender_address": message["sender_address"], "received": message["received_at"],
@@ -824,7 +889,7 @@ class PilotService:
                     # and then replaced by the full report; in brief-only mode it
                     # becomes the report itself, so this path must not also fall
                     # through to the common send below (that sent it twice).
-                    brief = self._analyse_brief(message["user_id"], payload)
+                    brief = self._analyse_brief(message["user_id"], payload, guard=guard)
                     report = brief
                     brief_mode = True
                     if want_full:
@@ -846,7 +911,7 @@ class PilotService:
                             # A failed brief send must not stop the full report.
                             logging.warning("brief report failed for message %s: %s", message["id"], exc)
                         # Stage 2: the full seven-section analysis, sent below.
-                        report = self._analyse(message["user_id"], payload)
+                        report = self._analyse(message["user_id"], payload, guard=guard)
                         brief_mode = False
                 else:
                     # Single-stage: instant rule alert, then the full report.
@@ -854,12 +919,14 @@ class PilotService:
                     if deliver:
                         self._send_arrival_alert(mailbox, self.mailbox_password(mailbox), message,
                                                  full_follows=want_full)
-                    report = self._analyse(message["user_id"], payload)
+                    report = self._analyse(message["user_id"], payload, guard=guard)
                 subject = f"【AI邮件摘要】{message['subject'][:120]}"
                 report_id = self.db.create_report(
                     user_id=message["user_id"], message_id=message["id"], kind="immediate",
                     subject=subject, body=self.encrypt_report(report, message["user_id"]), sent_to=mailbox["report_to"],
                 )
+                log_guard_escalation(guard, user_id=message["user_id"], report_id=report_id,
+                                     message_id=message["id"], kind="brief" if brief_mode else "immediate")
             if brief_mode:
                 rendered = reports.render_brief(report, message, subject=subject,
                                                 timezone=(profile or {}).get("timezone"),
@@ -1226,6 +1293,10 @@ class PilotService:
             guard_task="summarize",
         )
         self._record_usage(user_id, f"assist-{kind}", model, result.usage, message_id=message_id)
+        # 翻译/总结也是**当场交付给用户**的一段模型输出，所以同样留一行可追溯的记录
+        # （没有 report 行 —— 这条路按设计不落库，用 message + kind 定位）。
+        log_guard_escalation(getattr(result, "guard", None), user_id=user_id,
+                             message_id=message_id, kind=f"assist-{kind}")
         return (result.text or "").strip(), str(getattr(result, "finish", "") or ""), getattr(result, "finish", "") == "length"
 
     def assist(self, user_id: str, message_id: str, kind: str) -> dict[str, Any]:

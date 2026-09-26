@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "purpose": "Offline pilot only. Selected official ARRO pages; not a complete CityU corpus. Review does not certify that every date is current.",
+  "sources": [
+    {"id":"registration","url":"https://www.cityu.edu.hk/arro/creg/creg_main.htm","title":"Course Registration","audience":"Undergraduate students; some sections also describe postgraduate enquiries","scope_note":"General registration guidance. Key dates can be dynamic or refer to a particular term; do not infer this year's deadline.","reviewed_on":"2026-09-26","approved":true},
+    {"id":"regulations","url":"https://www.cityu.edu.hk/arro/regu/regu_ugar.htm","title":"Academic Regulations for Undergraduate Degrees","audience":"Undergraduate degrees; verify curriculum and effective version","scope_note":"Regulation version and entering cohort must be checked before personal advice. Not a substitute for course-specific materials.","reviewed_on":"2026-09-26","approved":true},
+    {"id":"schedule","url":"https://www.cityu.edu.hk/arro/creg/schd_main.htm","title":"Class Schedule","audience":"Students seeking class schedules","scope_note":"Public navigation guidance only. Personal timetables require authenticated AIMS/Portal and are not collected.","reviewed_on":"2026-09-26","approved":true},
+    {"id":"restrictions","url":"https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm","title":"Web Add/Drop Registration Restrictions","audience":"Students registering for courses","scope_note":"Prerequisite and restriction guidance. Individual eligibility still requires the current course catalogue and academic approval.","reviewed_on":"2026-09-26","approved":true},
+    {"id":"faq","url":"https://www.cityu.edu.hk/arro/faqq/faqq_main.htm","title":"Frequently Asked Questions","audience":"Primarily undergraduate students","scope_note":"Broad FAQ can contain overlapping or stale material. Regulations take precedence. No inferred eligibility or current deadline.","reviewed_on":"2026-09-26","approved":true}
+  ]
+}

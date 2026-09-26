@@ -202,7 +202,7 @@ class ArrivalAlertWiringTests(unittest.TestCase):
         # A real id, because the generated report is encrypted for it afterwards.
         self.db.create_report.return_value = "rpt_1"
 
-        def fake_analyse(user_id, payload):
+        def fake_analyse(user_id, payload, **kwargs):   # `guard=` 收集器（可选）
             order.append("analyse")
             return "## 1. 重要程度与一句话结论\n- 等级：高\n- 结论：交作业"
 
@@ -256,11 +256,11 @@ class BriefFirstModeTests(unittest.TestCase):
             "- 提交入口：Canvas",
         ])
 
-        def fake_brief(user_id, payload):
+        def fake_brief(user_id, payload, **kwargs):     # `guard=` 收集器（可选）
             order.append("brief")
             return brief_text
 
-        def fake_full(user_id, payload):
+        def fake_full(user_id, payload, **kwargs):      # `guard=` 收集器（可选）
             order.append("full")
             return "## 1. 重要程度与一句话结论\n- 等级：高\n- 结论：作业延期。\n## 7. English summary\nSubmit."
 
@@ -437,9 +437,9 @@ class PerUserReportModeTests(unittest.TestCase):
         with mock.patch.object(service_mod, "BRIEF_FIRST", brief_first), \
                 mock.patch.object(service_mod, "FULL_REPORT", full_report), \
                 mock.patch.object(self.service, "_analyse_brief",
-                                  side_effect=lambda *a: (called.append("brief"), brief)[1]), \
+                                  side_effect=lambda *a, **k: (called.append("brief"), brief)[1]), \
                 mock.patch.object(self.service, "_analyse",
-                                  side_effect=lambda *a: (called.append("full"), full)[1]), \
+                                  side_effect=lambda *a, **k: (called.append("full"), full)[1]), \
                 mock.patch.object(self.service, "_send_arrival_alert"), \
                 mock.patch("pilot_app.service.mailio.send_report") as send:
             self.assertTrue(self.service.process_message(self.message))

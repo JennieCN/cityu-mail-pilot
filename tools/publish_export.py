@@ -313,7 +313,13 @@ mixed boss privacy promo secret app-pass-123 shared-forward demo-cityu-1 demo-pe
 10000 cityu-mail-pilot-alert
 paused refused wronghost zhangsan
 also broken down good
+user
 """.split())
+# `user`（2026-09-26 加）：`test_rag_offline.py` 的 URL 边界夹具里有一条
+# `https://user@www.cityu.edu.hk/a` —— 那**不是邮箱**，是一个「带 userinfo 的 URL」，
+# 测试要的正是「这种 URL 必须被拒绝」。域名的安全靠上面 SAFE_DOMAINS 那条
+# `*.cityu.edu.hk`（学校的公开站点），局部名 `user` 与 `you`/`someone`/`me` 同类，
+# 是通用占位词而不是谁的账号。
 # `paused` / `refused` / `wronghost` / `zhangsan`（2026-09-20 加）：`test_mailbox_check.py`
 # 里那几行夹具用的就是这些**描述这一行在测什么**的局部名（暂停的账号、被拒的码、
 # 主机填错的账号、中文占位名张三，以及 good/also/broken/down 这几个按结果命名的）。域名仍是真实存在的服务商域名，所以它们和
@@ -418,6 +424,10 @@ SAFE_IP_PREFIXES = (
     # therefore written against 8.8.8.0/24, a public DNS resolver chosen
     # precisely because it identifies nobody: no visitor, no server of ours.
     "8.8.8.",
+    # 169.254.0.0/16 是 RFC 3927 的 link-local，其中 169.254.169.254 是各家云的元数据
+    # 端点：**公开常量，指不出我们的任何一台机器**。`test_rag_offline.py` 拿它当
+    # 「必须被拒绝的私网地址」夹具（`public_addresses` 要拒掉它），所以它留在树里。
+    "169.254.",
 )
 SAFE_IP_172 = re.compile(r"^172\.(1[6-9]|2\d|3[01])\.")
 
