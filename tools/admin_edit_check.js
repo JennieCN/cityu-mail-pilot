@@ -297,6 +297,101 @@ async function ensurePanel(page, id) {
   check(occurrences === 1, '同一条错误只印一次，不因为写进了两列就变成两条',
     wrongCaution.slice(0, 120));
 
+  // -- 搜索用户（v1.5.29）-----------------------------------------------------
+  // 用户要求：「在管理后台的已注册用户里做一个搜索用户的功能」。
+  // 这一段钉三件事：输入框真的在筛、**筛选不许吃掉勾选**、两种空状态说的话不一样。
+  const totalUsers = await page.locator('#admin-users article.admin-user').count();
+  check(totalUsers >= 2, '搜索要有意义，夹具里至少得有两个账号', `${totalUsers} 张卡`);
+
+  // ① 先勾一个**不会出现在下面搜索结果里**的人 —— 这是第 ③ 步那条回归的前提。
+  const pickedEmail = 'stalled@example.com';
+  const pickedCard = cardFor(page, pickedEmail);
+  check(await pickedCard.count() === 1, `夹具里的 ${pickedEmail} 在列表里`);
+  const pickedBox = pickedCard.locator('input.user-pick');
+  if (!(await pickedBox.isChecked())) { await pickedBox.click(); await page.waitForTimeout(150); }
+  const pickedBefore = await page.locator('#users-refresh-picked').innerText();
+  check(/（1）/.test(pickedBefore), '勾上一个人之后按钮说「刷新勾选的（1）」', pickedBefore);
+
+  // ② 搜一个**别人**：列表里只剩他，提示说得出「匹配 1 / N 个」。
+  await page.fill('#users-search', 'nevercame');
+  await page.waitForTimeout(300);
+  const filtered = await page.locator('#admin-users article.admin-user').count();
+  check(filtered === 1, '搜 nevercame 之后只剩一个账号', `${filtered} 张卡`);
+  const filteredText = await page.locator('#admin-users').innerText();
+  check(/nevercame@example\.com/.test(filteredText), '剩下的正是搜的那个人', filteredText.slice(0, 80));
+  const searchNote = await page.locator('#users-search-note').innerText();
+  check(new RegExp(`匹配 1 / ${totalUsers} 个`).test(searchNote), '提示写着「匹配 1 / N 个」', searchNote);
+
+  // ②b 收起面板再打开：筛选**不能**在这一下丢掉。
+  //     `wirePanel('panel-users', …)` 的 onOpen 会重画一次列表，而这条路径
+  //     （收起 → 再展开）是运营者最常走的一条；筛选值若存在某个「打开时清空」的
+  //     地方，这里会红。搜索框本身在 `<details>` 里，收起只是把它藏起来、不销毁，
+  //     所以「值还在」与「筛选还生效」两件都要断言。
+  await page.locator('#panel-users > summary').click();
+  await page.waitForTimeout(250);
+  await page.locator('#panel-users > summary').click();
+  await page.waitForTimeout(400);
+  const reopened = await page.locator('#admin-users article.admin-user').count();
+  check(reopened === 1, '收起面板再打开，筛选还生效（不是又变回全部）', `${reopened} 张卡`);
+  check(await page.locator('#users-search').inputValue() === 'nevercame',
+    '收起面板再打开，输入框里的字还在',
+    await page.locator('#users-search').inputValue());
+
+  // ③ **筛选不许吃掉勾选**。`renderAdminUsers` 会把「名单里已经不存在」的账号从
+  //    `usersPicked` 里剔掉，若拿**过滤后**的名单去剔，搜一次就把没显示出来的人的
+  //    勾全扔了 —— 而「刷新勾选的」正是按 `usersPicked` 跑的，于是它会静默少刷
+  //    几个人，界面上唯一的迹象是那个数字变小（会被读成正常）。
+  //    静态那一条在 `test_admin_user_search`（防写错），这一条从界面上再钉一遍（防改错）。
+  const pickedWhileFiltered = await page.locator('#users-refresh-picked').innerText();
+  check(pickedWhileFiltered === pickedBefore,
+    '搜索不会把没显示出来的账号从勾选里剔掉（那个数字不许变小）',
+    `${pickedBefore} → ${pickedWhileFiltered}`);
+
+  await page.click('#users-search-clear');
+  await page.waitForTimeout(300);
+  const restoredCount = await page.locator('#admin-users article.admin-user').count();
+  check(restoredCount === totalUsers, '按「清空」之后全部账号回来了', `${restoredCount}/${totalUsers}`);
+  check(await cardFor(page, pickedEmail).locator('input.user-pick').isChecked(),
+    '清空之后，刚才勾的那个人**还是勾着的**（这就是「搜一次丢一次勾」的回归判据）');
+
+  // ④ 「搜不到」≠「一个人都还没注册」：两种空状态必须说不同的话，否则运营者会
+  //    以为数据没了。
+  await page.fill('#users-search', 'zzz-no-such-user');
+  await page.waitForTimeout(300);
+  check(await page.locator('#admin-users article.admin-user').count() === 0,
+    '搜一个不存在的词：一张卡都不剩');
+  const emptyText = await page.locator('#admin-users').innerText();
+  check(/没有匹配/.test(emptyText) && !/还没有注册用户/.test(emptyText),
+    '搜不到说的是「没有匹配」，不是「还没有注册用户」', emptyText.slice(0, 80));
+  check(new RegExp(`全部 ${totalUsers} 个`).test(emptyText),
+    '搜不到时还告诉运营者总共有多少个', emptyText.slice(0, 80));
+
+  // ⑤ 手机上不许把面板撑破。这一格的面板控件很密，而新加的是一整行
+  //    （输入框 + 「清空」+ 提示），最容易在 390px 上顶出横向滚动。
+  const beforeViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.waitForTimeout(250);
+  const mobile = await page.evaluate(() => {
+    const box = document.getElementById('users-search');
+    const rect = box.getBoundingClientRect();
+    const doc = document.documentElement;
+    return { left: Math.round(rect.left), right: Math.round(rect.right),
+             width: doc.clientWidth, overflow: doc.scrollWidth - doc.clientWidth };
+  });
+  check(mobile.left >= -1 && mobile.right <= mobile.width + 1,
+    '390px 宽下搜索框整个在视口里', JSON.stringify(mobile));
+  check(mobile.overflow <= 1, '390px 宽下没有被这一行撑出横向滚动', JSON.stringify(mobile));
+  await page.setViewportSize(beforeViewport);
+  await page.waitForTimeout(200);
+
+  // 收尾：把搜索与勾选都还原（后面的段落从「一个人都没勾」的初始状态开始断言）。
+  await page.click('#users-search-clear');
+  await page.waitForTimeout(200);
+  const pickedAgain = cardFor(page, pickedEmail).locator('input.user-pick');
+  if (await pickedAgain.isChecked()) { await pickedAgain.click(); await page.waitForTimeout(150); }
+  check(/（0）/.test(await page.locator('#users-refresh-picked').innerText()),
+    '收尾：勾选回到「一个人都没勾」');
+
   const card = cardFor(page, memberEmail);
   check(await card.count() === 1, '展开「已注册用户」后能看到用户');
 

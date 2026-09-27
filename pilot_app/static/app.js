@@ -3910,19 +3910,93 @@ async function refreshUsers(ids) {
   }
 }
 
+/* ---- 已注册用户的搜索（v1.5.29） -----------------------------------------
+   用户要求：「在管理后台的已注册用户里做一个搜索用户的功能」。
+
+   **纯前端过滤**：这一屏的全部账号本来就已经在 `adminData.users` 里（注册上限
+   300），再要一次网络往返只会让搜索变慢，还会多出一份「服务端也筛了一遍」的
+   第二语义 —— 两份迟早会漂。搜索框在 `#admin-users` **外面**，所以每次重画
+   列表都不会碰输入框里的字（放在里面的话，每敲一个字就丢焦点）。
+
+   匹配哪些列：能认出「一个人」的那几样 —— 邮箱、他自己填的称呼、学校邮箱、
+   转发邮箱、报告收件地址、管理员备注（运营者自己写的，正是用来认人的）、
+   以及状态。**故意不含**用量/时间那些数字：搜「0」或「2」会把几乎所有人都捞
+   上来，那比搜不到更让人以为筛选坏了。
+   ----------------------------------------------------------------------- */
+const USER_STATUS_TEXT = { active: '启用', paused: '暂停', deleted: '删除' };
+
+function userQuery() {
+  const box = $('users-search');
+  return box ? box.value.trim().toLowerCase() : '';
+}
+
+function userMatchesQuery(row, needle) {
+  if (!needle) return true;
+  const haystack = [row.email, row.school_email, row.mailbox_email, row.report_to,
+                    row.signup_nickname, row.admin_note, row.status,
+                    USER_STATUS_TEXT[row.status]]
+    .filter(Boolean).join(' ').toLowerCase();
+  return haystack.indexOf(needle) !== -1;
+}
+
+function updateUserSearchNote(shown, total) {
+  const note = $('users-search-note');
+  if (!note) return;
+  note.textContent = userQuery() ? `匹配 ${shown} / ${total} 个` : `共 ${total} 个账号`;
+}
+
+/** 输入框里现在这个词重新筛一遍。`adminData` 还没到就先别画 —— 画成空列表
+ *  会被读成「一个人都没有」。 */
+function renderUserSearch() {
+  if (!adminData) { updateUserSearchNote(0, 0); return; }
+  renderAdminUsers(adminData.users || []);
+}
+
+function clearUserSearch() {
+  const box = $('users-search');
+  if (box) { box.value = ''; box.focus(); }
+  renderUserSearch();
+}
+
+$('users-search').addEventListener('input', renderUserSearch);
+$('users-search').addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;      // 手机上那个原生 ✕ 也会走 input
+  event.preventDefault();
+  clearUserSearch();
+});
+$('users-search-clear').addEventListener('click', clearUserSearch);
+
 function renderAdminUsers(users) {
   const box = $('admin-users');
   clear(box);
   // 名单变了就把勾选里已经不存在的账号去掉：刷新一个已经删掉的 id 只会得到
   // 一个 404，而面板看起来像是「这个人的状态刷新失败了」。
+  // **这里必须用完整名单 `users`，不能用下面过滤后的 `shown`**：拿过滤后的名单
+  // 去清理，搜一次就把没显示出来的人的勾全剔掉了，而「刷新勾选的」正是按
+  // `usersPicked` 跑的 —— 于是它会静默少刷几个人。只在「先勾选、再搜索、再
+  // 刷新」这条路上出现，所以 `test_admin_user_search` 与 `admin_edit_check`
+  // 各钉了一条。
   const known = new Set(users.map((row) => String(row.id)));
   usersPicked = new Set([...usersPicked].filter((id) => known.has(id)));
   updateUserPickButtons();
-  if (!users.length) { box.appendChild(el('p', 'help', '还没有注册用户。')); return; }
+  if (!users.length) {
+    box.appendChild(el('p', 'help', '还没有注册用户。'));
+    updateUserSearchNote(0, 0);
+    return;
+  }
+  const needle = userQuery();
+  const shown = users.filter((row) => userMatchesQuery(row, needle));
+  updateUserSearchNote(shown.length, users.length);
+  if (!shown.length) {
+    // 「搜不到」必须与「一个人还没注册」长得不一样，否则运营者会以为数据没了。
+    box.appendChild(el('p', 'help',
+      `没有匹配「${needle}」的账号。换个词，或按「清空」看全部 ${users.length} 个。`));
+    return;
+  }
   // Unfinished signups first: they are the only rows on this panel that need
   // somebody to do something, and on a list sorted by registration date they
   // were the ones you had to go looking for.
-  const ordered = users.slice().sort((a, b) => {
+  const ordered = shown.slice().sort((a, b) => {
     const gap = Number(Boolean(b.setup_gap)) - Number(Boolean(a.setup_gap));
     return gap !== 0 ? gap : String(a.created_at).localeCompare(String(b.created_at));
   });

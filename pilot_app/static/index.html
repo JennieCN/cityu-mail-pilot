@@ -1776,6 +1776,20 @@
             收起时也留着<strong>那四盏灯</strong>和「未配完」的标记，所以不用点开就能看出谁有事；
             点开一个，其余会自动收起。要批量刷新就勾左边的框，不用点开。
           </div>
+          <!-- 搜索框（v1.5.29）。**纯前端过滤**：这一屏的全部账号本来就已经在
+               `adminData.users` 里（上限 300），再要一次网络往返只会让搜索变慢，
+               还会多出一份「服务端也筛了一遍」的第二语义 —— 两份迟早会漂。
+               它**只影响显示**，不参与勾选的清理（`renderAdminUsers` 里那段注释
+               说明了为什么：拿过滤后的名单去清理 `usersPicked`，搜一次就会把
+               没显示出来的人的勾全丢掉，「刷新勾选的」于是静默少刷几个人）。 -->
+          <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0 0 8px">
+            <label style="margin:0">搜索用户
+              <input id="users-search" type="search" autocomplete="off" inputmode="search"
+                     placeholder="邮箱 / 称呼 / 学校邮箱 / 转发邮箱 / 备注" style="width:280px;max-width:100%">
+            </label>
+            <button id="users-search-clear" class="ghost" type="button">清空</button>
+            <span class="help" id="users-search-note">—</span>
+          </div>
           <div class="actions" style="margin:0 0 8px">
             <label style="margin:0;display:inline-flex;gap:6px;align-items:center">
               <input type="checkbox" id="users-pick-all"> 全选</label>
