@@ -278,6 +278,65 @@ async function signIn(page) {
       document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check(overflow <= 1, '360px 下不横向溢出', `溢出 ${overflow}px`);
     await page.screenshot({ path: path.join(SHOTS, '02-phone.png'), fullPage: true });
+
+    // -- 「只读连接测试」点了必须有反应，而且**结果要看得见** ------------------
+    // 2026-09-27 用户报「点只读连接测试没有反应」。两件事叠在一起：
+    //   ① 那一趟是去连一次 IMAP（几秒到几十秒），期间按钮**没有任何变化**；
+    //   ② 结果写在面板**顶部**的 `#mailbox-status`，而按钮在第 4 步（最下面），
+    //      手机上那是好几屏之外 —— 于是成功和失败都发生在视野之外。
+    // nginx 日志里那十几条 429 就是这么来的：他反复点，每次都被一分钟冷却挡回，
+    // 而每条 429 后面还跟着一次 `/api/tasks` + `/api/dashboard`（catch 分支的刷新）。
+    // 判据是**看得见**，不是「渲染出来了」——桌面尺寸下这一条会恒真（同 2026-09-27
+    // 重设密码那次），所以这段特意留在 360×800 的手机视口里跑。
+    await page.fill('#mail-email', 'someone@qq.com');
+    await page.fill('#mail-password', 'authcode-16chars');
+    await page.check('#accept-rights');       // 「加密保存」要求先勾授权确认
+    await page.click('#save-mailbox');
+    await page.waitForFunction(
+      () => /已加密保存|保存/.test((document.getElementById('mailbox-status') || {}).textContent || ''),
+      null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    // 用观察器抓「按钮有没有变过」：请求在 localhost 上可能几毫秒就回来，
+    // 直接读一次文本会读到已经是结果的那一刻（那样这条断言就恒假/恒真）。
+    await page.evaluate(() => {
+      const button = document.getElementById('test-mailbox');
+      window.__everBusy = false;
+      new MutationObserver(() => {
+        if (button.disabled || /检查中/.test(button.textContent || '')) window.__everBusy = true;
+      }).observe(button, { attributes: true, childList: true, subtree: true, characterData: true });
+    });
+    // 先钉住「这一下真的发出请求了吗」：没有这一条的话，一个**没接上监听器**的按钮
+    // 会以「结果那一行还写着上一句话」的形式失败，而看不出是没发请求还是没写结果。
+    const verified = [];
+    page.on('response', (response) => {
+      if (response.url().includes('/api/mailbox/verify')) verified.push(response.status());
+    });
+    await page.click('#test-mailbox');
+    await page.waitForFunction(
+      () => /连接成功|检查成功|检查失败/.test(
+        (document.getElementById('mailbox-status') || {}).textContent || ''),
+      null, { timeout: 30000 }).catch(() => {});
+    check(verified.length > 0, '点下去真的发出了一次 /api/mailbox/verify', JSON.stringify(verified));
+    await page.waitForTimeout(700);      // 平滑滚动走完再看位置
+    const verdict = await page.evaluate(() => {
+      const status = document.getElementById('mailbox-status');
+      const rect = status.getBoundingClientRect();
+      const button = document.getElementById('test-mailbox');
+      return {
+        text: (status.textContent || '').trim(),
+        inViewport: rect.top >= 0 && rect.bottom <= window.innerHeight,
+        everBusy: window.__everBusy === true,
+        label: (button.textContent || '').trim(),
+        disabled: button.disabled,
+      };
+    });
+    check(verdict.everBusy, '等待结果期间按钮变过（disabled / 「检查中…」），不是毫无反应');
+    check(/连接成功|检查成功|检查失败/.test(verdict.text), '结果写进了那一行', verdict.text.slice(0, 70));
+    check(verdict.inViewport, '**结果那一行被滚进了视口**（按钮在最下面、结果在最上面）',
+      `inViewport=${verdict.inViewport}`);
+    check(!verdict.disabled && /只读连接测试/.test(verdict.label),
+      '按钮回到能再点的样子（没有卡在「检查中…」）', verdict.label);
+    await page.screenshot({ path: path.join(SHOTS, '03-verify-result.png') });
   } catch (error) {
     check(false, '检查过程未抛异常', error.message);
     await page.screenshot({ path: path.join(SHOTS, '99-error.png'), fullPage: true }).catch(() => {});

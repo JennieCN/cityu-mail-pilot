@@ -175,6 +175,24 @@ function setStatus(id, text, kind = '') {
   node.textContent = text || '';
 }
 
+/* 写一行状态，并**把它带到眼前**。
+ *
+ * 为什么需要它（2026-09-27 用户报「点只读连接测试没有反应」）：`#mailbox-status`
+ * 在「邮箱设置」面板的**顶部**，而「加密保存」「只读连接测试」两颗按钮在**第 4 步**
+ * （面板最下面）—— 结果写在一屏到几屏之外，用户看到的就是「点了没反应」，于是反复点
+ * （nginx 日志里那十几条 429 就是这么来的）。
+ *
+ * `setStatus` 自己**不**滚动：后台刷新、加载提示都会用它，自动滚会把人从正在读的
+ * 地方拽走。所以只有**用户主动操作**的那几处走这一条。 */
+function announceStatus(id, text, kind = '') {
+  setStatus(id, text, kind);
+  const node = $(id);
+  if (node && typeof node.scrollIntoView === 'function') {
+    try { node.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    catch (_) { node.scrollIntoView(); }   // 老浏览器不认这个参数对象
+  }
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -2312,7 +2330,9 @@ $('save-mailbox').addEventListener('click', async () => {
   // Ask here as well so the refusal is instant and readable, but the server
   // checks it too: without that this would be decoration (terms §3, §4.8).
   if (!$('accept-rights').checked) {
-    setStatus('mailbox-status', '请先勾选上面的授权确认（《服务条款》第 3 条），再保存。', 'error');
+    // 这一句也必须**带到眼前**：按钮在第 4 步，而未勾选时那句话写在面板顶部，
+    // 用户看到的就是「点了保存没反应」（2026-09-27 同一条报障的另一半）。
+    announceStatus('mailbox-status', '请先勾选上面的授权确认（《服务条款》第 3 条），再保存。', 'error');
     return;
   }
   try {
@@ -2331,9 +2351,9 @@ $('save-mailbox').addEventListener('click', async () => {
       }),
     });
     $('mail-password').value = '';
-    setStatus('mailbox-status', '已加密保存。现在点「只读连接测试」确认能收信。', 'ok');
+    announceStatus('mailbox-status', '已加密保存。现在点「只读连接测试」确认能收信。', 'ok');
     await load();
-  } catch (error) { setStatus('mailbox-status', error.message, 'error'); }
+  } catch (error) { announceStatus('mailbox-status', error.message, 'error'); }
 });
 
 async function saveConnection(kind) {
@@ -2381,7 +2401,11 @@ async function test(target) {
 
 $('test-model').addEventListener('click', () => test('model'));
 $('test-search').addEventListener('click', () => test('search'));
-$('test-mailbox').addEventListener('click', verifyMailbox);
+// **不能直接绑函数**：`addEventListener('click', verifyMailbox)` 会把**事件对象**当成
+// 第一个实参传下去，而 `verifyMailbox(statusId = 'mailbox-status')` 就把它当成了 statusId
+// —— 于是 `setStatus(MouseEvent, …)` 找不到元素、一声不吭，用户点了「只读连接测试」
+// 屏幕上什么都没有（2026-09-27 的报障就是这个；nginx 日志里那十几条 429 是他反复点出来的）。
+$('test-mailbox').addEventListener('click', () => verifyMailbox());
 
 /* 真的去连一次邮箱（只读）。两处调用它：「邮箱」板块的按钮，和首页那一格上的
  * 「重新检查邮箱」。`statusId` 决定结果写在哪一行 —— 用户在哪按的，结果就在哪说。
@@ -2390,20 +2414,38 @@ $('test-mailbox').addEventListener('click', verifyMailbox);
  * `#status-note` 一起重画，先写的话会被它清掉，于是点了什么都没有 ——
  * 那正好又是用户报的那个「没反应」。 */
 async function verifyMailbox(statusId = 'mailbox-status') {
-  setStatus(statusId, '正在检查收信通路（只读，不会改动邮件）…');
+  // 兜住「有人又把它直接绑到事件上」：那时 statusId 是一个 MouseEvent，结果会写进一个
+  // 不存在的元素里、一个字都不显示（见上面那条注释里的现场）。
+  if (typeof statusId !== 'string' || !statusId) statusId = 'mailbox-status';
+  // **点了要立刻有反应**（2026-09-27 用户报「点只读连接测试没有反应」）。
+  // 这一趟是去连一次 IMAP，几秒到几十秒；期间按钮变灰、写着「检查中…」，
+  // 否则用户面对的是一个毫无变化的页面，只会再点一次 —— 而第二次起就是冷却
+  // （nginx 日志里那十几条 429 就是这么来的：每条 429 后面还跟着一次
+  // `/api/tasks` + `/api/dashboard`，那是这里的 catch 分支在刷新首页）。
+  const button = $('test-mailbox');
+  const buttonLabel = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = '检查中…'; }
+  // 结果那一行在**面板顶部**（`#mailbox-status`），而按钮在第 4 步（最下面）——
+  // 写完必须把它带到眼前（`announceStatus`），否则「检查成功/失败」都发生在
+  // 用户视野之外，这就是「没有反应」。
+  const announce = (text, kind) => announceStatus(statusId, text, kind);
+  announce('正在检查收信通路（只读，不会改动邮件）…');
   try {
     const value = await api('/api/mailbox/verify', { method: 'POST' });
     let message = '连接成功，收信通路正常。';
     if (value.uid_validity) message += ` UIDVALIDITY ${value.uid_validity}。`;
     dash = value.dashboard;
     renderDashboard();
-    setStatus(statusId, message, 'ok');
+    announce(message, 'ok');
   } catch (error) {
     await refreshDashboard();
-    setStatus(statusId, `检查失败：${error.message} 这不会丢邮件；请按提示修正后重试。`, 'error');
+    announce(`检查失败：${error.message} 这不会丢邮件；请按提示修正后重试。`, 'error');
     if (dash && dash.mailbox && dash.mailbox.needs_another_provider) {
       renderMailSwitch({ observed: true });
     }
+  } finally {
+    // 无论成功、失败还是冷却，按钮都要回到能再点的样子。
+    if (button) { button.disabled = false; button.textContent = buttonLabel; }
   }
 }
 
@@ -2696,7 +2738,7 @@ async function switchMailboxProvider(id) {
   renderMailSwitch();
   // 反馈放在页面顶部那条状态里（就是刚才那条红字的位置），而不是留在那一格里：
   // 那一格马上要收起来，把话写在正在消失的东西上等于没说。
-  setStatus('mailbox-status', previous
+  announceStatus('mailbox-status', previous
     ? `已切到${name}。上面那一格已清空（${previous} 不再使用）——先注册一个`
       + `${name}、拿到授权码填回去，再去 CityU 把转发地址也改成新邮箱，然后回来保存并测试。`
     : `已切到${name}。填上新邮箱、拿到授权码，再去 CityU 把转发地址也改成新邮箱，`

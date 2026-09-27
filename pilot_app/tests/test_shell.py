@@ -356,7 +356,9 @@ class StatusPanelTests(unittest.TestCase):
                            APP_JS, re.S)
         self.assertIsNotNone(verify, "verifyMailbox 不再是可指定结果行的那个版本")
         body = verify.group(0)
-        self.assertLess(body.index("renderDashboard();"), body.index("setStatus(statusId, message"),
+        # 2026-09-27 起成功那一句走 `announce(...)`（= `announceStatus`，写完还会把它
+        # 滚进视口）；判据要的仍是**顺序**：渲染在前、写结果在后。
+        self.assertLess(body.index("renderDashboard();"), body.index("announce(message"),
                         "成功结果写在渲染之前，会被 renderChannels 清掉")
 
     def test_the_verdict_uses_each_channel_s_own_wording(self):
@@ -753,6 +755,43 @@ class ShellRoutingTests(unittest.TestCase):
         self.assertIn("drawer-close", APP_JS)
         self.assertIn("drawer-scrim", APP_JS)
         self.assertIn("event.key === 'Escape'", APP_JS)
+
+
+class DirectClickBindingTests(unittest.TestCase):
+    """`addEventListener('click', f)` 会把**事件对象**当第一个实参传给 `f`。
+
+    2026-09-27 的现场：`$('test-mailbox').addEventListener('click', verifyMailbox)`，
+    而 `verifyMailbox(statusId = 'mailbox-status')` —— 于是 `statusId` 成了一个 MouseEvent，
+    `setStatus(MouseEvent, …)` 找不到元素、一声不吭：**用户点「只读连接测试」屏幕上什么都没有**。
+    他只能反复点，于是 nginx 日志里留下十几条 429（冷却），而每一次失败还跟着一次首页刷新。
+    `verifyMailbox` 自己现在也兜了一层（非字符串就回落到默认 id），但**别的函数没有兜**，
+    所以这条静态判据扫全文件：直接绑上去的函数**不许有参数**，要传参就写成 `() => f(...)`。
+    """
+
+    @staticmethod
+    def _code_only(script: str) -> str:
+        """去掉注释再扫：注释里引用了那条坏写法（说明它是什么样），不该被判红。"""
+        without_block = re.sub(r"/\*[\s\S]*?\*/", "", script)
+        return re.sub(r"(?m)//[^\n]*$", "", without_block)
+
+    def test_a_handler_bound_directly_takes_no_arguments(self):
+        # `addEventListener('click', NAME)`（第二个参数是一个裸标识符）
+        code = self._code_only(APP_JS)
+        direct = re.findall(r"addEventListener\('click',\s*([A-Za-z_$][\w$]*)\s*\)", code)
+        self.assertTrue(direct, "一条直接绑定都找不到，说明这条判据的正则已经漂了")
+        offenders = []
+        for name in set(direct):
+            patterns = (
+                rf"(?:async\s+)?function\s+{re.escape(name)}\s*\(([^)]*)\)",
+                rf"(?:const|let)\s+{re.escape(name)}\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>",
+            )
+            for pattern in patterns:
+                match = re.search(pattern, code)
+                if match and match.group(1).strip():
+                    offenders.append(f"{name}({match.group(1).strip()})")
+        self.assertEqual(offenders, [], 
+                         "这些函数被直接绑到了 click 上，却带参数 —— 事件对象会顶掉第一个参数："
+                         + "、".join(offenders) + "。改成 () => f(...)")
 
 
 class ShellServingTests(unittest.TestCase):
