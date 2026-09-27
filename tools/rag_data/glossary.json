@@ -1,7 +1,7 @@
 {
   "version": 1,
   "reviewed_on": "2026-09-26",
-  "scope_note": "Reviewed bilingual terminology for the five collected ARRO pages. This is a Chinese segmenter for a small set of domain words plus a query expander, not a translation system and not a synonym dictionary. Every English term on the right was checked to occur in the collected pages (counts in README); candidates that occur zero times (timetable, waiting list, substitution, discontinuation, FAQ) were deliberately left out. Anything not listed here still falls back to CJK bigrams, which cannot match an English corpus. Expansion is opt-in: without --glossary retrieval is unchanged.",
+  "scope_note": "Reviewed bilingual terminology for the five collected ARRO pages. This is a Chinese segmenter for a small set of domain words plus a query expander, not a translation system and not a synonym dictionary. Every English term on the right was checked to occur in the collected pages (counts in README); candidates that occur zero times (timetable, waiting list, substitution, discontinuation, FAQ) were deliberately left out. Anything not listed here still falls back to CJK bigrams, which cannot match an English corpus. Expansion is opt-in: without --glossary retrieval is unchanged. traditional_variants is a hand-reviewed traditional-Hant surface form for an existing reviewed term; it is not an automatic conversion, it only normalizes the query, and source text is never rewritten.",
   "terms": {
     "退课": ["drop"],
     "加课": ["add"],
@@ -44,5 +44,34 @@
     "批准": ["permission"],
     "替代": ["substitute"],
     "常见问题": ["frequently asked questions"]
+  },
+  "traditional_variants": {
+    "退課": "退课",
+    "加課": "加课",
+    "選課": "选课",
+    "註冊": "注册",
+    "課程": "课程",
+    "課表": "课表",
+    "時間表": "时间表",
+    "預修": "预修",
+    "成績單": "成绩单",
+    "成績": "成绩",
+    "等級": "等级",
+    "平均績點": "平均绩点",
+    "績點": "绩点",
+    "學分": "学分",
+    "轉學分": "转学分",
+    "畢業": "毕业",
+    "學業警告": "学业警告",
+    "學籍": "学籍",
+    "終止學籍": "终止学籍",
+    "修業量": "修业量",
+    "學習量": "学习量",
+    "評核": "评核",
+    "考試": "考试",
+    "課程設置": "课程设置",
+    "語言要求": "语言要求",
+    "允許": "允许",
+    "常見問題": "常见问题"
   }
 }

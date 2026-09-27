@@ -36,6 +36,12 @@ MAX_BYTES = 2_000_000
 APP_ID = 0x43555247
 SCHEMA = 1
 STOP = frozenset("a an the i my me can could would should how what where when is are do does to of for in on at and or with about please find university cityu students student".split())
+#: The exact CJK range the tokenizer treats as Chinese, kept in one place so `terms()`,
+#: `cjk()` and `corpus_script()` cannot drift apart. A bare `>= U+3400` test (used before)
+#: also matches emoji, fullwidth punctuation, Kana and CJK compatibility ideographs, which
+#: misclassified an English page as CJK and silently changed coverage.
+CJK_CHAR = r"[\u3400-\u9fff]"
+CJK_RE = re.compile(CJK_CHAR)
 
 
 class CorpusError(ValueError):
@@ -167,6 +173,9 @@ def fetch_child(url, limit):
 class MainText(HTMLParser):
     """Keep main content only; never index global menus or execute markup."""
     SKIP = {"script", "style", "nav", "header", "footer", "form", "iframe", "svg", "template", "noscript"}
+    # Superscript/subscript is presentation, not proof of a footnote. Preserve
+    # unlabelled content with explicit markers instead of merging or deleting it.
+    SCRIPTS = {"sup", "sub"}
     VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
     BLOCK = {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4", "br"}
 
@@ -183,11 +192,14 @@ class MainText(HTMLParser):
             self.noindex |= bool({"noindex", "none"}.intersection(re.split(r"[\s,]+", (a.get("content") or "").lower())))
         inside = (self.stack[-1][1] if self.stack else False) or tag == "main"
         hidden = ((self.stack[-1][2] if self.stack else False) or tag in self.SKIP
+                  or "doc-noteref" in (a.get("role") or "").split()
                   or "hidden" in a or a.get("aria-hidden") == "true"
                   or bool(re.search(r"display\s*:\s*none|visibility\s*:\s*hidden", a.get("style") or "", re.I)))
         self.found_main |= tag == "main"
         if inside and not hidden and tag in self.BLOCK:
             self.parts.append("\n")
+        if inside and not hidden and tag in self.SCRIPTS:
+            self.parts.append(" [" + tag + ":")
         if tag not in self.VOID:
             self.stack.append((tag, inside, hidden))
 
@@ -201,6 +213,8 @@ class MainText(HTMLParser):
             self.parts.append("\n")
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i][0] == tag:
+                if tag in self.SCRIPTS and self.stack[i][1] and not self.stack[i][2]:
+                    self.parts.append("] ")
                 del self.stack[i:]
                 break
 
@@ -272,9 +286,9 @@ def terms(text, consumed=None):
     """
     text = unicodedata.normalize("NFKC", text).lower()
     result = []
-    for match in re.finditer(r"[a-z0-9]+|[\u3400-\u9fff]+", text):
+    for match in re.finditer(r"[a-z0-9]+|" + CJK_CHAR + "+", text):
         word, start = match.group(), match.start()
-        if word[0] >= "\u3400":
+        if CJK_RE.match(word):
             result.extend(text[i:i+2] for i in range(start, start + len(word) - 1)
                           if consumed is None or not any(consumed[i:i+2]))
         elif word not in STOP and len(word) > 1:
@@ -288,10 +302,12 @@ def chunks(text, size=1200):
         yield text[start:start + size]
 
 
-def build(records, path):
+def build(records, path, chunk_size=1200):
     path = Path(path).absolute()
     if path.exists() or path.is_symlink():
         raise CorpusError("output already exists; choose a new snapshot path")
+    if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or not 200 < chunk_size <= 4000:
+        raise CorpusError("invalid chunk size")
     if not records:
         raise CorpusError("empty corpus")
     fd, temporary = tempfile.mkstemp(prefix=".rag-build-", dir=path.parent)
@@ -319,7 +335,7 @@ def build(records, path):
             seen.add(digest)
             conn.execute("INSERT INTO sources VALUES (?,?,?,?,?,?,?,?)", (
                 r["id"], r["url"], r["title"], r["audience"], r["scope_note"], r["reviewed_on"], fetched_at, digest))
-            for ordinal, passage in enumerate(chunks(r["text"])):
+            for ordinal, passage in enumerate(chunks(r["text"], chunk_size)):
                 cursor = conn.execute("INSERT INTO chunks(source_id,ordinal,text) VALUES (?,?,?)", (r["id"], ordinal, passage))
                 conn.execute("INSERT INTO search(rowid,title,body) VALUES (?,?,?)", (cursor.lastrowid, " ".join(terms(r["title"])), " ".join(terms(passage))))
         conn.execute("INSERT INTO search(search) VALUES ('integrity-check')")
@@ -368,6 +384,11 @@ def load_glossary(path=GLOSSARY_PATH):
     synonym dictionary: a Chinese term absent here keeps its CJK bigrams, which
     cannot match an English corpus. Expansion stays opt-in so the baseline stays
     reproducible and no retrieval behaviour changes silently.
+
+    `traditional_variants` maps a hand-reviewed traditional-Hant surface form to one
+    of the reviewed terms above. It carries no new English vocabulary: it is the same
+    expansion under another spelling, applied to the query only. Source passages are
+    never converted, and a query the map does not cover still falls back to bigrams.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if data.get("version") != 1:
@@ -380,12 +401,21 @@ def load_glossary(path=GLOSSARY_PATH):
         raise CorpusError("invalid glossary size")
     cleaned = {}
     for key, value in entries.items():
-        if not isinstance(key, str) or not re.fullmatch(r"[\u3400-\u9fff]{2,12}", key):
+        if not isinstance(key, str) or not re.fullmatch(CJK_CHAR + r"{2,12}", key):
             raise CorpusError("invalid glossary key")
         if (not isinstance(value, list) or not 1 <= len(value) <= 6
                 or any(not isinstance(t, str) or not re.fullmatch(r"[a-z][a-z0-9 ]{0,40}", t) for t in value)):
             raise CorpusError("invalid glossary expansion")
         cleaned[key] = list(value)
+    variants = data.get("traditional_variants", {})
+    if not isinstance(variants, dict):
+        raise CorpusError("invalid traditional variant map")
+    for alias, target in variants.items():
+        if not isinstance(alias, str) or not re.fullmatch(CJK_CHAR + r"{2,12}", alias):
+            raise CorpusError("invalid traditional variant")
+        if target not in cleaned or alias in cleaned:
+            raise CorpusError("traditional variant must resolve to an unreferenced reviewed term")
+        cleaned[alias] = list(cleaned[target])
     return cleaned
 
 
@@ -436,21 +466,30 @@ def window(now=None, max_age_days=30):
 
 
 def cjk(token):
-    return bool(token) and token[0] >= "\u3400"
+    return bool(token) and CJK_RE.match(token) is not None
 
 
-def corpus_script(conn):
-    """'cjk' if any indexed passage contains CJK, else 'latin'.
+def corpus_script(conn, cutoff=None, now=None):
+    """'cjk' if any in-window indexed passage contains CJK, else 'latin'.
 
     Coverage uses this so it never treats an unmatchable script as evidence either way:
     on a corpus with no CJK at all a Chinese bigram is an artifact of not having a
     segmenter, not a term the query was "missing". Detected from the data, so adding a
     Chinese source automatically restores the stricter behaviour.
+
+    The scan is restricted to the same time window `term_stats` scores, so one expired
+    Chinese source cannot flip a live English corpus to 'cjk' and silently stop the
+    unmatchable bigrams from being discounted. Passing no window (the historical
+    one-argument call) still scans the whole snapshot.
     """
-    for (text,) in conn.execute("SELECT text FROM chunks"):
-        for character in text:
-            if character >= "\u3400":
-                return "cjk"
+    sql = "SELECT c.text FROM chunks c JOIN sources s ON c.source_id=s.id"
+    params = ()
+    if cutoff is not None and now is not None:
+        sql += " WHERE s.fetched_at>=? AND s.fetched_at<=?"
+        params = (cutoff, now)
+    for (text,) in conn.execute(sql, params):
+        if CJK_RE.search(text):
+            return "cjk"
     return "latin"
 
 
@@ -474,7 +513,7 @@ def term_stats(path, tokens, now=None, max_age_days=30):
                WHERE s.fetched_at>=? AND s.fetched_at<=?""", (cutoff, now.isoformat())).fetchone()[0]
         if not total:
             return [], 0.0
-        if corpus_script(conn) == "latin":
+        if corpus_script(conn, cutoff, now.isoformat()) == "latin":
             # Fall back to every token when nothing is left, so an all-Chinese query the
             # glossary cannot carry still reports zero coverage instead of a free 1.0.
             tokens = [t for t in tokens if not cjk(t)] or tokens
@@ -556,6 +595,35 @@ def search(path, query, limit=3, now=None, max_age_days=30, glossary=None, min_c
         conn.close()
 
 
+def search_passages(path, query, limit=10, now=None, max_age_days=30, glossary=None):
+    """Matching passages, not deduplicated by source, for evidence-level checks.
+
+    `search` returns one candidate per source, which answers "which page". It can hide
+    whether the sentence that actually answers the question was retrieved at all, because
+    it keeps only the best-ranked chunk of each source. This keeps chunks separate so an
+    evidence hit means the quoted passage itself ranked. Still a snapshot candidate,
+    never a confidence score and never a verdict.
+    """
+    if not isinstance(query, str) or len(query) > 2000 or not 1 <= limit <= 50:
+        raise CorpusError("query or limit outside bounds")
+    tokens = search_terms(query, glossary)
+    if not tokens:
+        return []
+    expression = " OR ".join('"' + t + '"' for t in tokens)
+    now, cutoff = window(now, max_age_days)
+    conn = open_corpus(path)
+    try:
+        rows = conn.execute("""SELECT s.id, s.url, c.ordinal, c.text, bm25(search, 3.0, 1.0) AS rank
+            FROM search JOIN chunks c ON search.rowid=c.id JOIN sources s ON c.source_id=s.id
+            WHERE search MATCH ? AND s.fetched_at>=? AND s.fetched_at<=?
+            ORDER BY rank, s.id, c.ordinal LIMIT ?""",
+            (expression, cutoff, now.isoformat(), limit)).fetchall()
+        return [dict(row, evidence_type="official_snapshot", date_status="applicability_unverified")
+                for row in rows]
+    finally:
+        conn.close()
+
+
 def evaluate(path, cases, glossary=None, min_coverage=None):
     if len(cases) < 30 or len({c["id"] for c in cases}) != len(cases):
         raise CorpusError("evaluation needs at least 30 uniquely identified cases")
@@ -612,6 +680,163 @@ def evaluate(path, cases, glossary=None, min_coverage=None):
             "corpus_bytes": Path(path).stat().st_size, "results": results}
 
 
+EVIDENCE_PATH = Path(__file__).resolve().parent / "rag_data" / "evidence_cases.json"
+
+
+def load_evidence_cases(path=EVIDENCE_PATH):
+    """Schema-only validation for the evidence-level case document.
+
+    Quote/URL/hash membership is checked by `evaluate_evidence` against a corpus, because
+    only a fetched snapshot can say whether a quote is real. This loader runs offline.
+    """
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    if doc.get("version") != 1:
+        raise CorpusError("invalid evidence document version")
+    snapshot = doc.get("snapshot")
+    if not isinstance(snapshot, dict) or not snapshot:
+        raise CorpusError("evidence document needs a snapshot map")
+    for sid, entry in snapshot.items():
+        if not isinstance(entry, dict):
+            raise CorpusError("invalid snapshot entry")
+        valid_url(entry.get("url"))
+        if not re.fullmatch(r"[0-9a-f]{64}", entry.get("content_sha256") or ""):
+            raise CorpusError("invalid snapshot content hash")
+    cases = doc.get("cases")
+    if not isinstance(cases, list) or len(cases) < 20 or len({c.get("id") for c in cases}) != len(cases):
+        raise CorpusError("evidence cases need at least 20 unique ids")
+    for c in cases:
+        if c.get("language") not in ("zh", "zht", "mixed", "en"):
+            raise CorpusError("invalid evidence case language")
+        if not isinstance(c.get("query"), str) or not c["query"].strip():
+            raise CorpusError("invalid evidence case query")
+        if not isinstance(c.get("expected"), list) or not set(c["expected"]).issubset(snapshot):
+            raise CorpusError("evidence case references an unknown source")
+        if c.get("answerable") not in (True, False):
+            raise CorpusError("evidence case needs an answerable flag")
+        evidence = c.get("evidence")
+        if not isinstance(evidence, list):
+            raise CorpusError("evidence case needs an evidence list")
+        if c["answerable"] and not evidence:
+            raise CorpusError("answerable case without evidence")
+        if not c["answerable"] and (evidence or not (c.get("unanswerable_reason") or "").strip()):
+            raise CorpusError("unanswerable case needs a reason and no evidence")
+        for item in evidence:
+            if not isinstance(item, dict) or item.get("source") not in c["expected"]:
+                raise CorpusError("evidence source not in expected")
+            if not isinstance(item.get("quote"), str) or len(item["quote"]) < 10:
+                raise CorpusError("evidence quote too short")
+            if "chunk_ordinal" in item:
+                ordinal = item["chunk_ordinal"]
+                if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 0:
+                    raise CorpusError("invalid evidence chunk ordinal")
+    return doc
+
+
+def evaluate_evidence(path, doc, glossary=None, top_passages=10, now=None, max_age_days=30):
+    """Page-level and passage-level metrics on one fixed snapshot.
+
+    Mechanical only: it can say a quoted sentence was or was not among the retrieved
+    passages. It cannot say a passage entails an answer, and there is no generator here,
+    so a candidate returned for an unanswerable question is a false *candidate*, never a
+    hallucination. Quotes are validated against the corpus before any metric is computed.
+    """
+    cases = doc["cases"]
+    now, cutoff = window(now, max_age_days)
+    now_iso = now.isoformat()
+    conn = open_corpus(path)
+    try:
+        corpus_sources = {r["id"]: dict(r) for r in conn.execute(
+            "SELECT id, url, content_sha256, fetched_at FROM sources")}
+        if set(corpus_sources) != set(doc["snapshot"]):
+            raise CorpusError("snapshot sources do not match this corpus")
+        for sid, entry in doc["snapshot"].items():
+            row = corpus_sources[sid]
+            if row["url"] != entry["url"] or row["content_sha256"] != entry["content_sha256"]:
+                raise CorpusError("snapshot url/hash mismatch for " + sid)
+        for c in cases:
+            if not set(c["expected"]).issubset(corpus_sources):
+                raise CorpusError("case references a source missing from the corpus: " + str(c["id"]))
+            for item in c["evidence"]:
+                sid, quote = item["source"], item["quote"]
+                body = "\n".join(r[0] for r in conn.execute(
+                    """SELECT c.text FROM chunks c JOIN sources s ON c.source_id=s.id
+                       WHERE c.source_id=? AND s.fetched_at>=? AND s.fetched_at<=?""",
+                    (sid, cutoff, now_iso)))
+                if quote not in body:
+                    raise CorpusError("evidence quote is not verbatim in " + sid + " for " + str(c["id"]))
+                if "chunk_ordinal" in item:
+                    # A pinned fragment position is provenance: if the quote is no longer in
+                    # that build chunk the snapshot changed and grading must stop, not drift.
+                    row = conn.execute(
+                        "SELECT text FROM chunks WHERE source_id=? AND ordinal=?",
+                        (sid, item["chunk_ordinal"])).fetchone()
+                    if row is None or quote not in row[0]:
+                        raise CorpusError("evidence quote is not in the pinned chunk for " + str(c["id"]))
+        results = []
+        for c in cases:
+            passages = search_passages(path, c["query"], limit=top_passages, glossary=glossary,
+                                       now=now, max_age_days=max_age_days)
+            sources = search(path, c["query"], glossary=glossary, now=now, max_age_days=max_age_days)
+            ids = [h["id"] for h in sources]
+            expected = set(c["expected"])
+            quotes = [(e["source"], e["quote"]) for e in c["evidence"]]
+
+            def hit(k, require_all):
+                top = passages[:k]
+                found = [any(p["id"] == sid and quote in p["text"] for p in top) for sid, quote in quotes]
+                if not found:
+                    return None
+                return all(found) if require_all else any(found)
+
+            results.append({
+                "id": c["id"], "language": c["language"], "category": c.get("category"),
+                "applicable_year": c.get("applicable_year"), "answerable": c["answerable"],
+                "expected": sorted(expected), "actual": ids,
+                "page_hit1": bool(expected.intersection(ids[:1])),
+                "page_hit3": bool(expected.intersection(ids)),
+                "evidence_all_at_3": hit(3, True), "evidence_all_at_10": hit(top_passages, True),
+                "evidence_any_at_3": hit(3, False),
+                "candidate_sources": ids,
+                "false_candidate": (not c["answerable"]) and bool(ids),
+            })
+    finally:
+        conn.close()
+    answerable = [r for r in results if r["answerable"]]
+    unanswerable = [r for r in results if not r["answerable"]]
+    by_language = {}
+    for language in sorted({r["language"] for r in answerable}):
+        group = [r for r in answerable if r["language"] == language]
+        by_language[language] = {
+            "cases": len(group),
+            "page_source_hit_rate_at_3": sum(r["page_hit3"] for r in group) / len(group),
+            "evidence_all_rate_at_3": sum(r["evidence_all_at_3"] for r in group) / len(group),
+            "evidence_all_rate_at_10": sum(r["evidence_all_at_10"] for r in group) / len(group),
+        }
+
+    def rate(rows, key):
+        return sum(r[key] for r in rows) / len(rows) if rows else None
+
+    return {
+        "scope": "mechanical evidence retrieval on a fixed snapshot; not entailment, not answer correctness, no generator",
+        "answerable_semantics": "evidence_all means every quoted sentence appears in the top passages; a page hit without an evidence hit is the right page with the wrong passage",
+        "unanswerable_semantics": "false_candidate is a retrieved candidate for a question the pages cannot answer; it is not a generation hallucination because this tool never generates text",
+        "cases": len(cases), "answerable_cases": len(answerable), "unanswerable_cases": len(unanswerable),
+        "page_source_hit_rate_at_1": rate(answerable, "page_hit1"),
+        "page_source_hit_rate_at_3": rate(answerable, "page_hit3"),
+        "evidence_all_rate_at_3": rate(answerable, "evidence_all_at_3"),
+        "evidence_all_rate_at_10": rate(answerable, "evidence_all_at_10"),
+        "evidence_any_rate_at_3": rate(answerable, "evidence_any_at_3"),
+        "false_candidate_cases": [r["id"] for r in unanswerable if r["false_candidate"]],
+        "unanswerable_with_candidate": sum(r["false_candidate"] for r in unanswerable),
+        "applicable_year_known_cases": [r["id"] for r in results if r["applicable_year"] != "unknown"],
+        "by_language": by_language, "glossary_applied": bool(glossary),
+        "snapshot": doc["snapshot"],
+        "corpus_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        "corpus_bytes": Path(path).stat().st_size,
+        "results": results,
+    }
+
+
 def calibrate(path, cases, glossary=None, thresholds=None):
     """Sweep the coverage gate and report the trade it makes, instead of picking a number.
 
@@ -650,6 +875,9 @@ def main(argv=None):
     b.add_argument("--manifest", required=True)
     b.add_argument("--output", required=True)
     b.add_argument("--fetch", action="store_true", help="Actually fetch public sources; default is manifest-only dry run")
+    b.add_argument("--chunk-size", type=int, default=1200,
+                   help="Passage length in characters (200 overlap). Default 1200; a stage-190 A/B "
+                        "found no size that improved page and evidence retrieval together, so the default stands")
     s = sub.add_parser("search")
     s.add_argument("--corpus", required=True)
     s.add_argument("--query", required=True, help="Public/synthetic query only; do not put email text in argv")
@@ -666,7 +894,11 @@ def main(argv=None):
     c.add_argument("--cases", required=True)
     c.add_argument("--thresholds", default=None,
                    help="Comma separated coverage thresholds to sweep; default 0.05..0.95")
-    for parser in (s, d, e, c):
+    ee = sub.add_parser("evaluate-evidence")
+    ee.add_argument("--corpus", required=True)
+    ee.add_argument("--cases", default=str(EVIDENCE_PATH),
+                    help="Evidence-level case document; default is the packaged one")
+    for parser in (s, d, e, c, ee):
         parser.add_argument("--glossary", nargs="?", const=str(GLOSSARY_PATH), default=None,
                             help="Enable the reviewed bilingual expansion; optional path overrides the packaged one")
     args = p.parse_args(argv)
@@ -678,8 +910,9 @@ def main(argv=None):
                 raise CorpusError("output already exists")
             if args.fetch:
                 records = collect(sources)
-                build(records, args.output)
-            output = {"mode": "built" if args.fetch else "dry-run", "sources": len(sources)}
+                build(records, args.output, chunk_size=args.chunk_size)
+            output = {"mode": "built" if args.fetch else "dry-run", "sources": len(sources),
+                      "chunk_size": args.chunk_size}
         elif args.command == "search":
             output = search(args.corpus, args.query, glossary=glossary)
         elif args.command == "diagnose":
@@ -688,6 +921,8 @@ def main(argv=None):
             cases = json.loads(Path(args.cases).read_text(encoding="utf-8"))
             thresholds = [float(t) for t in args.thresholds.split(",")] if args.thresholds else None
             output = calibrate(args.corpus, cases, glossary=glossary, thresholds=thresholds)
+        elif args.command == "evaluate-evidence":
+            output = evaluate_evidence(args.corpus, load_evidence_cases(args.cases), glossary=glossary)
         else:
             output = evaluate(args.corpus, json.loads(Path(args.cases).read_text(encoding="utf-8")),
                               glossary=glossary, min_coverage=args.min_coverage)

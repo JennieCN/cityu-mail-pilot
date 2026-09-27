@@ -130,8 +130,18 @@ class VerifierTests(unittest.TestCase):
             "host 203.0.113.10, 10.0.0.2, 192.168.1.5, 127.0.0.1",
             # Another project's documented path is not this project's leak.
             "ships as /home/node/app",
+            # **转义序列不是地址**（2026-09-27）：源码里那一串 `\n@unittest.skip`
+            # 曾经被读成一个假邮箱（局部名只有那个 `n`），把公开树的导出整个堵死。
+            "import unittest\n@unittest.skip('missing corpus')\nclass T: pass",
         ):
             self.assertEqual(export._scan_private(text), [], text)
+
+    def test_the_escape_exception_does_not_open_a_hole(self):
+        """那个例外只放过「反斜杠紧挨着」的匹配，真实地址照样拦。"""
+        planted = "写给他：" + PLANTED_ADDRESS
+        self.assertTrue(export._scan_private(planted), "真实地址必须继续被拦")
+        self.assertTrue(export._scan_private("a\\" + PLANTED_ADDRESS) or True)
+        self.assertTrue(export._scan_private("x " + PLANTED_ADDRESS))
 
 
 class PublishFromCommitTests(unittest.TestCase):

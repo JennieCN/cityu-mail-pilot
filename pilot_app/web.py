@@ -5189,12 +5189,42 @@ def admin_expire_invite(request: Request, label: str) -> Response:
 # --------------------------------------------------------------------------
 
 
+def _same_site(one: str, other: str) -> bool:
+    """两个主机名是不是**同一台站点的两种写法**（只差一个 `www.`）。"""
+    def strip(host: str) -> str:
+        host = host.lower()
+        return host[4:] if host.startswith("www.") else host
+    return bool(one) and strip(one) == strip(other)
+
+
+def origin_refusal(allowed: str, origin: str) -> str:
+    """原点不对时回一句**能照着做**的话；没问题时回空串。
+
+    2026-09-27：用户从 `https://www.mycampusmail.com` 打开页面，登录与注册**每一个 POST**
+    都得到 403「Origin rejected」—— 而页面上的文案还在说「已经注册过？点下面的已有账户登录」，
+    没有任何地方告诉他「你用的这个网址不被接受」。同一个站点在**两个主机名**上都能打开、
+    而 CSRF 这道闸只认一个，这是必然会踩的坑（www 那侧已由 nginx 301 收敛到规范主机，
+    但 `http://`、IP、以及以后再加的别名都会落到这里）。
+
+    所以分两种：**是自家站点（只差 `www.` 或协议）就把规范网址直接告诉他**；
+    别的来源仍然只回一句笼统的 `Origin rejected` —— 不需要向陌生站点解释我们的配置。
+    """
+    if not allowed or not origin or origin == allowed:
+        return ""
+    allowed_host = urlparse(allowed).hostname or ""
+    origin_host = urlparse(origin).hostname or ""
+    if _same_site(allowed_host, origin_host):
+        return f"请用 {allowed} 打开这个页面再试（你现在的网址是 {origin}）。"
+    return "Origin rejected"
+
+
 def dispatch(request: Request) -> Response:
     """Resolve a request to a response; never raises for expected failures."""
     if request.method not in AUTHENTICATED_METHODS:
         allowed_origin = os.environ.get("INFE_PILOT_ORIGIN", "").rstrip("/")
-        if allowed_origin and request.origin and request.origin != allowed_origin:
-            return fail(request, 403, "Origin rejected")
+        refusal = origin_refusal(allowed_origin, request.origin)
+        if refusal:
+            return fail(request, 403, refusal)
     # The two Android-distribution routes sit next to the static files rather
     # than in the `@route` table: both are "read a document off disk and send
     # it", which is what the block below does, and neither is part of the API.

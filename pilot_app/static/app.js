@@ -5854,6 +5854,19 @@ function showAdminResetBox(email, password, revoked) {
     `他的旧密码已经失效，${revoked} 个已登录会话被撤销——旧设备要重新登录。`
     + '请当面或微信/短信发给他，不要发到群里；他登录后应当到「更多 → 账户安全」改成自己的密码。'
     + '关掉这一块就再也看不到这串密码了（库里只有哈希），需要时只能再重设一次。'));
+
+  // **画完必须把它滚到眼前**（2026-09-27 用户报「输完管理员账号后没有显示」）。
+  // 那一次服务端三次都返回 200、密码每次都在响应里（nginx 日志里都留着），
+  // 而这一块画在**用户列表上方**（`index.html` 的 `#admin-reset-box`）——
+  // 运营者当时滚在下面某张卡片上（手机上是好几屏之外），于是「重设成功」与
+  // 「密码看不见」同时成立，他只能再点一次。
+  // 这一块唯一的存在理由就是被看见，所以渲染的最后一步是把它移到视口中央。
+  const reveal = () => {
+    try { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    catch (_) { box.scrollIntoView(); }   // 老浏览器不认这个参数对象
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
+  else reveal();
 }
 
 function renderAdminAudit(entries) {

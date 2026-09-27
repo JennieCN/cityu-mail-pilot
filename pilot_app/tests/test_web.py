@@ -317,6 +317,50 @@ class WebTests(unittest.TestCase):
         status, _, _ = self.client.put("/api/profile", {"major": "x"})
         self.assertEqual(status, 401)
 
+    def test_a_sibling_hostname_is_told_which_url_to_use(self):
+        """**同一个站点的另一种写法**要拿到一句能照着做的话（2026-09-27）。
+
+        用户从 `https://www.mycampusmail.com` 打开页面，登录与注册**每一个 POST** 都是
+        403「Origin rejected」四个英文字，而页面上没有任何地方说「你用的这个网址不被接受」。
+        www 那侧现在由 nginx 301 收敛，但同类写法（http、IP、以后加的别名）还会落到这里。
+        """
+        os.environ["INFE_PILOT_ORIGIN"] = "https://mail.example.com"
+        try:
+            for origin in ("https://www.mail.example.com", "http://mail.example.com"):
+                with self.subTest(origin=origin):
+                    status, body, _ = self.client.post(
+                        "/api/auth/login", {"email": "a@b.com", "password": "x"},
+                        headers={"Origin": origin})
+                    self.assertEqual(status, 403)
+                    self.assertIn("https://mail.example.com", body["detail"],
+                                  "要告诉他该用哪个网址")
+                    self.assertIn(origin, body["detail"], "也要说清他刚才用的是哪个")
+        finally:
+            os.environ.pop("INFE_PILOT_ORIGIN", None)
+
+    def test_a_foreign_origin_still_gets_the_terse_refusal(self):
+        """陌生来源**不需要**知道我们的配置：一句笼统的话就够了。"""
+        os.environ["INFE_PILOT_ORIGIN"] = "https://mail.example.com"
+        try:
+            status, body, _ = self.client.post(
+                "/api/auth/login", {"email": "a@b.com", "password": "x"},
+                headers={"Origin": "https://evil.example.com"})
+            self.assertEqual(status, 403)
+            self.assertEqual(body["detail"], "Origin rejected")
+        finally:
+            os.environ.pop("INFE_PILOT_ORIGIN", None)
+
+    def test_the_origin_helper_is_a_pure_function(self):
+        """三档：放行 / 自家别名（给网址）/ 陌生来源（笼统拒绝）。"""
+        self.assertEqual(web.origin_refusal("https://m.example.com", ""), "")
+        self.assertEqual(web.origin_refusal("https://m.example.com", "https://m.example.com"), "")
+        self.assertEqual(web.origin_refusal("", "https://whatever.example.com"), "",
+                         "没配 INFE_PILOT_ORIGIN 时这道闸不生效（自建实例的默认）")
+        self.assertIn("https://m.example.com",
+                      web.origin_refusal("https://m.example.com", "https://www.m.example.com"))
+        self.assertEqual(web.origin_refusal("https://m.example.com", "https://evil.example.com"),
+                         "Origin rejected")
+
     def test_origin_fence_blocks_cross_site_writes(self):
         os.environ["INFE_PILOT_ORIGIN"] = "https://mail.example.com"
         try:

@@ -1703,6 +1703,50 @@ async function ensurePanel(page, id) {
   check(Array.isArray(clearedSelection) && clearedSelection.length === 0,
     '取消勾选之后服务端名单是空的', JSON.stringify(clearedSelection));
 
+  // -- 重设别人的密码：那串密码必须**看得见**（2026-09-27 用户报「没有显示」）------
+  // 那一次 nginx 日志里三次 200、服务端每次都生成了临时密码并放进响应，而运营者
+  // 屏幕上什么都没有：这一块画在**用户列表上方**（`#admin-reset-box`），他正滚在
+  // 下面的某张卡片上（手机上好几屏之外）。「重设成功」和「密码看不见」于是同时成立，
+  // 他只能再点一次。
+  //
+  // **必须把视口缩到手机大小**，否则这条断言恒真：1440×1000 的桌面上，用户列表
+  // 和那一块同屏可见，拆掉滚动也照样「在视口里」（反向验证时实测过）。用户报的那一次
+  // 就是 iPhone；缩到 390×780 才复现出「卡片在下面、密码块在上面」这个形状。
+  await page.setViewportSize({ width: 390, height: 780 });
+  await goTo(page, 'admin');
+  await ensurePanel(page, 'panel-users');
+  await expandCard(page, memberEmail);   // `click()` 自己会把这张卡滚进视口（像人一样）
+  // **一个 dialog 监听器，不是两个 `once`**：`page.once('dialog')` 不是队列 ——
+  // 当时注册着的每个监听器都会收到**同一个**弹窗，于是第一个 accept 之后第二个会抛
+  // 「Cannot accept dialog which is already handled!」（这条用例第一次就是这么写红的）。
+  // 按弹窗类型分派，答完两个（prompt + confirm）自己摘掉，不留到后面的用例。
+  let answered = 0;
+  const answerResetDialogs = (dialog) => {
+    answered += 1;
+    if (dialog.type() === 'prompt') dialog.accept(PASSWORD);   // 「重新输入你自己」的密码
+    else dialog.accept();                                      // 「确认重设」
+    if (answered >= 2) page.off('dialog', answerResetDialogs);
+  };
+  page.on('dialog', answerResetDialogs);
+  await cardFor(page, memberEmail).locator('button', { hasText: '重设密码' }).click();
+  await page.waitForSelector('#admin-reset-box code', { timeout: 8000 });
+  await page.waitForTimeout(600);        // 平滑滚动走完再看位置
+  const revealed = await page.evaluate(() => {
+    const box = document.getElementById('admin-reset-box');
+    const code = box.querySelector('code');
+    const rect = box.getBoundingClientRect();
+    return {
+      length: code ? code.textContent.trim().length : 0,
+      visible: box.offsetParent !== null && rect.height > 0,
+      inViewport: rect.top >= 0 && rect.bottom <= window.innerHeight,
+    };
+  });
+  check(revealed.length >= 12, '临时密码渲染出来了（≥12 位）', `${revealed.length} 位`);
+  check(revealed.visible, '那一块是可见的（不是 hidden）');
+  check(revealed.inViewport, '**画完被滚进视口**，不用自己去找', JSON.stringify(revealed));
+  await page.screenshot({ path: path.join(SHOTS, 'admin-reset-reveal.png') });
+  await page.evaluate(() => document.querySelector('#admin-reset-box button.ghost').click());
+
   await context.close();
   await browser.close();
   check(errors.length === 0, '没有 JS 异常 / 资源缺失', errors.slice(0, 3).join(' | '));

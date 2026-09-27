@@ -566,6 +566,19 @@ class AdminConsoleResetTests(ResetHarness):
             self.assertNotIn(forbidden, body, f"临时密码不该经过 {forbidden}")
         self.assertIn("el('code', null, password)", body, "只渲染成文本")
 
+    def test_the_reveal_is_brought_into_view(self):
+        """画在列表**上方**的一块，必须主动滚到眼前（2026-09-27 用户报「没有显示」）。
+
+        那一次：nginx 日志里**三次 200**、服务端每次都生成了临时密码并放进响应，
+        而运营者屏幕上什么都没有 —— 因为这一块画在用户列表上方，而他正滚在下面的
+        某张卡片上（手机上好几屏之外）。「重设成功」和「密码看不见」于是同时成立，
+        他只能再点一次。**一个没人看得见的一次性密码等于没生成。**
+        """
+        script = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
+        start = script.index("function showAdminResetBox")
+        body = script[start:script.index("\nfunction ", start + 10)]
+        self.assertIn("scrollIntoView", body, "渲染完必须把这一块滚进视口")
+
     def test_the_operator_cannot_reset_their_own_password_here(self):
         """替自己重设会把**正在用的这个会话**也撤掉，看起来像「突然被登出」。"""
         admin_email, admin_user = self._make_admin()

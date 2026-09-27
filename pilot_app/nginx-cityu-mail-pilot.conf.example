@@ -5,6 +5,18 @@ server {
     listen [::]:80;
     server_name mail.example.com;
 
+    # **一个站点只留一个主机名**（2026-09-27 在生产上踩到）。
+    # 应用侧那道 CSRF 原点校验只认 `INFE_PILOT_ORIGIN` 的**一个**值；如果 `www.` 这类别名
+    # 也能打开页面，那么从别名打开的**每一个 POST 都是 403「Origin rejected」**——
+    # 登录、注册全废，而页面上只显示这四个英文字。所以别名必须在这里 301 收敛，
+    # 并且把 `INFE_PILOT_ORIGIN` 写成规范的那个主机名。
+    # **307 而不是 301**：301/302 会把 POST 改写成 GET（浏览器照做），于是一个还停在
+    # 别名上的旧标签页去登录，就会拿一个 GET 打到 POST 端点，收到「资源不存在」而不是
+    # 「该用哪个网址」。307 保留方法与正文。
+    if ($host = www.mail.example.com) {
+        return 307 https://mail.example.com$request_uri;
+    }
+
     client_max_body_size 1m;
 
     location /api/auth/ {

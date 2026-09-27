@@ -64,6 +64,7 @@ REPO_ONLY_TESTS=(
   test_dependency_audit.py
   test_forward_shots.py
   test_handoff.py
+  test_task_flow_integration.py
   test_i18n_proofread.py
   test_install_shots.py
   test_installer.py

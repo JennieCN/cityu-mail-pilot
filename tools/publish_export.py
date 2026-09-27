@@ -451,6 +451,13 @@ def _scan_private(text: str) -> list[str]:
     """
     problems: list[str] = []
     for match in ADDRESS.finditer(text):
+        # **紧跟在反斜杠后面的一律不是地址**（2026-09-27）：源码里写着
+        # `write_text("import unittest\n@unittest.skip('…')")` 时，文件字节里是
+        # `\n@unittest.skip` —— 正则把它读成一个假邮箱（局部名只有那个 `n`），于是**公开树的
+        # 导出被一个转义序列整个堵死**（那一次的现场就是 `tools/test_task_flow.py`）。
+        # 这是转义，不是收件人：`\n` / `\t` / `\"` 后面的那个字符属于序列本身。
+        if match.start() and text[match.start() - 1] == "\\":
+            continue
         if not _address_is_safe(match.group(0)):
             problems.append(f"未替换的邮箱地址：{match.group(0)}（若确属虚构夹具，"
                             f"加进 SAFE_ADDRESS_PATTERNS 并说明理由）")
