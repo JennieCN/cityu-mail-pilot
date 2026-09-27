@@ -2359,13 +2359,21 @@ $('save-mailbox').addEventListener('click', async () => {
 async function saveConnection(kind) {
   const model = kind === 'model';
   const provider = $(model ? 'model-provider' : 'search-provider').value;
-  if (!provider) { setStatus(`${kind}-status`, '请先选择供应商。', 'error'); return; }
+  // 反馈走 `toast`，**不再写 `${kind}-status`**。这两个板块只有一个状态位
+  // （`#model-saved` / `#search-saved`，由 `showConnectionState()` 拥有 —— 见它上面
+  // 那段注释：第一版多写一行，截图上就是两个框说同一句话，所以那一半连同
+  // `#model-status` / `#search-status` 两个空 div 一起删了）。**div 删了、写它的
+  // 代码没删**，于是下面每一句提示都写进了空气：没选供应商、没填 key、接口报什么错，
+  // 用户一个字都看不到（2026-09-27 报障「点了没反应」的同一类，只是这次连请求都
+  // 不一定发得出去）。`test_shell.ElementIdTests` 现在有一条静态测试盯着
+  // 「状态 id 不许用模板串拼」—— 模板串拼的 id 正是它躲过所有静态检查的原因。
+  if (!provider) { toast('请先选择供应商。', 'error'); return; }
   const key = $(model ? 'model-key' : 'search-key').value;
   if (!key && state.connections[kind]) {
-    setStatus(`${kind}-status`, '密钥已经保存过了（出于安全不会回显）。要更换就填入新的再保存。', 'warn');
+    toast('密钥已经保存过了（出于安全不会回显）。要更换就填入新的再保存。', 'warn');
     return;
   }
-  if (!key) { setStatus(`${kind}-status`, '请填写 API key。', 'error'); return; }
+  if (!key) { toast('请填写 API key。', 'error'); return; }
   try {
     await api(`/api/connections/${kind}`, {
       method: 'PUT',
@@ -2378,25 +2386,35 @@ async function saveConnection(kind) {
       }),
     });
     $(model ? 'model-key' : 'search-key').value = '';
-    setStatus(`${kind}-status`, '已加密保存。建议点旁边的测试按钮确认可用。', 'ok');
+    toast('已加密保存。建议点旁边的测试按钮确认可用。', 'ok');
     await load();
-  } catch (error) { setStatus(`${kind}-status`, error.message, 'error'); }
+  } catch (error) { toast(error.message, 'error'); }
 }
 
 $('save-model').addEventListener('click', () => saveConnection('model'));
 $('save-search').addEventListener('click', () => saveConnection('search'));
 
+// 两个测试按钮按**字面 id** 查（不是 `test-${target}`）：字面量才在
+// `test_shell.ElementIdTests` 那条「脚本查的 id 必须存在」的射程里。
+const TEST_BUTTONS = { model: 'test-model', search: 'test-search' };
+
 async function test(target) {
-  setStatus(`${target}-status`, '正在测试…');
+  // 结果既写在按钮上（禁用 + 「测试中…」，就在用户手指底下），也走 toast
+  // （固定定位，滚动到哪里都看得见）。**不写 `${target}-status`**：那个元素不存在，
+  // 同 `saveConnection` 上面那段。
+  const button = TEST_BUTTONS[target] ? $(TEST_BUTTONS[target]) : null;
+  const label = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = '测试中…'; }
   try {
     const value = await api(`/api/test/${target}`, { method: 'POST' });
     let message = target === 'search'
       ? `成功，返回 ${value.results.length} 个来源。`
       : `成功：${value.result || value.imap || 'ok'}`;
     if (target === 'mailbox' && value.uid_validity) message += `；UIDVALIDITY ${value.uid_validity}`;
-    setStatus(`${target}-status`, message, 'ok');
+    toast(message, 'ok');
     await refreshDashboard();
-  } catch (error) { setStatus(`${target}-status`, error.message, 'error'); }
+  } catch (error) { toast(error.message, 'error'); }
+  finally { if (button) { button.disabled = false; button.textContent = label; } }
 }
 
 $('test-model').addEventListener('click', () => test('model'));

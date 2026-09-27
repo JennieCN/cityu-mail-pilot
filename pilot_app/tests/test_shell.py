@@ -28,6 +28,16 @@ INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
 APP_JS = (STATIC / "app.js").read_text(encoding="utf-8")
 
 
+def code_only(script: str) -> str:
+    """剥掉注释再扫。
+
+    注释里会**引用**那条坏写法（用来说明它长什么样）——`// setStatus(MouseEvent, …)`
+    就是这一类——不剥掉就会把说明文字当成代码判红。
+    """
+    without_block = re.sub(r"/\*[\s\S]*?\*/", "", script)
+    return re.sub(r"(?m)//[^\n]*$", "", without_block)
+
+
 def nav_entries() -> list[dict]:
     """Parse the NAV registry out of app.js.
 
@@ -266,6 +276,40 @@ class ElementIdTests(unittest.TestCase):
         referenced = set(re.findall(r"\$\('([a-z0-9_-]+)'\)", APP_JS))
         missing = sorted(referenced - ids - created_by_script)
         self.assertEqual(missing, [], f"app.js 查了这些 id，但 index.html 里没有：{missing}")
+
+    def test_every_id_a_status_write_uses_exists(self):
+        """补上 `test_every_id_the_script_looks_up_exists` 看不见的那一半。
+
+        那一条只认 `$('字面量')`。`setStatus(`${kind}-status`, …)` 是**模板串**，
+        于是没有任何静态检查看过它 —— 而它写的那两个 div 在 2026-09 那次清理里被
+        **故意删掉了**（截图上两个框说同一句话），**删了 div、写它的代码没删**：
+        「测试模型」「测试搜索」和两个「加密保存」把每一句提示（没选供应商 / 没填
+        key / 接口报的错）都写进了一个不存在的元素，用户看到的就是「点了没反应」。
+
+        2026-09-27 由宿舍机审**线上那份 app.js** 找出来的 —— Mac 这边那轮「点遍每个
+        按钮」的审计**漏了它**，因为点下去确实发出了一次请求，而当时「发出了请求」
+        被算作「有反应」（那条判据同一天也改掉了：请求数不再参与判定）。
+        """
+        code = code_only(APP_JS)
+        ids = set(re.findall(r'\bid="([^"]+)"', INDEX))
+        created_by_script = set(re.findall(r"\.id = '([a-z0-9_-]+)'", APP_JS))
+        written: set[str] = set()
+        templated: list[str] = []
+        for argument in re.findall(r"(?:setStatus|announceStatus)\(\s*([^,)\n]+)", code):
+            argument = argument.strip()
+            literal = re.fullmatch(r"'([a-z0-9_-]+)'", argument)
+            if literal:
+                written.add(literal.group(1))
+            elif "`" in argument:
+                templated.append(argument)
+        # 正则漂了要立刻知道：一条字面状态 id 都扫不到时，下面两条断言会「全绿」。
+        self.assertTrue(written, "一条字面状态 id 都扫不到，说明这条判据的正则已经漂了")
+        self.assertEqual(
+            templated, [],
+            "状态 id 不许用模板串拼（静态检查看不见它，写错了一辈子没人知道）："
+            + "、".join(templated))
+        missing = sorted(written - ids - created_by_script)
+        self.assertEqual(missing, [], f"app.js 往这些 id 写状态，但 index.html 里没有：{missing}")
 
 
 class StatusPanelTests(unittest.TestCase):
