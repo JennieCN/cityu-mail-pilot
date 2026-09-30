@@ -5725,6 +5725,7 @@ const PANEL_NAMES = {
   'panel-capacity': '名额', 'panel-reminders': '卡住的账号', 'panel-digest': '每日简报',
   'panel-agent': '运维助手', 'panel-alerts': '巡检', 'panel-guestbook': '留言板',
   'panel-analytics': '访问统计', 'panel-broadcast': '全体广播',
+  'panel-website-content': '网站内容',
 };
 
 /* ---- 「需要你处理」 ---------------------------------------------------------
@@ -6488,6 +6489,223 @@ async function sendSetupReminders({ audience = 'pending' } = {}) {
   }
 }
 
+/* ---- 网站内容：纯文本 + 两阶段二维码发布 ------------------------------- */
+const WEBSITE_FIELDS = {
+  title_line1: 'website-title-line1', title_line2: 'website-title-line2',
+  introduction: 'website-introduction', customer_service: 'website-customer-service',
+  expired_notice: 'website-expired-notice',
+};
+let websiteContent = null;
+let websiteOwner = '';
+let websiteDraftImage = null;
+let websiteSavedDraft = '';
+let websitePreviewedDraft = '';
+let websiteGeneration = 0;
+let websiteUploading = false;
+let websitePublishing = false;
+
+function websiteContentDraft() {
+  const fields = {};
+  Object.entries(WEBSITE_FIELDS).forEach(([key, id]) => { fields[key] = $(id).value; });
+  return { fields, qr: { image_id: websiteDraftImage ? websiteDraftImage.id : null,
+    expires_on: $('website-qr-expires').value }, revision: websiteContent.revision };
+}
+
+function websiteContentStatus(message, kind = '') {
+  const node = $('website-content-status');
+  node.textContent = message;
+  node.className = `saved ${kind}`;
+  node.style.display = message ? '' : 'none';
+}
+
+function websiteContentButtons() {
+  const ready = Boolean(websiteContent) && !websiteUploading && !websitePublishing;
+  $('website-content-preview').disabled = !ready;
+  $('website-content-save').disabled = !ready || !websitePreviewedDraft
+    || JSON.stringify(websiteContentDraft()) !== websitePreviewedDraft;
+  $('website-content-reset').disabled = !ready;
+  $('website-content-reload').disabled = websiteUploading || websitePublishing;
+  $('website-qr-image').disabled = !ready;
+  $('website-qr-discard').disabled = !ready;
+}
+
+function websiteQrStatus() {
+  if (!websiteContent) return;
+  const qr = websiteContent.qr || {};
+  const image = websiteDraftImage ? websiteDraftImage.preview_url : qr.image;
+  const node = $('website-qr-preview');
+  // Only our authenticated/public image routes may be loaded in the console.
+  const safeImage = typeof image === 'string' && /^\/(?!\/)/.test(image);
+  node.hidden = !safeImage;
+  if (safeImage) node.src = image; else node.removeAttribute('src');
+  $('website-qr-discard').hidden = !websiteDraftImage;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((item) => item.type === type).value;
+  const today = `${part('year')}-${part('month')}-${part('day')}`;
+  const expires = $('website-qr-expires').value;
+  const configured = Boolean(websiteDraftImage || qr.configured);
+  const expired = configured && (!expires || today >= expires);
+  $('website-qr-state').textContent = !configured ? '未配置客服群二维码'
+    : `${websiteDraftImage ? '新图草稿' : '当前二维码'} · ${expired ? '已过期／日期缺失' : '有效'}${expires ? ` · ${expires} 香港时间 00:00 起失效` : ''}`;
+}
+
+function websiteContentChanged() {
+  websiteGeneration += 1;
+  websitePreviewedDraft = '';
+  $('website-content-preview-frame').hidden = true;
+  $('website-content-preview-frame').removeAttribute('srcdoc');
+  websiteQrStatus();
+  websiteContentButtons();
+  panelNote('panel-website-content-note', '有未保存修改', 'warn');
+}
+
+function renderWebsiteContent(data) {
+  websiteContent = data;
+  websiteOwner = state.user.email;
+  websiteDraftImage = null;
+  Object.entries(WEBSITE_FIELDS).forEach(([key, id]) => {
+    $(id).value = data.fields[key] || '';
+  });
+  $('website-qr-expires').value = (data.qr || {}).expires_on || '';
+  websitePreviewedDraft = '';
+  websiteSavedDraft = JSON.stringify(websiteContentDraft());
+  websiteGeneration += 1;
+  $('website-content-preview-frame').hidden = true;
+  $('website-content-preview-frame').removeAttribute('srcdoc');
+  websiteQrStatus();
+  websiteContentButtons();
+  panelNote('panel-website-content-note', data.qr && data.qr.expired ? '二维码已过期' : '已读取',
+    data.qr && data.qr.expired ? 'warn' : '');
+}
+
+async function loadWebsiteContent({ discard = false } = {}) {
+  if (!state || !state.is_admin) return;
+  if (websiteOwner === state.user.email && websiteContent && !discard
+      && JSON.stringify(websiteContentDraft()) !== websiteSavedDraft) {
+    panelNote('panel-website-content-note', '保留未保存修改', 'warn');
+    return;
+  }
+  const generation = websiteGeneration;
+  const owner = state.user.email;
+  try {
+    const data = await api('/api/admin/website-content');
+    if (!state || !state.is_admin || state.user.email !== owner) return;
+    if (!discard && generation !== websiteGeneration) return;
+    renderWebsiteContent(data);
+  } catch (error) {
+    websiteContentStatus(`读取失败：${error.message}`, 'warn');
+    panelNote('panel-website-content-note', '读取失败', 'bad');
+    throw error;
+  }
+}
+
+Object.values(WEBSITE_FIELDS).forEach((id) => $(id).addEventListener('input', websiteContentChanged));
+$('website-qr-expires').addEventListener('input', websiteContentChanged);
+$('website-qr-image').addEventListener('change', async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file || !websiteContent || websiteUploading || websitePublishing) return;
+  websiteUploading = true;
+  const owner = websiteOwner;
+  websiteContentChanged();
+  websiteContentStatus('正在本地处理并上传二维码…');
+  try {
+    const { blob } = await reencodeImage(file, { maxEdge: 2048, maxBytes: 1_400_000 });
+    const uploaded = await api('/api/admin/website-content/image', {
+      method: 'POST', raw: blob, contentType: 'image/jpeg',
+    });
+    if (!state || !state.is_admin || state.user.email !== owner) return;
+    websiteDraftImage = uploaded;
+    websiteContentChanged();
+    websiteContentStatus('新图已上传为草稿。请核对失效日期并预览，尚未发布。');
+  } catch (error) {
+    // A replacement may invalidate the previous server draft; never retain its id.
+    websiteDraftImage = null;
+    websiteContentChanged();
+    websiteContentStatus(`上传失败：${error.message}`, 'warn');
+  } finally {
+    websiteUploading = false;
+    event.target.value = '';
+    websiteContentButtons();
+  }
+});
+$('website-qr-discard').addEventListener('click', () => {
+  websiteDraftImage = null;
+  $('website-qr-expires').value = (websiteContent.qr || {}).expires_on || '';
+  websiteContentChanged();
+  websiteContentStatus('已放弃新图；当前网站二维码不变。请重新预览。');
+});
+$('website-content-reset').addEventListener('click', () => {
+  if (!websiteContent) return;
+  Object.entries(WEBSITE_FIELDS).forEach(([key, id]) => {
+    $(id).value = websiteContent.defaults[key] || '';
+  });
+  websiteContentChanged();
+  websiteContentStatus('默认文案已放入草稿，二维码未改动；预览并保存后才生效。');
+});
+$('website-content-reload').addEventListener('click', async () => {
+  if (websiteContent && JSON.stringify(websiteContentDraft()) !== websiteSavedDraft
+      && !window.confirm('重新读取会丢弃当前未保存的文案和二维码草稿，继续吗？')) return;
+  try { await loadWebsiteContent({ discard: true }); websiteContentStatus('已重新读取。'); }
+  catch (_) { /* loader already explains the failure */ }
+});
+$('website-content-preview').addEventListener('click', async () => {
+  if (!websiteContent || websiteUploading || websitePublishing) return;
+  websitePreviewedDraft = '';
+  websiteContentButtons();
+  const draft = JSON.stringify(websiteContentDraft());
+  const owner = websiteOwner;
+  websiteContentStatus('正在生成预览…');
+  try {
+    const data = await api('/api/admin/website-content/preview', { method: 'POST', body: draft });
+    if (!state || !state.is_admin || state.user.email !== owner) return;
+    if (JSON.stringify(websiteContentDraft()) !== draft || websiteUploading) {
+      websiteContentStatus('生成预览期间内容已变化，请再次预览。', 'warn');
+      return;
+    }
+    if (typeof data.html !== 'string') throw new Error('预览内容缺失');
+    const frame = $('website-content-preview-frame');
+    // sandbox has no tokens: scripts, forms, popups and top navigation are disabled.
+    frame.srcdoc = data.html;
+    frame.hidden = false;
+    websitePreviewedDraft = draft;
+    websiteContentStatus('预览已生成（交互脚本停用）。核对文字、二维码和失效日期后可保存。');
+  } catch (error) { websiteContentStatus(`预览失败：${error.message}`, 'warn'); }
+  finally { websiteContentButtons(); }
+});
+$('website-content-save').addEventListener('click', async () => {
+  if (!websiteContent || websiteUploading || websitePublishing) return;
+  const draft = JSON.stringify(websiteContentDraft());
+  if (!websitePreviewedDraft || draft !== websitePreviewedDraft) {
+    websiteContentStatus('请先预览当前修改，再保存。', 'warn');
+    return;
+  }
+  websitePublishing = true;
+  websiteContentButtons();
+  websiteContentStatus('正在保存并发布…');
+  const generation = websiteGeneration;
+  const owner = websiteOwner;
+  try {
+    const data = await api('/api/admin/website-content', { method: 'PUT', body: draft });
+    if (!state || !state.is_admin || state.user.email !== owner) return;
+    if (generation === websiteGeneration) {
+      renderWebsiteContent(data);
+      websiteContentStatus('已保存并发布，无需重启；扫码是否可入群请实际用微信确认。', 'ok');
+    } else {
+      // Keep edits typed during the request, but use the server's new revision.
+      websiteContent = data;
+      websiteDraftImage = null;
+      websiteSavedDraft = '';
+      websitePreviewedDraft = '';
+      websiteContentStatus('已发布刚才预览的一份；保存期间的新输入仍是未发布草稿，请重新预览。', 'warn');
+    }
+  } catch (error) { websiteContentStatus(`保存失败：${error.message}。若内容已被其他管理员更新，请重新读取后再改。`, 'warn'); }
+  finally { websitePublishing = false; websiteContentButtons(); }
+});
+wirePanel('panel-website-content', () => loadWebsiteContent().catch(() => {}),
+  () => loadWebsiteContent());
+
 wirePanel('panel-reminders', () => loadReminders());
 $('reminders-refresh').addEventListener('click', () => loadReminders({ notify: true }));
 $('reminders-send').addEventListener('click', () => sendSetupReminders({ audience: 'pending' }));
@@ -7062,4 +7280,3 @@ $('install-dismiss').addEventListener('click', () => {
 // after this line would be wiring the guard does not cover -- test_shell asserts
 // this is the final statement so that appending is a red test, not a silent gap.
 wiredUp = true;
-

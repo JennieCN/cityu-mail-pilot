@@ -525,7 +525,7 @@ def evaluate(
     # 客服群二维码到期（v1.1.3）：微信的群码只有 7 天，而**过期的后果是静默的**——
     # 页面从那天起只显示一句「码过期了，去留言」，访客扫不到群，我们这边毫无察觉。
     # 状态判据只有 `groupqr.state()` 一处（介绍页渲染读的也是它），免得两边算出不同的日子。
-    findings.extend(groupqr.findings(now=now))
+    findings.extend(groupqr.findings(now=now, db=db))
 
     # 管理员那把 key 的钱。同样的形状：worker 半小时读一次余额记在 app_settings 里，
     # 这里**只读那条记录**。两件事分开报（本月的花费 / 余额见底），因为修法不同：

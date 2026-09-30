@@ -103,6 +103,10 @@ class SourceOfferTests(unittest.TestCase):
 
         class StubDatabase:
             @staticmethod
+            def get_setting(key, default=""):
+                return default
+
+            @staticmethod
             def landing_user_count():
                 return 1
 
@@ -122,6 +126,10 @@ class SourceOfferTests(unittest.TestCase):
 
     def test_the_landing_page_renders_without_a_repository_configured(self):
         class StubDatabase:
+            @staticmethod
+            def get_setting(key, default=""):
+                return default
+
             @staticmethod
             def landing_user_count():
                 return 2
@@ -186,6 +194,10 @@ class SourceOfferTests(unittest.TestCase):
 
     def _render_landing(self) -> str:
         class StubDatabase:
+            @staticmethod
+            def get_setting(key, default=""):
+                return default
+
             @staticmethod
             def landing_user_count():
                 return 2

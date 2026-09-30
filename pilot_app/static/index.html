@@ -1918,6 +1918,40 @@
         </div>
       </details>
 
+      <details class="panel" id="panel-website-content">
+        <summary><span class="panel-title">网站内容 · 客服群二维码</span><span class="panel-note" id="panel-website-content-note">—</span></summary>
+        <div class="panel-body">
+          <p class="help">修改介绍页的纯文字和客服群二维码；隐私条款不在这里编辑。先预览，再保存，保存后立即生效，无需重启。</p>
+          <label for="website-title-line1">标题第一行（最多 80 字）</label>
+          <input id="website-title-line1" type="text" maxlength="80">
+          <label for="website-title-line2">标题第二行（最多 80 字）</label>
+          <input id="website-title-line2" type="text" maxlength="80">
+          <label for="website-introduction">介绍（最多 1000 字）</label>
+          <textarea id="website-introduction" rows="4" maxlength="1000"></textarea>
+          <label for="website-customer-service">客服说明（最多 500 字）</label>
+          <textarea id="website-customer-service" rows="3" maxlength="500"></textarea>
+          <label for="website-expired-notice">二维码过期提示（最多 500 字）</label>
+          <textarea id="website-expired-notice" rows="3" maxlength="500"></textarea>
+          <label for="website-qr-image">新客服群二维码（JPEG / PNG）</label>
+          <input id="website-qr-image" type="file" accept="image/jpeg,image/png">
+          <p class="help" id="website-qr-note">图片会在浏览器里去掉元数据后上传；上传只是草稿，保存前不会替换网站上的码。</p>
+          <img id="website-qr-preview" alt="客服群二维码预览" hidden style="display:block;max-width:280px;max-height:430px;width:auto;height:auto;margin:12px 0">
+          <button id="website-qr-discard" class="ghost" type="button" hidden>放弃新图，保留当前码</button>
+          <label for="website-qr-expires">失效日期（香港时间当天00:00起）</label>
+          <input id="website-qr-expires" type="date">
+          <p class="help" id="website-qr-state">—</p>
+          <p class="help">按微信显示的实际期限填写；不能仅延长旧二维码的日期来恢复有效状态。文案和二维码会一起保存。</p>
+          <div class="actions">
+            <button id="website-content-preview" class="secondary" type="button">预览修改</button>
+            <button id="website-content-save" type="button" disabled>保存并发布</button>
+            <button id="website-content-reset" class="ghost" type="button">恢复默认文案</button>
+            <button id="website-content-reload" class="ghost" type="button">重新读取</button>
+          </div>
+          <div id="website-content-status" class="saved" role="status" style="display:none"></div>
+          <iframe id="website-content-preview-frame" title="网站内容预览（不执行脚本）" sandbox="" hidden style="width:100%;height:600px;border:1px solid var(--border);margin-top:12px"></iframe>
+        </div>
+      </details>
+
       <details class="panel" id="panel-reminders">
         <summary><span class="panel-title">卡住的账号 · 一键提醒</span><span class="panel-note" id="panel-reminders-note">—</span></summary>
         <div class="panel-body">

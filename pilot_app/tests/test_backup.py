@@ -254,6 +254,7 @@ class BackupAlertTests(unittest.TestCase):
         # A real-looking empty database: `evaluate` iterates both of these, and a
         # bare MagicMock would raise instead of reporting "no users".
         database = mock.MagicMock()
+        database.get_setting.return_value = ""
         database.list_users_overview.return_value = []
         database.stalled_setups.return_value = []
         # Injected rather than set through the environment: `evaluate` reads the
@@ -332,6 +333,7 @@ class BackupAlertTests(unittest.TestCase):
         have nothing to do with backups.
         """
         database = mock.MagicMock()
+        database.get_setting.return_value = ""
         database.list_users_overview.return_value = []
         database.stalled_setups.return_value = []
         findings = alerting.evaluate(database, disk_percent=1.0, certificate_days=365,

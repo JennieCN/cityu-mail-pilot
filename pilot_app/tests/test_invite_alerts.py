@@ -102,6 +102,7 @@ class FailedInviteQueryTests(unittest.TestCase):
         self.add("skipped@example.com", label="signup-h")
 
         database = mock.MagicMock()
+        database.get_setting.return_value = ""
         database.list_users_overview.return_value = []
         database.stalled_setups.return_value = []
         database.failed_invite_sends.side_effect = db.failed_invite_sends
@@ -156,6 +157,7 @@ class InviteAlertTests(unittest.TestCase):
 
     def findings(self):
         database = mock.MagicMock()
+        database.get_setting.return_value = ""
         database.list_users_overview.return_value = []
         database.stalled_setups.return_value = []
         database.failed_invite_sends.side_effect = db.failed_invite_sends

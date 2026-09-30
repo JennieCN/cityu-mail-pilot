@@ -42,6 +42,7 @@ from . import alerting
 from . import analytics as analytics_mod
 from . import i18n
 from . import imageguard
+from . import groupqr, website_content
 from . import invites as invites_mod
 from . import signup_notice
 from . import mailio as mailio_mod
@@ -497,7 +498,14 @@ def page_locale(request: Request) -> str:
     )
 
 
-def render_landing_page(target: Path, locale: str = i18n.DEFAULT_LOCALE) -> bytes:
+def _website_document():
+    try:
+        return website_content.load(get_db())
+    except website_content.ContentError:
+        return {"fields": {}, "qr": None, "invalid": True}
+
+
+def render_landing_page(target: Path, locale: str = i18n.DEFAULT_LOCALE, *, document=None) -> bytes:
     """Fill the landing page's live numbers.
 
     **这里曾经注入过一句「现在有 N 个账号接好了邮箱」。** 2026-09-24 随朋友那一版
@@ -515,6 +523,17 @@ def render_landing_page(target: Path, locale: str = i18n.DEFAULT_LOCALE) -> byte
     # **翻译模板在前、注入片段在后**。反过来的话，那些片段里的中文会被当成模板
     # 的一部分，而它们带标签，匹配不上任何一条译文（key 是中文原文）。
     text = i18n.translate_file(target, locale)
+    document = _website_document() if document is None else document
+    copy = website_content.fields(document)
+    # Defaults retain the template's translations and established markup.
+    for key, pattern in (
+        ("title_line1", r'(<span class="l1">).*?(</span>)'),
+        ("title_line2", r'(<span class="red l2">).*?(</span>)'),
+        ("introduction", r'(<p class="lede standfirst"[^>]*>).*?(</p>)'),
+    ):
+        if copy[key] != website_content.DEFAULTS[key]:
+            text = re.sub(pattern, lambda m: m[1] + html.escape(copy[key]) + m[2],
+                          text, count=1, flags=re.S)
     text = text.replace("{{SOURCE_LINK}}", render_source_link(locale))
     # The nav entry and the section are decided by the same condition as the
     # footer link, so a copy of this software without a repository configured
@@ -523,7 +542,7 @@ def render_landing_page(target: Path, locale: str = i18n.DEFAULT_LOCALE) -> byte
     text = text.replace("{{SOURCE_SECTION}}", render_source_section(locale))
     # 客服群那张码（可选；见 `render_wechat_section`）。它插在申请那一节之后、
     # 留言板之前——「找到我们」的两条路挨着放。
-    text = text.replace("{{WECHAT_GROUP}}", render_wechat_section(locale=locale))
+    text = text.replace("{{WECHAT_GROUP}}", render_wechat_section(locale=locale, document=document))
     # The install instructions are prose and live in the template; only the
     # button is live, because whether this server has an APK at all is a fact
     # about the machine rather than something the page can assert.
@@ -628,7 +647,7 @@ WECHAT_UNTIL_ENV = "INFE_PILOT_WECHAT_GROUP_UNTIL"
 
 
 def render_wechat_section(*, now: Optional[dt.datetime] = None,
-                          locale: str = i18n.DEFAULT_LOCALE) -> str:
+                          locale: str = i18n.DEFAULT_LOCALE, document=None) -> str:
     """「扫码进群」那一节，或者一句「码过期了」。
 
     * **没配图片 → 整节不出现**（自建的人不该把我们的群挂到他的站上，与
@@ -641,15 +660,12 @@ def render_wechat_section(*, now: Optional[dt.datetime] = None,
     译文里的 ``{link}`` / ``{contact}`` 是**结构占位符**：链接与收件地址不进译文
     （译者不该、也不该被要求去维护一个邮件地址），翻译整句、再把它们换回来。
     """
-    image = (os.environ.get(WECHAT_IMG_ENV) or "").strip()
-    if not image:
+    document = _website_document() if document is None else document
+    current = groupqr.state(now=now, document=document)
+    image = current["image"]
+    if not current["configured"]:
         return ""
-    today = (now or dt.datetime.now(dt.timezone.utc)).astimezone(
-        dt.timezone(dt.timedelta(hours=8))).date()
-    try:
-        until = dt.date.fromisoformat((os.environ.get(WECHAT_UNTIL_ENV) or "").strip())
-    except ValueError:
-        until = None
+    until = current["until"]
     contact = contact_email()
     board = '<a href="#guestbook">%s</a>' % _say("留言", locale)
     if contact:
@@ -661,11 +677,16 @@ def render_wechat_section(*, now: Optional[dt.datetime] = None,
         body = _say("客服群的二维码到期了（微信的群码只有 7 天，我们每 7 天换一张）。"
                     "想找我们，在下面{link}。", locale)
     fallback = '<p class="note">%s</p>' % body.replace("{link}", board)
+    copy = website_content.fields(document)
+    if copy["expired_notice"] != website_content.DEFAULTS["expired_notice"]:
+        fallback = '<p class="note">%s %s%s</p>' % (
+            html.escape(copy["expired_notice"]), board,
+            (' · <a href="mailto:%s">%s</a>' % (html.escape(contact), html.escape(contact))) if contact else "")
     # 这一节的标题**要包一层 `<div>`**：新版设计稿的 `.section-head` 是两栏网格
     # （`1.1fr .9fr`，第一格放标题、第二格放引导句）。原来 kicker 与 h2 是并列的两个
     # 子元素，于是 h2 被放进第二格、跑到右边去，标题看起来被拆成两半
     # （2026-09-23 在线上截图里看到）。包起来之后与页面里其它各节同一个形状。
-    if until is None or today > until:
+    if current["expired"]:
         return ('<hr class="rule">\n\n'
                 '<section class="block reveal" id="wechat" aria-labelledby="wechat-title">\n'
                 '  <div class="wrap">\n'
@@ -681,9 +702,13 @@ def render_wechat_section(*, now: Optional[dt.datetime] = None,
                 '  </div>\n'
                 '</section>\n') % (
                     _say("找到我们", locale), _say("扫码进群", locale), fallback)
-    days = (until - today).days
+    days = current["days_left"]
     when = (translate_text("{month} 月 {day} 日前", locale, month=until.month, day=until.day)
             if days else translate_text("今天之内", locale))
+    if current["source"] == "database":
+        suffix = {"en": " 00:00 (Hong Kong time)", "ja": " 00:00（香港時間）まで",
+                  "ko": " 00:00 (홍콩 시간) 전", "zh-Hant": " 00:00（香港時間）前"}
+        when = current["expires_on"] + suffix.get(locale, " 00:00（香港时间）前")
     return (
         '<hr class="rule">\n\n'
         '<section class="block reveal" id="wechat" aria-labelledby="wechat-title">\n'
@@ -700,7 +725,7 @@ def render_wechat_section(*, now: Optional[dt.datetime] = None,
         # 原来这里写死 280×300，是给更方的那张旧码留的框；图一换，浏览器预留的
         # 位置就比真图矮一截，图片落下来时那一节会跳一下。CSS 里是 `height:auto`，
         # 所以这两个属性只影响「图到之前占多高」。
-        '          <img class="group-qr" src="%s" width="280" height="430"\n'
+        '          <img class="group-qr" src="%s" width="%s" height="%s"\n'
         '               alt="%s" loading="lazy">\n'
         '        </div>\n'
         '      </div>\n'
@@ -708,10 +733,13 @@ def render_wechat_section(*, now: Optional[dt.datetime] = None,
         '  </div>\n'
         '</section>\n') % (
             _say("找到我们", locale), _say("扫码进群", locale),
-            _say("用微信扫一下进客服群，随时问。", locale),
+            (_say("用微信扫一下进客服群，随时问。", locale)
+             if copy["customer_service"] == website_content.DEFAULTS["customer_service"]
+             else html.escape(copy["customer_service"])),
             _say("这张码 {when}有效", locale, when=when),
             _say("（微信的群码只有 7 天），过期了就用下面的留言板。", locale),
             html.escape(image, quote=True),
+            current["width"], current["height"],
             html.escape("CityU Mail Pilot " + translate_text("客服群二维码", locale)))
 
 
@@ -3928,6 +3956,99 @@ def dismiss_announcement(request: Request, announcement_id: str) -> Response:
     return json_response({"ok": True})
 
 
+WEBSITE_IMAGE_PATH = "/api/admin/website-content/image"
+
+
+def _website_status(database, document=None):
+    raw = database.get_setting(website_content.KEY) if document is None else website_content.encode(document)
+    document = website_content.decode(raw) if document is None else document
+    qr = groupqr.state(document=document)
+    return {"fields": website_content.fields(document),
+            "defaults": website_content.DEFAULTS, "revision": website_content.revision(raw),
+            "qr": {key: qr[key] for key in
+                   ("configured", "image", "expires_on", "expired", "source")}}
+
+
+@route("GET", "/api/admin/website-content")
+def admin_website_content(request: Request) -> Response:
+    _require_admin(request)
+    try:
+        return json_response(_website_status(get_db()))
+    except website_content.ContentError as exc:
+        raise ApiError(422, str(exc)) from exc
+
+
+@route("POST", WEBSITE_IMAGE_PATH)
+def admin_website_image(request: Request) -> Response:
+    admin = _require_admin(request)
+    _admin_rate_limit(admin["id"])
+    try:
+        value = website_content.upload(get_db(), admin["id"], request.body,
+                                       request.header("Content-Type"))
+    except (website_content.ContentError, imageguard.ImageRejected) as exc:
+        raise ApiError(422, str(exc)) from exc
+    return json_response({"id": value["id"], "width": value["width"],
+                          "height": value["height"],
+                          "preview_url": "/website-qr/" + value["id"]})
+
+
+@route("POST", "/api/admin/website-content/preview")
+def admin_website_preview(request: Request) -> Response:
+    admin = _require_admin(request)
+    _admin_rate_limit(admin["id"])
+    try:
+        document = website_content.prepare(get_db(), admin["id"], request.json_object())
+    except website_content.Conflict as exc:
+        raise ApiError(409, str(exc)) from exc
+    except website_content.ContentError as exc:
+        raise ApiError(422, str(exc)) from exc
+    markup = render_landing_page(STATIC_ROOT / "landing.html", document=document).decode("utf-8")
+    if document.get("qr"):
+        qr = document["qr"]
+        # sandbox="" has an opaque origin: SameSite cookies may not accompany
+        # draft image requests. Embed this already-validated image ONLY in the
+        # authenticated preview response; the public page never gets draft data.
+        markup = markup.replace('src="/website-qr/%s"' % qr["id"],
+                                'src="data:%s;base64,%s"' % (qr["media_type"], qr["data"]))
+    markup = markup.replace('loading="lazy"', 'loading="eager"')
+    return json_response({"html": markup})
+
+
+@route("PUT", "/api/admin/website-content")
+def admin_save_website(request: Request) -> Response:
+    admin = _require_admin(request)
+    _admin_rate_limit(admin["id"])
+    try:
+        document = website_content.save(get_db(), admin["id"], request.json_object(), actor_email=admin["email"])
+    except website_content.Conflict as exc:
+        raise ApiError(409, str(exc)) from exc
+    except website_content.ContentError as exc:
+        raise ApiError(422, str(exc)) from exc
+    return json_response(dict(_website_status(get_db(), document), ok=True))
+
+
+@route("GET", r"/website-qr/(?P<image_id>[0-9a-f]{32})")
+def serve_website_image(request: Request, image_id: str) -> Response:
+    database = get_db()
+    try:
+        document = website_content.load(database)
+    except website_content.ContentError as exc:
+        # Invalid persisted state cannot authorize any public or draft image.
+        raise ApiError(404, "二维码不存在或已失效。") from exc
+    qr = document.get("qr")
+    if not qr or qr["id"] != image_id or groupqr.state(document=document)["expired"]:
+        # Only the uploading administrator can see their current private draft.
+        admin = _require_admin(request)
+        qr = website_content.draft(database, admin["id"])
+        if not qr or qr["id"] != image_id:
+            raise ApiError(404, "二维码不存在或已失效。")
+    import base64
+    return Response(status=200, body=base64.b64decode(qr["data"], validate=True),
+                    content_type=qr["media_type"],
+                    headers={"Cache-Control": "private, no-store",
+                             "Content-Disposition": "inline"})
+
+
 ANNOUNCEMENT_IMAGE_PATH = "/api/admin/announcement-image"
 #: 一张配图最大多少字节。和背景图同一个量级、同一套理由：手机拍的原图在浏览器里
 #: 先被重编码到 2048px / 1.4MB 以内（见 app.js 的 `reencodeImage`），这里只是**上限**，
@@ -5244,6 +5365,10 @@ def dispatch(request: Request) -> Response:
         return file_response(target, APK_MEDIA_TYPE, download_name=APK_FILENAME,
                              request=request)
     if request.path in STATIC_FILES and request.method in {"GET", "HEAD"}:
+        if request.path == "/wechat-group.png":
+            current_qr = groupqr.state(db=get_db())
+            if current_qr["source"] == "database" or current_qr["expired"]:
+                return fail(request, 404, "二维码不存在或已失效。")
         name, content_type = STATIC_FILES[request.path]
         target = (STATIC_ROOT / name).resolve()
         if STATIC_ROOT not in target.parents or not target.is_file():
@@ -5401,7 +5526,7 @@ class PilotHandler(BaseHTTPRequestHandler):
         # accepts more than JSON declares itself here as well as below. Keeping
         # the path in a constant is what stops the two from drifting apart.
         limit = (MAX_BACKGROUND_BYTES
-                 if parsed.path in (BACKGROUND_PATH, ANNOUNCEMENT_IMAGE_PATH)
+                 if parsed.path in (BACKGROUND_PATH, ANNOUNCEMENT_IMAGE_PATH, WEBSITE_IMAGE_PATH)
                  else MAX_BODY_BYTES)
         try:
             body = self._read_body(limit)
