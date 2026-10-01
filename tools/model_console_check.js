@@ -33,8 +33,11 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base || '')) throw Error('lo
     await page.fill('#auth-password', 'a-long-enough-password');
     await page.click('#login');
     await page.waitForSelector('#dashboard:not(.hidden)');
+    // refreshPanels loads the admin overview serially. Wait for the actual
+    // authenticated snapshot, not an OS-dependent scheduling guess.
+    const initialSnapshot = page.waitForResponse(r => r.url().endsWith('/api/admin/model-server') && r.request().method() === 'GET' && r.status() === 200);
     await page.goto(base + '/app#/admin');
-    await page.waitForTimeout(200);
+    await initialSnapshot;
     check(gets === 1 && posts === 0, 'admin overview takes one safe snapshot, no generation or polling');
     await page.locator('#panel-model-server > summary').click();
     await page.waitForFunction(() => document.getElementById('model-server-readings').textContent.includes('fixture-model'));

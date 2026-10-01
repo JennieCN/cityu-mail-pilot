@@ -70,6 +70,7 @@ declare -a NAMES=(
   demo_check
   agent_action_check
   setup_guide_check
+  model_console_check
 )
 
 usage() {
@@ -243,6 +244,19 @@ run_one() {
   local suite_log="/tmp/check-${name}-suite.log"
   local seed_flags="" source_url="" platform_search_key="" platform_search_base=""
   local started="$SECONDS" status=0 server=""
+
+  # This fixture owns its own random-port server/temporary DB and mocks every
+  # model adapter in-process. Never start the ordinary unmocked web fixture.
+  if [ "$name" = "model_console_check" ]; then
+    "$PY" tools/model_console_check.py > "$suite_log" 2>&1
+    status=$?
+    if [ -t 1 ] && [ "$JOBS" -eq 1 ]; then cat "$suite_log"; fi
+    printf '  %s  %4ss  %s\n' \
+      "$([ "$status" -eq 0 ] && echo '✔' || echo '✘')" \
+      "$((SECONDS - started))" "$name"
+    echo "$status" > "${RESULTS}/${name}.rc"
+    return 0
+  fi
 
   rm -f "$db" "$db"-*
   rm -rf "$shots"
