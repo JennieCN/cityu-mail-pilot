@@ -10,12 +10,25 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pilot_app import modelconsole as console, providers, tierhealth, web
+from pilot_app import modelconsole as console, modelresources, providers, tierhealth, web
 from pilot_app.database import Database
 from pilot_app.security import token_hash
 from pilot_app.tests import admin_fixture
 
 LOCAL = {"provider": "local_openai", "model": "synthetic-model", "base_url": "https://model.example.test/v1", "platform": True}
+#: A normalised resource object, shaped exactly like `modelresources.reading()`
+#: returns. The fixture must patch that function: otherwise every snapshot in
+#: this module would try to reach `https://model.example.test/monitor/resources`.
+RESOURCE_FIXTURE = {
+    "schema": 1, "state": "ok", "stale": False,
+    "collected_at": "2026-10-01T00:00:00+00:00",
+    "cpu": {"state": "ok", "utilization_percent": 12.5},
+    "memory": {"state": "ok", "total_bytes": 16 * 1024 ** 3, "available_bytes": 8 * 1024 ** 3},
+    "disk": {"state": "ok", "total_bytes": 100 * 1024 ** 3, "used_bytes": 40 * 1024 ** 3, "free_bytes": 60 * 1024 ** 3},
+    "gpu": {"state": "ok", "devices": [{"index": 0, "utilization_percent": 0, "memory_used_mib": 0,
+                                        "memory_total_mib": 24564, "temperature_c": 45}]},
+    "slots": {"state": "ok", "total": 2, "busy": 1, "idle": 1},
+}
 
 
 class ConsoleTests(unittest.TestCase):
@@ -30,6 +43,8 @@ class ConsoleTests(unittest.TestCase):
         self.chain = mock.patch.object(providers, "_platform_connections_raw", side_effect=lambda: [self.primary.return_value] if self.primary.return_value else []).start()
         self.health = mock.patch.object(providers, "local_model_health", return_value={"proxy": "ok", "upstream": "private", "chat_log": "private"}).start()
         self.key = mock.patch.object(providers, "platform_connection_key", return_value="fixture-not-a-real-key").start()
+        self.resources = mock.patch.object(console.modelresources, "reading",
+                                           side_effect=lambda connection: dict(RESOURCE_FIXTURE)).start()
         self.generate = mock.patch.object(providers, "generate", return_value=providers.Generation("Synthetic answer", [], finish="stop", guard={"ok": True, "retried": False})).start()
         self.addCleanup(mock.patch.stopall)
 
@@ -60,7 +75,11 @@ class ConsoleTests(unittest.TestCase):
         self.assertTrue(result["production"]["stale"])
         self.assertEqual(result["diagnostic"]["state"], "not_run")
         self.assertFalse(result["restart_available"])
-        self.assertIsNone(result["host_resources"])
+        self.assertEqual(result["host_resources"], RESOURCE_FIXTURE)
+        # Resources are read through the same validated primary, never looked up
+        # independently and never handed a client-supplied host/URL/path.
+        self.resources.assert_called_once()
+        self.assertEqual(self.resources.call_args.args[0]["provider"], "local_openai")
         text = json.dumps(result)
         for hidden in ("private", "base_url", "fixture-not-a-real-key", "chat_log"):
             self.assertNotIn(hidden, text)
@@ -87,6 +106,7 @@ class ConsoleTests(unittest.TestCase):
         for value in (None, {"provider": "deepseek", "model": "paid"}):
             self.primary.return_value = value
             self.assertEqual(console.snapshot(self.db)["listener"]["state"], "not_configured")
+            self.resources.assert_called_with(None)
             with self.assertRaises(console.ConsoleError) as caught:
                 self.start()
             self.assertEqual(caught.exception.status, 409)
@@ -294,6 +314,13 @@ class ConsoleTests(unittest.TestCase):
         self.assertNotIn(".slice(", area)
         self.assertIn("notify = false", area)
         self.assertIn("password').value = ''", area)
+        # Second stage: read-only resource cards inside the same panel. The
+        # typeof guard (not `||`) is what keeps a real 0% / 0 busy slot visible,
+        # and the stale label is what stops an expired reading looking current.
+        self.assertIn("renderModelResources(data.host_resources, add)", area)
+        self.assertIn("模型机资源读数（模型机指标，不是腾讯云主机、也不是 Mac 指标）", area)
+        self.assertIn("typeof value === 'number'", area)
+        self.assertIn("资源读数已过期", area)
 
 
 if __name__ == "__main__":

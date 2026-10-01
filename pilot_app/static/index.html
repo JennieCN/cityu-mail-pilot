@@ -2082,7 +2082,7 @@
       <details class="panel" id="panel-model-server">
         <summary><span class="panel-title">模型服务器</span><span class="panel-note" id="panel-model-server-note">展开查看</span></summary>
         <div class="panel-body">
-          <p class="help">这里观察本机模型盒子，不是腾讯云网站主机。展开时每 15 秒刷新；轻量探测只验证 TLS / 指纹和代理连通，<b>不代表上游模型能生成</b>，不调用模型。GPU、内存、磁盘和服务重启尚未接入。</p>
+          <p class="help">这里观察本机模型盒子 —— 不是腾讯云网站主机，也不是 Mac 的指标。展开时每 15 秒刷新；轻量探测只验证 TLS / 指纹和代理连通，<b>不代表上游模型能生成</b>，不调用模型。资源读数（CPU / 内存 / 系统盘 / GPU 显存与温度 / 推理槽）是模型机上的只读数字，采集时间过期或读不到时明确标未知，不会用 0 冒充成功；服务重启仍未接入。</p>
           <div class="actions"><span class="help" id="model-server-stamp">—</span><button id="model-server-refresh" class="ghost">刷新状态</button></div>
           <div class="metrics" id="model-server-readings" style="margin:12px 0"></div>
           <p class="help">手动诊断会占用一个推理槽，使用固定虚构内容、仅调用本机主档，<b>失败不走付费兜底</b>。不读取邮件、不显示生成正文、不改变实际报告的健康标记。全站同时限一次，结束后冷却 60 秒；会记录审计。历史未记录的失败时间仍为未知。</p>

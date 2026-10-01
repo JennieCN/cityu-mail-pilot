@@ -46,6 +46,14 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base || '')) throw Error('lo
     check(!(await page.textContent('#model-server-readings')).includes('从未'), 'missing history never presented as never happened');
     check((await page.textContent('#model-server-stamp')).includes('GMT'), 'timestamps carry timezone');
     check(!(await page.textContent('#model-server-readings')).includes('private'), 'private health paths absent');
+    // Second stage: read-only model-box resources in the same panel.
+    const readings = () => page.textContent('#model-server-readings');
+    check((await readings()).includes('模型机资源读数'), 'resource reading rendered in the same panel');
+    check((await readings()).includes('模型机 GPU 0'), 'GPU index preserved in the label');
+    check((await readings()).includes('0 / 24564 MiB'), 'GPU memory shows a real zero used');
+    check((await readings()).includes('0%'), 'real 0% GPU utilization retained, not turned into unknown');
+    check((await readings()).includes('2 / 1 / 1'), 'slot total / busy / idle shown');
+    check((await readings()).includes('采集'), 'collection time labelled');
     const refreshed = page.waitForResponse(r => r.url().endsWith('/api/admin/model-server') && r.request().method() === 'GET');
     await page.click('#model-server-refresh');
     await refreshed;
@@ -71,13 +79,70 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(base || '')) throw Error('lo
     const snapshot = await (await context.request.get(base + '/api/admin/model-server')).json();
     check(snapshot.diagnostic.state === 'passed' && snapshot.production.state === 'unknown', 'diagnostic success does not stamp production success');
     check(!JSON.stringify(snapshot).includes('Synthetic response') && !JSON.stringify(snapshot).includes('fixture-key'), 'output and key never returned');
-    check(snapshot.host_resources === null && snapshot.restart_available === false, 'unsupported resources and restart not faked');
+    check(snapshot.host_resources && snapshot.host_resources.schema === 1 && snapshot.restart_available === false, 'resource reading present; unsupported restart not faked');
+    check(snapshot.host_resources.state === 'ok' && snapshot.host_resources.slots.total === 2, 'current resource snapshot with two slots');
+    check(!JSON.stringify(snapshot.host_resources).includes('private'), 'no raw resource content in the payload');
     // Response-shaped malicious model label verifies actual DOM escaping.
     await page.route('**/api/admin/model-server', route => route.fulfill({ json: { ...snapshot, model: '<img src=x onerror="window.CONSOLE_XSS=1">' } }));
     await page.click('#model-server-refresh');
     await page.waitForFunction(() => document.getElementById('model-server-readings').textContent.includes('<img'));
     check((await page.locator('#model-server-readings img').count()) === 0 && await page.evaluate(() => window.CONSOLE_XSS === undefined), 'hostile label rendered as text');
     await page.unroute('**/api/admin/model-server');
+    await page.click('#model-server-refresh');
+    await page.waitForFunction(() => document.getElementById('model-server-readings').textContent.includes('fixture-model'));
+    await page.evaluate(() => {
+      window.resourceOriginalNow = Date.now;
+      Date.now = () => window.resourceOriginalNow() + 65000;
+    });
+    await page.waitForFunction(() => document.getElementById('model-server-readings').textContent.includes('已过期'));
+    check((await readings()).includes('不代表现状'), 'local age timer expires a previously current reading');
+    await page.evaluate(() => { Date.now = window.resourceOriginalNow; delete window.resourceOriginalNow; });
+    await page.route('**/api/admin/model-server', route => route.abort());
+    await page.click('#model-server-refresh');
+    await page.waitForFunction(() => document.getElementById('panel-model-server-note').textContent.includes('读取失败'));
+    check((await readings()).includes('已过期'), 'failed refresh replaces current card label with stale');
+    await page.unroute('**/api/admin/model-server');
+    await page.click('#model-server-refresh');
+    await page.waitForFunction(() => !document.getElementById('panel-model-server-note').textContent.includes('读取失败')
+      && document.getElementById('model-server-readings').textContent.includes('当前 · 采集'));
+    // Resource states through the same API shape the server sends: stale and
+    // unknown must never look current, a real 0 must survive, and hostile text
+    // must stay text.
+    const resourceBase = snapshot.host_resources;
+    const resourceCases = [
+      { label: 'stale', wait: '已过期',
+        resources: { ...resourceBase, state: 'stale', stale: true, collected_at: '2020-01-01T00:00:00+00:00' } },
+      { label: 'unknown', wait: '未读到 GPU',
+        resources: { ...resourceBase, state: 'unknown', stale: true, collected_at: null,
+          cpu: { state: 'unknown', utilization_percent: null },
+          memory: { state: 'unknown', total_bytes: null, available_bytes: null },
+          disk: { state: 'unknown', total_bytes: null, used_bytes: null, free_bytes: null },
+          gpu: { state: 'unknown', devices: [] },
+          slots: { state: 'unknown', total: null, busy: null, idle: null } } },
+      { label: 'zero', wait: '2 / 0 / 2',
+        resources: { ...resourceBase, cpu: { state: 'ok', utilization_percent: 0 },
+          slots: { state: 'ok', total: 2, busy: 0, idle: 2 } } },
+      { label: 'hostile', wait: 'RESOURCE-XSS-MARKER',
+        // Deliberately not date-parseable (V8 turns some `<img …>` strings into
+        // a valid Date), so the renderer must fall back to showing it as text.
+        resources: { ...resourceBase, collected_at: '<b>RESOURCE-XSS-MARKER</b><script>window.RESOURCE_XSS=1</script>' } },
+    ];
+    for (const item of resourceCases) {
+      await page.route('**/api/admin/model-server', route => route.fulfill({ json: { ...snapshot, host_resources: item.resources } }));
+      await page.click('#model-server-refresh');
+      await page.waitForFunction(text => document.getElementById('model-server-readings').textContent.includes(text), item.wait);
+      check((await page.locator('#model-server-readings img, #model-server-readings script').count()) === 0 && await page.evaluate(() => window.RESOURCE_XSS === undefined), `${item.label} resource state rendered as text only`);
+      if (item.label === 'stale') {
+        check((await readings()).includes('不代表现状'), 'stale reading clearly marked as not current');
+      }
+      if (item.label === 'unknown') {
+        check(!(await readings()).includes('0%'), 'unknown readings never rendered as a 0 reading');
+      }
+      if (item.label === 'zero') {
+        check((await readings()).includes('0%'), 'real 0% CPU retained, not shown as unknown');
+      }
+      await page.unroute('**/api/admin/model-server');
+    }
     await page.click('#model-server-refresh');
     await page.waitForFunction(() => document.getElementById('model-server-readings').textContent.includes('fixture-model'));
     await page.waitForTimeout(4000); // Let transient refresh toasts leave the screenshots.

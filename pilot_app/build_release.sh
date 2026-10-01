@@ -74,6 +74,7 @@ REPO_ONLY_TESTS=(
   test_pr_triage.py
   test_publish_export.py
   test_python_targets.py
+  test_model_resources.py
   test_shell_scripts.py
 )
 REPO_ONLY_EXCLUDES=()

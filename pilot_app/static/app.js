@@ -5512,6 +5512,8 @@ function renderAdminSignups(signups, counts) {
 
 /* Model box: quiet visible-panel polling; GET never generates. */
 let modelServerTimer = null;
+let modelServerAgeTimer = null;
+let modelServerSnapshot = null;
 let modelServerLoading = false;
 let modelServerSubmitting = false;
 const MODEL_SERVER_ERROR = {
@@ -5523,6 +5525,52 @@ const MODEL_SERVER_STATE = {
   not_run: '尚未运行', running: '运行中', passed: '通过', failed: '失败', interrupted: '中断或结果未保存',
 };
 const modelServerStamp = value => value ? adminStamp(value) : '未知（未保留记录）';
+/* Model-box resource readings arrive already validated (schema=1 whitelist);
+ * this layer only formats. The typeof guards are deliberate: `||` would turn a
+ * true 0% CPU or 0 busy slots into "未知", which is the opposite of truthful. */
+const RESOURCE_STATE_TEXT = { ok: '当前', stale: '已过期', unknown: '未知', not_configured: '未配置本机主档' };
+const resourceStamp = value => value ? adminStamp(value) : '未知';
+const resourceNumber = value => (typeof value === 'number' && Number.isFinite(value)) ? String(value) : '未知';
+const resourceBytes = value => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '未知';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+  let size = value, unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
+  return `${Math.round(size * 10) / 10} ${units[unit]}`;
+};
+
+function renderModelResources(resources, add) {
+  const value = resources && typeof resources === 'object' ? resources : {};
+  const cpu = value.cpu || {}, memory = value.memory || {}, disk = value.disk || {};
+  const gpu = value.gpu || {}, slots = value.slots || {};
+  const collectedMs = typeof value.collected_at === 'string' ? Date.parse(value.collected_at) : NaN;
+  const ageMs = Date.now() - collectedMs;
+  const expired = !Number.isFinite(ageMs) || ageMs > 60000 || ageMs < -5000;
+  const state = value.state === 'ok' && expired ? 'stale' : (value.state || 'unknown');
+  const stale = state === 'stale' || (state === 'ok' && value.stale === true);
+  const trouble = stale || state !== 'ok';
+  add('模型机资源读数（模型机指标，不是腾讯云主机、也不是 Mac 指标）',
+    `${RESOURCE_STATE_TEXT[state] || '未知'} · 采集 ${resourceStamp(value.collected_at)}${trouble ? ' · 不代表现状' : ''}`);
+  add('模型机 CPU 利用率（两次采样差分，不是负载均值）',
+    cpu.state === 'ok' ? `${resourceNumber(cpu.utilization_percent)}%` : '未知');
+  add('模型机内存 总 / 可用',
+    memory.state === 'ok' ? `${resourceBytes(memory.total_bytes)} / ${resourceBytes(memory.available_bytes)}` : '未知');
+  add('模型机系统盘 总 / 已用 / 可用',
+    disk.state === 'ok' ? `${resourceBytes(disk.total_bytes)} / ${resourceBytes(disk.used_bytes)} / ${resourceBytes(disk.free_bytes)}` : '未知');
+  const devices = gpu.state === 'ok' && Array.isArray(gpu.devices) ? gpu.devices : [];
+  if (devices.length) {
+    devices.forEach(raw => {
+      const device = raw && typeof raw === 'object' ? raw : {};
+      add(`模型机 GPU ${resourceNumber(device.index)} 显存 已用/总 · 利用率 · 温度`,
+        `${resourceNumber(device.memory_used_mib)} / ${resourceNumber(device.memory_total_mib)} MiB · ${resourceNumber(device.utilization_percent)}% · ${resourceNumber(device.temperature_c)}°C`);
+    });
+  } else {
+    add('模型机 GPU 显存 / 利用率 / 温度', '未知（未读到 GPU）');
+  }
+  add('模型机推理槽 总 / 忙 / 空（实时读数，不是配置槽数）',
+    slots.state === 'ok' ? `${resourceNumber(slots.total)} / ${resourceNumber(slots.busy)} / ${resourceNumber(slots.idle)}` : '未知');
+  return { state, stale, trouble };
+}
 
 function renderModelServer(data) {
   const box = $('model-server-readings');
@@ -5551,8 +5599,12 @@ function renderModelServer(data) {
     add('生成 / 完整结束 / 护栏 / 护栏重试', [diag.generation_ok, diag.complete, diag.guard_ok, diag.guard_retried].map(x => x === true ? '是' : x === false ? '否' : '未知').join(' / '));
     add('诊断耗时 / 故障分类', `${diag.elapsed_s ?? '—'} 秒 / ${diag.error ? MODEL_SERVER_ERROR[diag.error] || '未知' : '无记录'} `);
   }
-  $('model-server-stamp').textContent = `读取 ${adminStamp(data.collected_at)} · 连通探测缓存最多 30 秒`;
-  panelNote('panel-model-server-note', probeText[probe.state] || '未知', probe.state === 'failed' ? 'bad' : '');
+  const resources = renderModelResources(data.host_resources, add);
+  $('model-server-stamp').textContent = `读取 ${adminStamp(data.collected_at)} · 连通探测缓存最多 30 秒 · 资源读数缓存最多 15 秒`;
+  const resourceNote = resources.trouble
+    ? (resources.stale ? '资源读数已过期 · 不代表现状' : '资源读数未知 · 不代表现状')
+    : (probeText[probe.state] || '未知');
+  panelNote('panel-model-server-note', resourceNote, resources.trouble || probe.state === 'failed' ? 'bad' : '');
   $('model-server-diagnose').disabled = modelServerSubmitting || !data.configured || diag.state === 'running' || diag.cooldown_seconds > 0;
   if (!modelServerSubmitting) {
     const note = diag.state === 'running' ? '诊断运行中，可切走，返回展开此面板查看结果。'
@@ -5567,9 +5619,16 @@ async function loadModelServer({ notify = false } = {}) {
   if (modelServerLoading) return;
   modelServerLoading = true;
   try {
-    renderModelServer(await api('/api/admin/model-server'));
+    modelServerSnapshot = await api('/api/admin/model-server');
+    renderModelServer(modelServerSnapshot);
     if (notify) toast('模型服务器状态已刷新', 'ok');
   } catch (error) {
+    if (modelServerSnapshot) {
+      renderModelServer({ ...modelServerSnapshot, host_resources: {
+        ...modelServerSnapshot.host_resources, state: 'stale', stale: true,
+      } });
+    }
+    modelServerSnapshot = null;
     $('model-server-diagnose').disabled = true;
     panelNote('panel-model-server-note', '读取失败 · 旧读数不代表现状', 'bad');
     setStatus('model-server-status', `状态读取失败：${error.message}`, 'error');
@@ -5579,14 +5638,22 @@ async function loadModelServer({ notify = false } = {}) {
 
 function stopModelServer() {
   if (modelServerTimer) clearInterval(modelServerTimer);
+  if (modelServerAgeTimer) clearInterval(modelServerAgeTimer);
   modelServerTimer = null;
+  modelServerAgeTimer = null;
 }
 
 function startModelServer() {
   stopModelServer();
   if (document.hidden || activeSection !== 'admin' || !panelIsOpen('panel-model-server')) return;
+  if (modelServerSnapshot) renderModelServer(modelServerSnapshot);
   const first = loadModelServer();
   modelServerTimer = setInterval(() => loadModelServer(), 15000);
+  modelServerAgeTimer = setInterval(() => {
+    if (modelServerSnapshot && !document.hidden && activeSection === 'admin' && panelIsOpen('panel-model-server')) {
+      renderModelServer(modelServerSnapshot);
+    }
+  }, 1000);
   return first;
 }
 

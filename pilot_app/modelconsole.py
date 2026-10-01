@@ -1,8 +1,10 @@
 """Admin-only observations and bounded synthetic diagnostics, never OS control.
 
 No raw upstream body, URL, credential, mail or model output leaves this module.
-GET probes only the guard listener. POST uses a fixed synthetic report through
-the primary adapter, never Service retries/fallback, and never stamps real use.
+GET probes only the guard listener and fetches the model box's numeric resource
+reading (via ``modelresources``, the whitelist-only consumer below); POST uses a
+fixed synthetic report through the primary adapter, never Service
+retries/fallback, and never stamps real use.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import threading
 import time
 from typing import Any
 
-from . import prompts, providers, tierhealth
+from . import modelresources, prompts, providers, tierhealth
 from .database import new_id
 
 KEY = "model_console_diagnostic"
@@ -151,7 +153,11 @@ def snapshot(database: Any) -> dict:
             "configured_slots": providers.local_model_slots() if connection else None,
             "listener": listener(connection), "production": production,
             "usage_24h": usage, "diagnostic": diagnostic_reading(database),
-            "host_resources": None, "restart_available": False}
+            # Read-only model-box numbers, already narrowed to the whitelist
+            # protocol. The connection is the same validated primary used above,
+            # so the shared-key fence is not bypassed. This is observation only:
+            # it never stamps generation health and never touches the database.
+            "host_resources": modelresources.reading(connection), "restart_available": False}
 
 
 def _save(db: Any, value: dict, actor: str) -> None:
