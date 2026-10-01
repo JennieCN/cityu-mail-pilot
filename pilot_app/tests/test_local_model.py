@@ -264,6 +264,7 @@ class GuardTaskTests(unittest.TestCase):
                 provider="local_openai", model="ternary-bonsai-2-27b", api_key="k",
                 prompt="写一份周报", guard_task="summarize")
         self.assertEqual(captured["payload"]["x_guard"], {"task": "summarize"})
+        self.assertEqual(captured["payload"]["grammar"], providers.LOCAL_MODEL_TEXT_GRAMMAR)
         self.assertEqual(captured["tls"], providers.local_model_tls("local_openai"))
         self.assertNotIn("stream", captured["payload"])
         self.assertEqual(result.guard["task"], "summarize")
@@ -281,8 +282,42 @@ class GuardTaskTests(unittest.TestCase):
                 provider="deepseek", model="deepseek-flash", api_key="k",
                 prompt="写一份周报", guard_task="summarize")
         self.assertNotIn("x_guard", captured["payload"])
+        self.assertNotIn("grammar", captured["payload"])
         self.assertIsNone(captured["tls"])
         self.assertIsNone(result.guard)
+
+    def test_local_plain_text_constraint_preserves_request_and_response(self):
+        """All local tasks use Unicode text, without forcing JSON or streaming."""
+        prompt = '## 合成 / Synthetic\n中文 日本語 한국어 😀\t{"actions":[]}'
+        for task in ("", "classify", "extract", "summarize", "reply"):
+            with self.subTest(task=task):
+                response = {"choices": [{"message": {"content": prompt}, "finish_reason": "stop"}],
+                            "usage": {"prompt_tokens": 3, "completion_tokens": 5}}
+                with mock.patch.object(providers, "_json_request", return_value=response) as request:
+                    result = providers.generate(provider="local_openai", model="ternary-bonsai-2-27b",
+                        api_key="fixture-only", prompt=prompt, guard_task=task, max_output_tokens=2345)
+                payload = request.call_args.kwargs["payload"]
+                self.assertEqual(payload["messages"], [{"role": "user", "content": prompt}])
+                self.assertEqual(payload["grammar"], r"root ::= [\t\n\r\x20-\uD7FF\uE000-\U0010FFFF]*")
+                self.assertEqual(payload["max_tokens"], 2345)
+                self.assertEqual(payload["temperature"], 0.2)
+                self.assertNotIn("stream", payload)
+                self.assertNotIn("response_format", payload)
+                self.assertEqual(result.text, prompt)
+                self.assertEqual(result.finish, "stop")
+                if task:
+                    self.assertEqual(payload["x_guard"], {"task": task})
+                else:
+                    self.assertNotIn("x_guard", payload)
+
+    def test_grammar_does_not_leak_to_other_chat_providers(self):
+        for provider in ("deepseek", "azure_openai"):
+            with self.subTest(provider=provider):
+                response = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+                with mock.patch.object(providers, "_json_request", return_value=response) as request:
+                    providers.generate(provider=provider, model="fixture-model", api_key="fixture-only",
+                        base_url="https://8.8.8.8/v1", prompt="Synthetic")
+                self.assertNotIn("grammar", request.call_args.kwargs["payload"])
 
 
 class PlatformChainTests(unittest.TestCase):

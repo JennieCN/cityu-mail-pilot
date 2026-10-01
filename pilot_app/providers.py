@@ -48,6 +48,13 @@ SEARCH_TIMEOUT_SECONDS = int(os.environ.get("INFE_PILOT_SEARCH_TIMEOUT", "45"))
 #: 但足够容纳「长正文 + 重生成」这一档。两档加起来最坏 240 + 300 = 540 s。
 LOCAL_MODEL_TIMEOUT_SECONDS = int(os.environ.get("INFE_PILOT_LOCAL_MODEL_TIMEOUT", "240"))
 
+# llama.cpp's PEG chat parser rejects a stray UTF-8 continuation byte. Constrain
+# sampling before parsing, rather than discarding bytes or bypassing the guard.
+# This is plain Unicode text, not a JSON/report schema: Markdown, all languages
+# and normal whitespace remain available. Surrogates are not Unicode scalars.
+# Only our known llama.cpp-backed local endpoint accepts this extension.
+LOCAL_MODEL_TEXT_GRAMMAR = r"root ::= [\t\n\r\x20-\uD7FF\uE000-\U0010FFFF]*"
+
 
 def request_timeout(provider: str) -> int:
     """这一档的请求超时（秒）。
@@ -1338,6 +1345,8 @@ def generate(
             "max_tokens": max_output_tokens,
             **guard,
         }
+        if provider == "local_openai":
+            payload["grammar"] = LOCAL_MODEL_TEXT_GRAMMAR
         thinking = str(config.get("thinking") or "").strip().lower()
         if thinking not in {"enabled", "disabled"}:
             # DeepSeek enables hidden reasoning by default at "high" effort, and
