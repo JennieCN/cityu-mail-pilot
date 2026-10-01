@@ -9,7 +9,7 @@ whitelist; the admin API returns exactly this object and nothing else.
 Boundaries that matter:
 
 * **The connection must be the one ``modelconsole._primary()`` returned.**  The
-  caller passes it in; this module never reads provider configuration, never
+  caller passes it in; this module rechecks the validated primary catalog, never
   accepts a client-supplied host/URL/path, and never bypasses the shared
   cross-provider key fence that removes a local tier sharing a paid key.
 * **Pinned TLS, fixed path.**  Requests go through ``providers._outbound_open``
@@ -40,6 +40,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import math
 import socket
@@ -229,8 +230,10 @@ def _normalize(payload: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Outbound request
 # ---------------------------------------------------------------------------
-def _monitor_url(base_url: str) -> str:
+def _monitor_url(base_url: str, *, allow_loopback: bool = False) -> str:
     root = str(base_url or "").strip().rstrip("/")
+    if any(ord(char) <= 32 or ord(char) == 127 for char in root):
+        return ""  # urlsplit silently drops embedded TAB/CR/LF
     if root.endswith("/v1"):
         root = root[: -len("/v1")]
     if not root:
@@ -243,12 +246,31 @@ def _monitor_url(base_url: str) -> str:
         return ""
     if parsed.scheme != "https" or not parsed.hostname:
         return ""
-    if parsed.username or parsed.password:
+    if parsed.username is not None or parsed.password is not None:
         return ""
     if parsed.query or parsed.fragment:
         return ""
     if not parsed.path.endswith(MONITOR_PATH):
         return ""
+    host = parsed.hostname
+    if not host.isascii():
+        return ""  # IDNA maps Unicode full stops into numeric-host aliases
+    if "%" in host:
+        return ""  # scoped/escaped host is not an approved numeric tunnel
+    if host in ("127.0.0.1", "::1"):
+        return url if allow_loopback else ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        # inet_aton accepts short, integer, hex and octal IPv4 forms without
+        # DNS. Reject them, including IDNA/trailing-dot aliases, rather than
+        # treating them as a public hostname in the resolve_dns=False gate.
+        try:
+            socket.inet_aton(host.rstrip(".").encode("idna").decode("ascii"))
+        except (OSError, UnicodeError):
+            pass
+        else:
+            return ""
     try:
         # Same outbound gate the provider path uses; no DNS here because the
         # base URL is operator configuration, not request input.
@@ -256,6 +278,19 @@ def _monitor_url(base_url: str) -> str:
     except security.SecurityError:
         return ""
     return url
+
+
+def _approved_primary(connection: dict) -> bool:
+    """No client/fallback or removed shared-key tier may use this consumer."""
+    if (connection.get("provider") != providers.LOCAL_MODEL_PROVIDER
+            or connection.get("platform") is not True
+            or providers.platform_tier(connection) == "fallback"):
+        return False
+    try:
+        connections = providers.platform_model_connections()
+        return bool(connections and connection == connections[0])
+    except Exception:  # noqa: BLE001 - configuration failure is closed
+        return False
 
 
 def _read_bounded(response: Any, limit: int, timeout: float) -> Optional[bytes]:
@@ -299,13 +334,15 @@ def _read_bounded(response: Any, limit: int, timeout: float) -> Optional[bytes]:
 
 
 def _fetch(connection: dict) -> Optional[dict]:
+    if not _approved_primary(connection):
+        return None
     try:
         key = str(providers.platform_connection_key(connection) or "").strip()
     except Exception:  # noqa: BLE001 - a missing credential is just "unknown"
         return None
     if not key or "\r" in key or "\n" in key:
         return None
-    url = _monitor_url(str(connection.get("base_url") or ""))
+    url = _monitor_url(str(connection.get("base_url") or ""), allow_loopback=True)
     if not url:
         return None
     request = urllib.request.Request(
@@ -343,10 +380,12 @@ def reading(connection: Optional[dict]) -> dict[str, Any]:
 
     ``connection`` must be the dict ``modelconsole._primary()`` returned (or
     ``None`` when there is no local primary).  Anything else is treated as
-    "not configured"; this module never looks configuration up itself.
+    "unknown"; this module rechecks the validated catalog before cache reuse.
     """
     if not isinstance(connection, dict):
         return _empty("not_configured")
+    if not _approved_primary(connection):
+        return _empty("unknown")
     identity = _identity(connection)
     with _LOCK:
         now = time.monotonic()

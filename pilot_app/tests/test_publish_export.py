@@ -127,7 +127,8 @@ class VerifierTests(unittest.TestCase):
             "me@notqq.com",
             "user@UID.service",                    # a systemd template, not an address
             "20260913091828.5982EBAE32@smtp82.ad.cityu.edu.hk",   # a fixture Message-ID
-            "host 203.0.113.10, 10.0.0.2, 192.168.1.5, 127.0.0.1",
+            "host 203.0.113.10, 10.0.0.2, 192.168.1.5, 127.0.0.1, 127.0.0.2",
+            "fullwidth loopback １２７.０.０.１",
             # Another project's documented path is not this project's leak.
             "ships as /home/node/app",
             # **转义序列不是地址**（2026-09-27）：源码里那一串 `\n@unittest.skip`

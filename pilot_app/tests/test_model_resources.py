@@ -600,6 +600,8 @@ class ResourceReadingTests(unittest.TestCase):
                          "https://model.example.test/tunnel/monitor/resources")
         for bad in ("http://model.example.test/v1",
                     "https://user:pass@model.example.test/v1",
+                    "https://@model.example.test/v1",
+                    "https://127.\t0.0.1/v1",
                     "https://model.example.test/v1?token=private",
                     "https://model.example.test/v1#fragment",
                     "https://127.0.0.1/v1",
@@ -636,6 +638,58 @@ class ResourceReadingTests(unittest.TestCase):
         self.assertEqual(result["state"], "unknown")
         self.assertNotIn("private", json.dumps(result))
 
+    def test_only_current_validated_primary_can_use_exact_loopback(self):
+        for base in ("https://127.0.0.1:9443/v1", "https://[::1]:9443/v1"):
+            connection = {**CONNECTION, "base_url": base}
+            with mock.patch.object(providers, "platform_model_connections", return_value=[connection]):
+                modelresources._CACHE.update(identity=None, at=0.0, value=None)
+                self.open_with(wire())
+                result = modelresources.reading(dict(connection))
+                self.assertEqual(result["state"], "ok")
+                self.assertEqual(self.opener.call_args.args[0].full_url,
+                                 base[:-3] + modelresources.MONITOR_PATH)
+                self.assertEqual(self.opener.call_args.kwargs["tls"], TLS)
+            # Even a populated cache must not survive withdrawal of approval.
+            with mock.patch.object(providers, "platform_model_connections", return_value=[]):
+                self.opener.reset_mock()
+                self.assertEqual(modelresources.reading(connection)["state"], "unknown")
+                self.opener.assert_not_called()
+
+    def test_loopback_aliases_and_other_private_hosts_are_rejected(self):
+        hosts = ("127.1", "2130706433", "0x7f000001", "0177.0.0.1",
+                 "127.0.0.1.", "127.0.0.2", "localhost", "10.0.0.1",
+                 "[::ffff:127.0.0.1]", "[::1%25lo0]",
+                 "127.0.0.1。", "127.0.0.1．", "10.0.0.1。", "１２７.０.０.１")
+        for host in hosts:
+            base = "https://" + host + "/v1"
+            for allow in (False, True):
+                with self.subTest(host=host, allow=allow):
+                    self.assertEqual(modelresources._monitor_url(base, allow_loopback=allow), "")
+            connection = {**CONNECTION, "base_url": base}
+            with mock.patch.object(providers, "platform_model_connections", return_value=[connection]):
+                modelresources._CACHE.update(identity=None, at=0.0, value=None)
+                self.opener.reset_mock()
+                self.assertEqual(modelresources.reading(connection)["state"], "unknown")
+                self.opener.assert_not_called()
+
+    def test_wrong_provider_fallback_and_unapproved_connection_never_fetch(self):
+        primary = {**CONNECTION, "base_url": "https://127.0.0.1:9443/v1"}
+        cases = ({**primary, "provider": "deepseek"},
+                 {**primary, "platform_tier": "fallback"},
+                 {**primary, "platform": False},
+                 {**primary, "model": "not-approved"})
+        self.open_with(wire())
+        with mock.patch.object(providers, "platform_model_connections", return_value=[primary]):
+            for connection in cases:
+                modelresources._CACHE.update(identity=None, at=0.0, value=None)
+                self.opener.reset_mock()
+                self.assertEqual(modelresources.reading(connection)["state"], "unknown")
+                self.opener.assert_not_called()
+        # A removed local tier cannot be reintroduced when paid fallback is first.
+        with mock.patch.object(providers, "platform_model_connections", return_value=[cases[0]]):
+            self.assertEqual(modelresources.reading(primary)["state"], "unknown")
+            self.opener.assert_not_called()
+
     def test_missing_or_empty_credential_never_requests(self):
         for value in ("", "   "):
             modelresources._CACHE.update(identity=None, at=0.0, value=None)
@@ -653,7 +707,9 @@ class ResourceReadingTests(unittest.TestCase):
         providers.platform_connection_key.return_value = "rotated-key"
         modelresources.reading(CONNECTION)
         self.assertEqual(self.opener.call_count, 2)  # new credential, new reading
-        modelresources.reading({**CONNECTION, "base_url": "https://other.example.test/v1"})
+        other = {**CONNECTION, "base_url": "https://other.example.test/v1"}
+        with mock.patch.object(providers, "platform_model_default", return_value=other):
+            modelresources.reading(other)
         self.assertEqual(self.opener.call_count, 3)  # new connection identity
         providers.local_model_tls.return_value = {"ca_file": "/tmp/other.pem", "pin": "CD" * 32}
         modelresources.reading(CONNECTION)

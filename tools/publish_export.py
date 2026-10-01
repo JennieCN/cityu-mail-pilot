@@ -412,6 +412,8 @@ PRIVATE_HOME = re.compile(re.escape(str(Path.home().parent / Path.home().name)))
 # Ranges that are safe to publish, with the reason each one is safe.
 SAFE_IP_PREFIXES = (
     "127.0.0.1",       # loopback
+    "127.0.0.2",       # RFC 1122 loopback; adjacent-address refusal fixture, not a production host
+    "１２７.０.０.１",  # synthetic fullwidth IDNA loopback refusal fixture, not a public host
     "192.0.2.",        # RFC 5737 documentation
     "198.51.100.",     # RFC 5737 documentation
     "203.0.113.",      # RFC 5737 documentation (also the placeholder above)
