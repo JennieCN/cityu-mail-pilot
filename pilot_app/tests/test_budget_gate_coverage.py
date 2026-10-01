@@ -23,6 +23,9 @@ APP_DIR = pathlib.Path(__file__).resolve().parent.parent
 # 允许**不过闸**的调用点。键是「文件:所属函数」，值是理由——理由必须是人话，
 # 因为这份表就是「为什么它可以花用户的钱」的唯一记录。
 EXEMPT = {
+    "modelconsole.py:_run":
+        "管理员固定合成诊断仅允许经凭据闸验证的local_openai主档；"
+        "直接调用一次，无付费供应商/重试/兜底，DB全站单租约与结束后60秒冷却另限频。",
     "agent.py:analyse":
         "AI 助手有自己的日上限（agent.budget_state 读 AGENT_DAILY_CALLS，默认 30 次/天），"
         "调用前就查过；它与报告的余额闸是两套计数，见 agent.py 的注释。",

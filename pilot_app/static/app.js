@@ -1751,7 +1751,8 @@ function openSection(name, { updateHash = true } = {}) {
   // The session list is about the account, not about reports, so it loads with
   // its own section -- opening the reports tab should not silently fetch it.
   if (key === 'security') loadSecurity();
-  if (key === 'admin') { loadAdmin(); startMetrics(); } else { stopMetrics(); }
+  if (key === 'admin') { loadAdmin(); startMetrics(); startModelServer(); }
+  else { stopMetrics(); stopModelServer(); }
 }
 
 // Back/forward, a refresh and a pasted bookmark all arrive here. The guard
@@ -4359,6 +4360,7 @@ function wirePanel(id, onOpen, onRefresh = onOpen) {
   node.addEventListener('toggle', () => {
     if (!node.open) {
       if (id === 'panel-metrics') stopMetrics();
+      if (id === 'panel-model-server') stopModelServer();
       return;
     }
     try {
@@ -5508,6 +5510,106 @@ function renderAdminSignups(signups, counts) {
 // 与它们的测试都留着 —— 历史数据还要能读、能被接口处理，少的只是界面。
 // 见 `docs/open-registration-2026-09-22.md`。
 
+/* Model box: quiet visible-panel polling; GET never generates. */
+let modelServerTimer = null;
+let modelServerLoading = false;
+let modelServerSubmitting = false;
+const MODEL_SERVER_ERROR = {
+  tls: 'TLS / 证书 / 指纹校验失败', auth: '主档鉴权失败', timeout: '主档超时',
+  upstream: '上游生成错误', unavailable: '服务不可用（原因未细分）',
+  incomplete: '未完整生成', guard: '护栏未通过或没有回执', start_failed: '诊断未能启动',
+};
+const MODEL_SERVER_STATE = {
+  not_run: '尚未运行', running: '运行中', passed: '通过', failed: '失败', interrupted: '中断或结果未保存',
+};
+const modelServerStamp = value => value ? adminStamp(value) : '未知（未保留记录）';
+
+function renderModelServer(data) {
+  const box = $('model-server-readings');
+  box.textContent = '';
+  const add = (label, text) => {
+    const card = el('div');
+    card.appendChild(el('span', 'help', label));
+    card.appendChild(el('b', '', text));
+    box.appendChild(card);
+  };
+  const probe = data.listener || {};
+  const production = data.production || {};
+  const usage = data.usage_24h || {};
+  const diag = data.diagnostic || {};
+  const probeText = { reachable: '代理可达 · 非生成证明', failed: '探测失败', unexpected: '响应未识别', not_configured: '未配置本机主档' };
+  add('主档模型 / 配置槽数（不是实时空闲槽）', data.configured ? `${data.model || '—'} / ${data.configured_slots || '—'}` : '未配置');
+  add('TLS / 指纹 / 代理连通', `${probeText[probe.state] || '未知'} · ${modelServerStamp(probe.at)}`);
+  if (probe.error) add('探测故障分类', MODEL_SERVER_ERROR[probe.error] || '未知');
+  add('实际调用最近记录（不是本次探测）', `${production.state === 'ok' ? '主档曾成功' : production.state === 'degraded' ? '曾降级到兜底' : '未知'}${production.stale ? ' · 记录过旧或时间未知' : ''} · ${modelServerStamp(production.at)}`);
+  add('实际主档最近成功', modelServerStamp(production.last_success_at));
+  add('实际主档最近降级（不等于兜底成功）', modelServerStamp(production.last_degraded_at));
+  add('24 小时已记账本机调用（不含诊断）', String(usage.local_calls ?? '—'));
+  add('24 小时其他平台调用（含兜底，不证明全部是降级）', `${usage.other_platform_calls ?? '—'} · ${modelServerStamp(usage.last_other_at)}`);
+  add('独立合成诊断', `${MODEL_SERVER_STATE[diag.state] || '未知'} · ${modelServerStamp(diag.finished_at || diag.started_at)}`);
+  if (diag.state !== 'not_run' && diag.state !== 'running') {
+    add('生成 / 完整结束 / 护栏 / 护栏重试', [diag.generation_ok, diag.complete, diag.guard_ok, diag.guard_retried].map(x => x === true ? '是' : x === false ? '否' : '未知').join(' / '));
+    add('诊断耗时 / 故障分类', `${diag.elapsed_s ?? '—'} 秒 / ${diag.error ? MODEL_SERVER_ERROR[diag.error] || '未知' : '无记录'} `);
+  }
+  $('model-server-stamp').textContent = `读取 ${adminStamp(data.collected_at)} · 连通探测缓存最多 30 秒`;
+  panelNote('panel-model-server-note', probeText[probe.state] || '未知', probe.state === 'failed' ? 'bad' : '');
+  $('model-server-diagnose').disabled = modelServerSubmitting || !data.configured || diag.state === 'running' || diag.cooldown_seconds > 0;
+  if (!modelServerSubmitting) {
+    const note = diag.state === 'running' ? '诊断运行中，可切走，返回展开此面板查看结果。'
+      : diag.cooldown_seconds > 0 ? `诊断冷却中，还需约 ${diag.cooldown_seconds} 秒。`
+      : diag.state === 'not_run' ? '等待管理员手动运行；自动刷新不会调用模型。'
+      : `最近诊断：${MODEL_SERVER_STATE[diag.state] || '未知'}。${diag.error ? MODEL_SERVER_ERROR[diag.error] || '未知' : ''}`;
+    setStatus('model-server-status', note, diag.state === 'failed' || diag.state === 'interrupted' ? 'error' : '');
+  }
+}
+
+async function loadModelServer({ notify = false } = {}) {
+  if (modelServerLoading) return;
+  modelServerLoading = true;
+  try {
+    renderModelServer(await api('/api/admin/model-server'));
+    if (notify) toast('模型服务器状态已刷新', 'ok');
+  } catch (error) {
+    $('model-server-diagnose').disabled = true;
+    panelNote('panel-model-server-note', '读取失败 · 旧读数不代表现状', 'bad');
+    setStatus('model-server-status', `状态读取失败：${error.message}`, 'error');
+    if (notify) toast('模型服务器状态读取失败', 'error');
+  } finally { modelServerLoading = false; }
+}
+
+function stopModelServer() {
+  if (modelServerTimer) clearInterval(modelServerTimer);
+  modelServerTimer = null;
+}
+
+function startModelServer() {
+  stopModelServer();
+  if (document.hidden || activeSection !== 'admin' || !panelIsOpen('panel-model-server')) return;
+  const first = loadModelServer();
+  modelServerTimer = setInterval(() => loadModelServer(), 15000);
+  return first;
+}
+
+async function diagnoseModelServer() {
+  const password = $('model-server-password').value;
+  if (!password) { setStatus('model-server-status', '请重新输入你的登录密码。', 'error'); return; }
+  if (!confirm('运行固定合成诊断？会占用一个本机推理槽；不读取邮件，失败不会调用付费兜底。')) return;
+  modelServerSubmitting = true;
+  $('model-server-diagnose').disabled = true;
+  $('model-server-password').value = '';
+  let failure = '';
+  try {
+    await api('/api/admin/model-server/diagnose', { method: 'POST', body: JSON.stringify({ password }) });
+    setStatus('model-server-status', '诊断已启动；结果将自动刷新，切走不会取消。', 'ok');
+  } catch (error) {
+    failure = `诊断未启动：${error.message}`;
+  } finally {
+    modelServerSubmitting = false;
+    await loadModelServer();
+    if (failure) setStatus('model-server-status', failure, 'error');
+  }
+}
+
 /* ------------------------------------------------------- server metrics */
 
 // "Real time" here means a 3-second poll that only runs while the admin tab is
@@ -5689,6 +5791,7 @@ async function loadMetrics({ notify = false } = {}) {
 
 function startMetrics() {
   stopMetrics();
+  if (document.hidden || activeSection !== 'admin' || !panelIsOpen('panel-metrics')) return;
   loadMetrics();
   metricsTimer = setInterval(loadMetrics, METRICS_INTERVAL_MS);
 }
@@ -5699,6 +5802,8 @@ function stopMetrics() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopModelServer();
+  else if (activeSection === 'admin') startModelServer();
   if (!document.hidden && activeSection === 'admin' && !metricsTimer) startMetrics();
   if (document.hidden) stopMetrics();
   // 从别的 App 切回来：首页上的东西可能已经过期了（新邮件到了、清单多了一条、
@@ -5726,6 +5831,7 @@ const PANEL_NAMES = {
   'panel-agent': '运维助手', 'panel-alerts': '巡检', 'panel-guestbook': '留言板',
   'panel-analytics': '访问统计', 'panel-broadcast': '全体广播',
   'panel-website-content': '网站内容',
+  'panel-model-server': '模型服务器',
 };
 
 /* ---- 「需要你处理」 ---------------------------------------------------------
@@ -7256,6 +7362,10 @@ wirePanel('panel-usage', () => loadUsage());
 // 副作用（点一次多一个定时器，点三次就三倍请求）。
 wirePanel('panel-metrics', () => startMetrics(),
   () => (panelIsOpen('panel-metrics') ? startMetrics() : loadMetrics()));
+wirePanel('panel-model-server', () => startModelServer(),
+  () => (panelIsOpen('panel-model-server') ? startModelServer() : loadModelServer()));
+$('model-server-refresh').addEventListener('click', () => loadModelServer({ notify: true }));
+$('model-server-diagnose').addEventListener('click', diagnoseModelServer);
 wirePanel('panel-digest', () => loadDigest());
 wirePanel('panel-agent', () => loadAgent());
 wirePanel('panel-alerts', () => { PANEL_LOADED.alerts = true; renderAdminAlerts(adminData.alerts || []); });

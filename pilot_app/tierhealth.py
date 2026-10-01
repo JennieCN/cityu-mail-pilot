@@ -40,6 +40,18 @@ STATUS_KEY = "local_model_status"
 STALE_AFTER = dt.timedelta(hours=6)
 
 
+def _history(db: Any) -> dict:
+    """Keep timestamps only, without retaining old exception bodies."""
+    try:
+        old = json.loads(db.get_setting(STATUS_KEY, ""))
+    except (ValueError, TypeError):
+        old = {}
+    if not isinstance(old, dict):
+        old = {}
+    return {"last_success_at": old.get("last_success_at") or (old.get("at") if old.get("state") == "ok" else None),
+            "last_degraded_at": old.get("last_degraded_at") or (old.get("at") if old.get("state") == "degraded" else None)}
+
+
 def note_success(db: Any, *, when: dt.datetime | None = None) -> None:
     """主服务答话了 —— 把「已降级」清掉，并记下这一次的时刻。
 
@@ -47,8 +59,10 @@ def note_success(db: Any, *, when: dt.datetime | None = None) -> None:
     """
     moment = when or dt.datetime.now(dt.timezone.utc)
     try:
+        history = _history(db)
+        history["last_success_at"] = moment.isoformat(timespec="seconds")
         db.set_setting(STATUS_KEY, json.dumps(
-            {"state": "ok", "at": moment.isoformat(timespec="seconds")},
+            {**history, "state": "ok", "at": moment.isoformat(timespec="seconds")},
             ensure_ascii=False), actor="local-model")
     except Exception:  # noqa: BLE001 - 见 docstring
         logging.warning("本机主服务的健康标记没写进去（不影响这封报告）", exc_info=True)
@@ -62,8 +76,10 @@ def note_degraded(db: Any, reason: str, *, when: dt.datetime | None = None) -> N
     """
     moment = when or dt.datetime.now(dt.timezone.utc)
     try:
+        history = _history(db)
+        history["last_degraded_at"] = moment.isoformat(timespec="seconds")
         db.set_setting(STATUS_KEY, json.dumps(
-            {"state": "degraded", "at": moment.isoformat(timespec="seconds"),
+            {**history, "state": "degraded", "at": moment.isoformat(timespec="seconds"),
              "reason": str(reason)[:200]},
             ensure_ascii=False), actor="local-model")
     except Exception:  # noqa: BLE001 - 同上

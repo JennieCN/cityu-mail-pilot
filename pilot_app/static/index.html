@@ -441,6 +441,8 @@
     .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr));gap:10px}
     .metrics div{background:var(--surface-2);border:1px solid var(--tab-bg);border-radius:10px;padding:12px}
     .metrics b{display:block;font-size:19px;margin-top:3px}
+    #model-server-readings{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+    #model-server-readings b{font-size:16px;line-height:1.45;overflow-wrap:anywhere}
     .metrics small{color:var(--muted);font-size:12px}
     /* 「多少人是正常的」：这一屏的结论，跨整行、字号大两档（2026-09-24 用户：
        「显示太多东西……我就想知道多少人是正常的」）。它必须**看起来像结论**，
@@ -2077,6 +2079,19 @@
         </div>
       </details>
 
+      <details class="panel" id="panel-model-server">
+        <summary><span class="panel-title">模型服务器</span><span class="panel-note" id="panel-model-server-note">展开查看</span></summary>
+        <div class="panel-body">
+          <p class="help">这里观察本机模型盒子，不是腾讯云网站主机。展开时每 15 秒刷新；轻量探测只验证 TLS / 指纹和代理连通，<b>不代表上游模型能生成</b>，不调用模型。GPU、内存、磁盘和服务重启尚未接入。</p>
+          <div class="actions"><span class="help" id="model-server-stamp">—</span><button id="model-server-refresh" class="ghost">刷新状态</button></div>
+          <div class="metrics" id="model-server-readings" style="margin:12px 0"></div>
+          <p class="help">手动诊断会占用一个推理槽，使用固定虚构内容、仅调用本机主档，<b>失败不走付费兜底</b>。不读取邮件、不显示生成正文、不改变实际报告的健康标记。全站同时限一次，结束后冷却 60 秒；会记录审计。历史未记录的失败时间仍为未知。</p>
+          <div class="stack"><div><label for="model-server-password">诊断前重新输入你的登录密码</label><input id="model-server-password" type="password" autocomplete="current-password"></div></div>
+          <div class="actions"><button id="model-server-diagnose">运行主档合成诊断</button></div>
+          <div class="saved" id="model-server-status" role="status" aria-live="polite"></div>
+        </div>
+      </details>
+
       <details class="panel" id="panel-metrics">
         <summary><span class="panel-title">服务器实时指标</span><span class="panel-note" id="panel-metrics-note">—</span></summary>
         <div class="panel-body">
@@ -2084,7 +2099,7 @@
             <span class="help" id="metrics-stamp" style="margin:0">—</span>
             <button id="metrics-refresh" class="ghost">刷新</button>
           </div>
-          <div class="help">每 3 秒自动刷新一次，<b>只有这一块展开时才刷新</b>，收起或切走就停（不占服务器）。数值采集自本机 <code>/proc</code>，不调用任何外部命令。</div>
+          <div class="help">腾讯云网站主机的指标，不是模型盒子。每 3 秒自动刷新一次，<b>只有这一块展开时才刷新</b>，收起或切走就停（不占服务器）。数值采集自网站主机 <code>/proc</code>，不调用任何外部命令。</div>
           <div class="metricgrid" id="metrics-host"></div>
           <div class="metrics" id="metrics-app" style="margin:14px 0"></div>
           <div id="metrics-note" class="help"></div>

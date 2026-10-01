@@ -47,6 +47,7 @@ from . import invites as invites_mod
 from . import signup_notice
 from . import mailio as mailio_mod
 from . import metrics as metrics_mod
+from . import modelconsole
 from . import service as service_mod
 from . import pricing as pricing_mod
 from . import providers
@@ -3739,6 +3740,27 @@ def _service_health() -> dict[str, Any]:
         "max_users_source": _max_users()[1],
         "version": VERSION,
     }
+
+
+@route("GET", "/api/admin/model-server")
+def admin_model_server(request: Request) -> Response:
+    _require_admin(request)
+    return json_response(modelconsole.snapshot(get_db()))
+
+
+@route("POST", "/api/admin/model-server/diagnose")
+def admin_model_diagnose(request: Request) -> Response:
+    admin = _require_admin(request)
+    _admin_rate_limit(admin["id"])
+    _confirm_operator(request, admin)
+    # No operator-supplied prompt, endpoint, key or command is accepted.
+    if set(request.json_object()) - {"password"}:
+        raise ApiError(422, "此诊断只接受登录密码，不接受自定义内容。")
+    try:
+        result = modelconsole.start_diagnostic(get_db(), admin, _client_label(request))
+    except modelconsole.ConsoleError as exc:
+        raise ApiError(exc.status, str(exc)) from None
+    return json_response(result, status=202)
 
 
 @route("GET", "/api/admin/metrics")
