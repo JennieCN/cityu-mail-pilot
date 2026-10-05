@@ -370,7 +370,8 @@ def _deadline_clock(deadline: Any) -> tuple[int, int] | None:
     "中午" name a part of a day, not a time we would stake an alarm on, so
     they stay all-day.
 
-    **The last clock in the string wins, exactly as in ``deadline_of``.** A line
+    Explicit same-day ranges use the start clock and preserve their end in ICS.
+    Otherwise the last clock wins, exactly as in ``deadline_of``. A line
     can name two times ("12:00 前提交，最晚 23:59 截止"), and both the field the
     report shows and the alarm the calendar sets have to come off the same one --
     otherwise the app says 23:59 and the phone buzzes at noon. Today's data has
@@ -380,6 +381,9 @@ def _deadline_clock(deadline: Any) -> tuple[int, int] | None:
     matches = _CLOCK_TIME.findall(_one_line(deadline))
     if not matches:
         return None
+    interval = reports.clock_range(_one_line(deadline))
+    if interval and len(matches) == 2:
+        return interval[0]
     hour, minute = matches[-1]
     return int(hour), int(minute)
 
@@ -506,11 +510,13 @@ def build_ics(tasks: Sequence[Mapping[str, Any]], *, origin: str = "",
         lines.append(f"UID:{_one_line(task.get('task_key'))}@cityu-mail-pilot")
         lines.append(f"DTSTAMP:{stamp}")
         if clock and zone:
-            # The deadline instant itself, one hour long, in the user's zone.
+            # Explicit event interval, else the existing one-hour deadline block.
             start = dt.datetime.combine(day, dt.time(*clock), tzinfo=zoneinfo.ZoneInfo(zone))
             lines.append(f"DTSTART;TZID={zone}:{start.strftime('%Y%m%dT%H%M%S')}")
-            lines.append(f"DTEND;TZID={zone}:"
-                         f"{(start + dt.timedelta(hours=1)).strftime('%Y%m%dT%H%M%S')}")
+            interval = reports.clock_range(_one_line(task.get("deadline")))
+            end = (dt.datetime.combine(day, dt.time(*interval[1]), tzinfo=zoneinfo.ZoneInfo(zone))
+                   if interval and interval[0] == clock else start + dt.timedelta(hours=1))
+            lines.append(f"DTEND;TZID={zone}:{end.strftime('%Y%m%dT%H%M%S')}")
         else:
             # Date-valued and therefore timezone-free; DTEND is exclusive.
             lines.append(f"DTSTART;VALUE=DATE:{day.strftime('%Y%m%d')}")

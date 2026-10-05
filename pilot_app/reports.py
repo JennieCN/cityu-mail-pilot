@@ -130,10 +130,10 @@ _MONTH_WORD = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e
 # 日号可以带序数后缀（8th），年份可以没有；`20\d{2}` 这个前缀也让
 # 「May 2026」（只说月份、没有日号）**匹配不上**，不会把整个年份当日子。
 _EN_MONTH_FIRST = re.compile(
-    rf"\b(?P<month>{_MONTH_WORD})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\b"
+    rf"\b(?P<month>{_MONTH_WORD})\.?(?:\s+|\s*[-–]\s*)(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\b"
     rf"(?:\s*,?\s*(?P<year>20\d{{2}}))?", re.I)
 _EN_DAY_FIRST = re.compile(
-    rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?P<month>{_MONTH_WORD})\.?\b"
+    rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?(?:\s+|\s*[-–]\s*)(?P<month>{_MONTH_WORD})\.?\b"
     rf"(?:\s*,?\s*(?P<year>20\d{{2}}))?", re.I)
 
 _DEADLINE_MARKERS = (
@@ -493,6 +493,9 @@ def date_candidates(text: str) -> list[tuple[int, int, int, int]]:
     found: list[tuple[int, int, int, int]] = []
     for pattern, kind in _DATE_PATTERNS:
         for match in pattern.finditer(text):
+            if kind == "md" and re.search(r"20\d{2}\s*年\s*$", text[:match.start()]):
+                # Do not turn a dated Chinese source into no-year evidence too.
+                continue
             if kind == "ymd":
                 year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
             elif kind == "mdy":
@@ -507,6 +510,10 @@ def date_candidates(text: str) -> list[tuple[int, int, int, int]]:
     found.sort()
     unique: list[tuple[int, int, int, int]] = []
     for item in found:
+        try:
+            dt.date(item[1] or 2000, item[2], item[3])
+        except ValueError:
+            continue
         if unique and unique[-1][0] == item[0]:
             continue
         unique.append(item)
@@ -536,19 +543,40 @@ def months_to_numbers(text: str) -> str:
     return _EN_DAY_FIRST.sub(day_first, _EN_MONTH_FIRST.sub(month_first, text))
 
 
+def clock_range(text: str) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """An explicit same-day time interval; unrelated clocks remain deadlines."""
+    match = re.search(r"(?<!\d)([01]?\d|2[0-3])[:：]([0-5]\d)\s*"
+                      r"(?:[-–—]|至|到|\bto\b)\s*"
+                      r"([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)", text, re.I)
+    if not match:
+        return None
+    start = (int(match[1]), int(match[2]))
+    end = (int(match[3]), int(match[4]))
+    return (start, end) if end > start else None
+
+
 def deadline_of(text: str) -> str:
     """Extract an explicit deadline (date and/or clock time) from one action line.
 
     Models write either ``截止：2026-09-18 23:59`` or prose like
     ``今天阅读要求，周五 23:59 前提交``. A date that follows a deadline marker is
-    preferred; otherwise the last date in the line is used, because the deadline
+    preferred; otherwise the last non-cancellation date in the line is used, because the deadline
     is almost always the final date mentioned. English spellings (``Oct 8``,
     ``8 October 2026``) are the same date as their Chinese counterparts — a mail
     written in English must not lose its date and keep only its clock.
     """
-    clean = _collapse(_strip_inline(text))
+    raw = _strip_inline(text)
+    clean = _collapse(raw)
     if not clean:
         return ""
+    # A cancellation clause is not the appointment that the user must attend.
+    # Only drop clearly separated clauses; do not guess semantics across dates.
+    clauses = re.split(r"[;；。\n]|\.(?=\s+[A-Z])|,(?=\s*(?:lecture|class)\b)", raw)
+    active = [part for part in clauses if not re.search(
+        r"\b(?:cancelled|canceled)\b|取消", part, re.I)
+        or re.search(r"\b(?:not|never)\s+(?:cancelled|canceled)\b|不(?:会)?取消|未取消", part, re.I)]
+    if active and any(date_candidates(part) for part in active):
+        clean = _collapse("; ".join(active))
     marker = _DEADLINE_LEAD.search(clean)
     candidates: list[tuple[int, str]] = []
     for item in date_candidates(clean):
@@ -561,8 +589,13 @@ def deadline_of(text: str) -> str:
         pieces.append(chosen[1])
     clock_matches = list(re.finditer(r"(?<!\d)([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)", clean))
     if clock_matches:
-        clock = clock_matches[-1]
-        pieces.append(f"{int(clock.group(1)):02d}:{clock.group(2)}")
+        interval = clock_range(clean)
+        if interval and len(clock_matches) == 2:
+            start, end = interval
+            pieces.append(f"{start[0]:02d}:{start[1]:02d}–{end[0]:02d}:{end[1]:02d}")
+        else:
+            clock = clock_matches[-1]
+            pieces.append(f"{int(clock.group(1)):02d}:{clock.group(2)}")
     for marker_word in ("今天", "明天", "后天", "本周", "这周", "下周", "周一", "周二", "周三",
                         "周四", "周五", "周六", "周日", "星期", "tonight", "today", "tomorrow",
                         "this week", "next week"):
@@ -2001,4 +2034,3 @@ def render_brief(markdown: str, message: dict[str, Any], *, subject: str,
         "text": render_brief_text(markdown, message, subject=subject, timezone=timezone,
                                   full_follows=full_follows, locale=locale),
     }
-

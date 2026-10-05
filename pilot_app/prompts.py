@@ -101,6 +101,7 @@ def report_instructions(kind: str, locale: str = DEFAULT_REPORT_LANGUAGE) -> str
 第 1 部分必须两行以内，第一行以「等级：高 / 中 / 低」开头，第二行以「结论：」开头，用一句话说清这封邮件到底要干什么。不要在第 1 部分复述发件人和日期。
 
 第 2 部分只写用户必须做的动作，一条一行，用 `- ` 开头；有明确时间就把截止时间写在同一条里。没有任何待办时，只写一行 `- 无需行动。`
+考试/活动保留完整开始与结束时间；取消的课程与考试分开写，不得将取消日期当作考试日期。原文日期没有年份时保留月日，不补造年份。
 
 要求：
 - 第 3 部分提炼发件人、关键事实、日期/地点、链接线索和附件名称；没有的信息不要补造，也不要把发件人和日期当成结论。
@@ -414,30 +415,39 @@ def normalize_daily_report(value: str, *, allowed_source_urls: set[str] | None =
 
 def sanitize_calendar_dates(text: str, source: str) -> str:
     """Replace concrete dates that are absent from the supplied evidence."""
-    allowed: set[tuple[int, int, int]] = set()
-    for year, month, day in re.findall(r"(?<!\d)(20\d{2})[-/年](\d{1,2})[-/月](\d{1,2})(?:日)?", source):
-        allowed.add((int(year), int(month), int(day)))
-    month_names = {
-        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
-    }
-    for name, day, year in re.findall(r"\b(" + "|".join(month_names) + r")\s+(\d{1,2}),\s*(20\d{2})\b", source, re.I):
-        allowed.add((int(year), month_names[name.lower()], int(day)))
+    from . import reports
 
+    # Share supported spellings with the report/export parser. A month/day
+    # without a year proves the day, NOT an invented year: retain it as such.
+    source_dates = {(year, month, day) for _, year, month, day
+                    in reports.date_candidates(source)}
     def chinese(match: re.Match[str]) -> str:
-        return match.group(0) if tuple(map(int, match.groups())) in allowed else "邮件未提供具体日期"
+        return checked(match.group(0), tuple(map(int, match.groups())))
 
     def numeric(match: re.Match[str]) -> str:
-        return match.group(0) if tuple(map(int, match.groups())) in allowed else "邮件未提供具体日期"
+        return checked(match.group(0), tuple(map(int, match.groups())))
+
+    def checked(original: str, value: tuple[int, int, int]) -> str:
+        if value in source_dates:
+            return original
+        if (0, value[1], value[2]) in source_dates:
+            return f"{value[1]}月{value[2]}日"
+        return "邮件未提供具体日期"
 
     def english(match: re.Match[str]) -> str:
-        value = (int(match.group(3)), month_names[match.group(1).lower()], int(match.group(2)))
-        return match.group(0) if value in allowed else "date not provided in the email"
+        # Unspecified years stay unspecified; the export layer anchors them.
+        if not match.group("year"):
+            return match.group(0)
+        value = (int(match.group("year")), reports.month_number(match.group("month")),
+                 int(match.group("day")))
+        return checked(match.group(0), value)
 
     text = re.sub(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", chinese, text)
     text = re.sub(r"(?<!\d)(20\d{2})-(\d{2})-(\d{2})(?!\d)", numeric, text)
     text = re.sub(r"(?<!\d)(20\d{2})/(\d{1,2})/(\d{1,2})(?!\d)", numeric, text)
-    return re.sub(r"\b(" + "|".join(month_names) + r")\s+(\d{1,2}),\s*(20\d{2})\b", english, text, flags=re.I)
+    for pattern in (reports._EN_MONTH_FIRST, reports._EN_DAY_FIRST):
+        text = pattern.sub(english, text)
+    return text
 
 BRIEF_SECTIONS = [
     "## 1. 重要程度与一句话结论 / Importance and one-line conclusion",
@@ -469,6 +479,7 @@ def brief_report_instructions(kind: str, locale: str = DEFAULT_REPORT_LANGUAGE) 
 第 1 部分必须两行以内：第一行以「等级：高 / 中 / 低」开头，第二行以「结论：」开头，用一句话说清这封邮件到底要干什么。不要复述发件人和日期。
 
 第 2 部分只写用户必须做的动作，一条一行，用 `- ` 开头；有明确时间就把截止时间写在同一条里。没有任何待办时只写一行 `- 无需行动。`
+考试/活动保留完整开始与结束时间；取消的课程与考试分开写，不得将取消日期当作考试日期。原文日期没有年份时保留月日，不补造年份。
 
 第 3 部分最多 5 条要点，每条一行，用 `- ` 开头；只写邮件里真实存在的信息（时间、地点、金额、入口、附件名），没有的信息不要补造。
 
@@ -507,4 +518,3 @@ def normalize_brief_report(value: str) -> str:
         heading + "\n" + (captured.get(key) or "- 无。")
         for heading, key in zip(BRIEF_SECTIONS, BRIEF_SECTION_KEYS)
     )
-
