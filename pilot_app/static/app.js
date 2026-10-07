@@ -555,7 +555,7 @@ function showDashboard(on) {
   if (sidebar) sidebar.hidden = !on;
   const tabbar = $('tabbar');
   if (tabbar) tabbar.hidden = !on;
-  if (!on) setDrawer(false);
+  if (!on) { setDrawer(false); setAdminConsoleAppearance(false); }
   // Drop the previous account's task text from memory on sign-out; the next
   // login refetches it anyway.
   if (!on) taskView = null;
@@ -1721,6 +1721,7 @@ function openSection(name, { updateHash = true } = {}) {
   // to the dashboard rather than showing an empty screen.
   const key = navItem(name) ? name : 'dashboard';
   activeSection = key;
+  setAdminConsoleAppearance(key === 'admin');
 
   const home = $('view-dashboard');
   if (home) home.classList.toggle('hidden', key !== 'dashboard');
@@ -3487,6 +3488,25 @@ function renderWorkingLead(box, health) {
   box.appendChild(lead);
 }
 
+function adminHealthMetricRows(health) {
+  return [
+    ['注册用户', `${health.users} / ${health.max_users}`, '已注册 / 名额上限'],
+    ['启用中', `${health.active_users}`, '人'],
+    ['已暂停', `${health.paused_users}`, '人'],
+    ['待处理队列', `${health.pending_messages}`, '封邮件'],
+    ['失败报告', `${health.failed_reports}`, health.failed_reports_digests
+      ? `份 · 逐封邮件 ${health.failed_reports_per_mail}，每日简报 ${health.failed_reports_digests}` : '份'],
+    ['轮询在跑', `${health.mailboxes_polled_recently} / ${health.mailboxes}`, '个邮箱 · 含取信失败的'],
+    ['登录正常', `${health.healthy_mailboxes} / ${health.mailboxes}`, '个在用的邮箱'
+      + (health.mailboxes_paused ? `（另有 ${health.mailboxes_paused} 个已暂停，不算在内）` : '')
+      + (health.newest_poll_seconds == null ? '' : ` · 最近一次取信 ${humanDuration(health.newest_poll_seconds)}前`)
+      + (health.working && health.healthy_mailboxes > health.working.ok
+        ? ` · 比「正常收信」多 ${health.healthy_mailboxes - health.working.ok} 位：他们登得进去，但学校那边还没转发过信来` : '')],
+    ['最近 24 小时本校来信', `${health.school_mail_24h || 0}`, `封 · 来自 ${health.mailboxes_with_school_mail_24h || 0} 个邮箱`
+      + (health.school_mail_7d ? ` · 7 天 ${health.school_mail_7d} 封` : '')],
+  ];
+}
+
 function renderAdminHealth(health) {
   const box = $('admin-health');
   clear(box);
@@ -3499,46 +3519,12 @@ function renderAdminHealth(health) {
   techSummary.appendChild(el('strong', null, '技术细节'));
   techSummary.appendChild(el('span', 'help', ' 轮询、队列、失败报告 —— 排障时才需要看'));
   tech.appendChild(techSummary);
-  const body = el('div', 'body metrics');
-  [
-    ['注册用户', `${health.users} / ${health.max_users}`],
-    ['启用中', `${health.active_users} 人`],
-    ['已暂停', `${health.paused_users} 人`],
-    ['待处理队列', `${health.pending_messages} 封`],
-    // 「失败报告」曾经只给一个数，于是运营者在「下发情况」里找不到它们——
-    // 那个列表是一行一封邮件，而每日简报没有对应的邮件行（它汇总一整天）。
-    // 两种东西分开说，并且说清该去哪儿看（2026-09-18 用户报的那次）。
-    ['失败报告', health.failed_reports_digests
-      ? `${health.failed_reports} 份（逐封邮件 ${health.failed_reports_per_mail}，每日简报 ${health.failed_reports_digests}）`
-      : `${health.failed_reports} 份`],
-    // Two numbers, because they answer two different questions and used to be
-    // conflated into one misleading one. `last_polled_at` is written on failure
-    // too, so "轮询在跑" can be full while "收信正常" is not -- which is exactly
-    // the state a wrong authorisation code produces.
-    ['轮询在跑', `${health.mailboxes_polled_recently} / ${health.mailboxes} 个邮箱（含取信失败的）`],
-    // 「登录正常」说的是**我们这一侧**：登得进去、轮询没停。它是个状态计数，好日子里
-    // 一动不动，所以它单独立着证明不了什么——旁边那格才是重点：信有没有真的到。
-    //
-    // **它比顶上那个「正常收信」通常大几位，而且那个差就是重点**：顶上还要求「真的收到过
-    // 本校来信」，所以差出来的那几位是**学校那边**的事（转发规则没生效），不在我们这条
-    // 通道上。2026-09-24 用户就是盯着这两个数问「为什么不一样」——名字起得像、差在哪却
-    // 没写在脸上。所以标签从「取信正常」改成「登录正常」（说的是登录，不是收信），
-    // 差几位、差的是谁，直接跟在后面。
-    ['登录正常', `${health.healthy_mailboxes} / ${health.mailboxes} 个在用的邮箱`
-      + (health.mailboxes_paused ? `（另有 ${health.mailboxes_paused} 个已暂停，不算在内）` : '')
-      + (health.newest_poll_seconds == null ? ''
-         : `（最近一次取信 ${humanDuration(health.newest_poll_seconds)}前）`)
-      + (health.working && health.healthy_mailboxes > health.working.ok
-         ? ` · 比上面「正常收信」多 ${health.healthy_mailboxes - health.working.ok} 位：`
-           + '他们登得进去，但学校那边还没转发过信来'
-         : '')],
-    ['最近 24 小时本校来信', `${health.school_mail_24h || 0} 封 · 来自 `
-      + `${health.mailboxes_with_school_mail_24h || 0} 个邮箱`
-      + (health.school_mail_7d ? `（7 天 ${health.school_mail_7d} 封）` : '')],
-  ].forEach(([label, value]) => {
+  const body = el('div', 'body metrics admin-health-metrics');
+  adminHealthMetricRows(health).forEach(([label, value, note]) => {
     const cell = el('div');
     cell.appendChild(el('small', null, label));
     cell.appendChild(el('b', null, value));
+    cell.appendChild(el('span', 'admin-metric-note', note));
     body.appendChild(cell);
   });
   tech.appendChild(body);
@@ -5901,6 +5887,105 @@ const PANEL_NAMES = {
   'panel-model-server': '模型服务器',
 };
 
+// A view of the existing admin panels, not a second API or permission model.
+// Keep each panel DOM node and listener in place; no user data is cloned.
+const ADMIN_VIEWS = [
+  { key: 'overview', label: '运行总览', description: '收信与下发证据、待处理异常与近期变化。', nodes: ['admin-health', 'admin-delivery'] },
+  { key: 'users', label: '用户与邮箱', description: '注册不等于接入成功；查看转发证据、连接状态与用户设置。', nodes: ['panel-users', 'panel-edit', 'panel-reminders'] },
+  { key: 'models', label: '模型与搜索', description: '复用现有模型服务器诊断和用户调用记录；配置状态不等于实际调用成功。', nodes: ['panel-model-server', 'panel-usage'] },
+  { key: 'mail', label: '邮件与下发', description: '以发送状态核对是否下发；保留原有元数据隐私边界。', nodes: ['panel-mail', 'panel-digest'] },
+  { key: 'operations', label: '系统运维', description: '巡检、服务器资源、历史审计与只读运维建议。', nodes: ['panel-alerts', 'panel-agent', 'panel-metrics', 'panel-audit'] },
+  { key: 'settings', label: '运营与设置', description: '管理员、名额、通知、内容与历史记录；原有确认流程保持不变。', nodes: ['panel-admins', 'panel-capacity', 'panel-website-content', 'panel-broadcast', 'panel-signups', 'panel-analytics', 'panel-guestbook'] },
+  { key: 'all', label: '全部功能', description: '兼容视图：显示全部原有功能，便于排障与核对。', nodes: [] },
+];
+let adminView = 'overview';
+
+function setAdminConsoleAppearance(on) {
+  document.documentElement.setAttribute('data-admin-console', String(on));
+  const nav = $('admin-workspace-nav');
+  if (!nav) return;
+  // Move, never clone: keyboard state and listeners remain the same. On mobile
+  // the nav belongs in the content; on desktop it forms the admin sidebar group.
+  const wide = window.matchMedia('(min-width:900px)').matches;
+  if (on && wide) $('sidebar').appendChild(nav);
+  else $('admin-workspace-title').parentElement.before(nav);
+}
+
+function selectAdminView(key) {
+  const view = ADMIN_VIEWS.find((item) => item.key === key);
+  if (!view) return;
+  adminView = view.key;
+  window.scrollTo(0, 0);
+  ADMIN_VIEWS.forEach((item) => item.nodes.forEach((id) => {
+    const node = $(id);
+    if (!node) return;
+    const visible = key === 'all' || item.key === key;
+    // Closing a hidden panel also stops its polling through the existing toggle
+    // handler. Do not auto-open panels: some have expensive diagnostic actions.
+    if (!visible && node.tagName === 'DETAILS') node.open = false;
+    node.classList.toggle('admin-page-hidden', !visible);
+  }));
+  if (!panelIsOpen('panel-metrics')) stopMetrics();
+  if (!panelIsOpen('panel-model-server')) stopModelServer();
+  $('admin-workspace-title').textContent = view.label;
+  $('admin-workspace-description').textContent = view.description;
+  $('admin-workspace-nav').querySelectorAll('button').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.adminView === key));
+  });
+  // This loader only renders already-fetched users, unlike diagnostic buttons.
+  if (key === 'users') $('panel-users').open = true;
+}
+
+function revealAdminPanel(id) {
+  const view = ADMIN_VIEWS.find((item) => item.nodes.includes(id));
+  if (view && adminView !== 'all' && view.key !== adminView) selectAdminView(view.key);
+}
+
+function initAdminWorkspace() {
+  const nav = $('admin-workspace-nav');
+  if (!nav) return;
+  ADMIN_VIEWS.forEach((view) => {
+    const button = el('button', null, view.label);
+    button.type = 'button';
+    button.dataset.adminView = view.key;
+    button.dataset.icon = { overview: '⌁', users: '♧', models: '⇄', mail: '▤', operations: '◫', settings: '⚙', all: '▦' }[view.key];
+    button.setAttribute('aria-label', view.label);
+    button.addEventListener('click', () => selectAdminView(view.key));
+    nav.appendChild(button);
+    view.nodes.forEach((id) => {
+      const node = $(id);
+      if (node && node.tagName === 'DETAILS') node.addEventListener('toggle', () => {
+        // Existing shortcuts may open a panel without going through this nav.
+        if (node.open && node.classList.contains('admin-page-hidden')) revealAdminPanel(id);
+      });
+    });
+  });
+  selectAdminView('overview');
+  $('admin-refresh').parentElement.after($('admin-workspace-title').parentElement);
+  $('panel-edit').before($('panel-users'));
+  const userBody = $('panel-users').querySelector('.panel-body');
+  const instructions = userBody.querySelector(':scope > .help');
+  if (instructions) {
+    const help = el('details', 'admin-user-help');
+    help.appendChild(el('summary', null, 'ⓘ 状态含义与刷新说明（调用费用与注意事项）'));
+    instructions.before(help);
+    help.appendChild(instructions);
+  }
+  const controls = el('div', 'admin-view-controls');
+  [['cards', '▦ 卡片'], ['list', '☷ 列表']].forEach(([key, label]) => {
+    const button = el('button', 'secondary', label);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(key === 'cards'));
+    button.addEventListener('click', () => {
+      $('admin-users').classList.toggle('admin-list-view', key === 'list');
+      controls.querySelectorAll('button').forEach((node) => node.setAttribute('aria-pressed', String(node === button)));
+    });
+    controls.appendChild(button);
+  });
+  $('users-search').closest('.row').appendChild(controls);
+  window.matchMedia('(min-width:900px)').addEventListener('change', () => setAdminConsoleAppearance(activeSection === 'admin'));
+}
+
 /* ---- 「需要你处理」 ---------------------------------------------------------
    用户原话（2026-09-17）：「我刷新后台界面应该要可以显示新的通知，比如有人申请了
    邀请码等等」。刷新本来就取回了这些数字，问题是它们散在 17 个**收起**的面板摘要
@@ -5965,6 +6050,7 @@ function renderAdminAttention({ rebase = true } = {}) {
     button.addEventListener('click', () => {
       const panel = $(item.panel);
       if (!panel) return;
+      revealAdminPanel(item.panel);
       panel.open = true;
       panel.scrollIntoView({ block: 'start' });
     });
@@ -7451,6 +7537,8 @@ $('install-dismiss').addEventListener('click', () => {
   if (box) box.classList.add('hidden');
   toast('好的，以后不再提示', 'ok');
 });
+
+initAdminWorkspace();
 
 // Last statement in the file, and it has to stay that way: the boot guard above
 // reads it to decide whether the wiring actually finished. Anything appended

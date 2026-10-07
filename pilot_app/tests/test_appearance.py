@@ -342,7 +342,8 @@ class ThemeTokenTests(unittest.TestCase):
     @staticmethod
     def _strip_token_blocks(style: str) -> str:
         blocks = (re.findall(r":root\s*\{.*?\}", style, re.S)
-                  + re.findall(r'html\[data-theme="[^"]+"\]\s*\{.*?\}', style, re.S))
+                  + re.findall(r'html\[data-theme="[^"]+"\]\s*\{.*?\}', style, re.S)
+                  + re.findall(r'html\[data-admin-console="true"\]\s*\{.*?\}', style, re.S))
         for block in blocks:
             style = style.replace(block, "")
         return style
@@ -365,6 +366,14 @@ class ThemeTokenTests(unittest.TestCase):
         used = set(re.findall(r"var\((--[a-z0-9-]+)", style))
         self.assertEqual(sorted(used - declared), [],
                          "组件引用了没有声明的 token")
+
+    def test_admin_palette_override_contains_only_tokens(self):
+        block = re.search(r'html\[data-admin-console="true"\]\s*\{(.*?)\}', self._style(), re.S)
+        self.assertIsNotNone(block)
+        body = re.sub(r'/\*.*?\*/', '', block.group(1), flags=re.S)
+        properties = [declaration.split(':', 1)[0].strip() for declaration in body.split(';') if declaration.strip()]
+        self.assertTrue(properties)
+        self.assertTrue(all(re.fullmatch(r'--[a-z0-9-]+', name) for name in properties), properties)
 
     def test_the_token_blocks_still_carry_the_palette(self):
         """Guards the guard: if the stripping regex stopped matching, the test

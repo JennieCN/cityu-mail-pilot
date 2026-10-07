@@ -581,9 +581,15 @@ class ShellMarkupTests(unittest.TestCase):
 
     def test_every_theme_defines_the_nav_tokens(self):
         themes = ["classic", "paper", "dusk", "harbour", "night"]
+        # The admin-only reference surface is an ephemeral override, not a sixth
+        # saved user theme. Test its tokens separately without weakening the five.
+        admin = re.search(r'html\[data-admin-console="true"\]\{(.*?)\}', INDEX, re.S)
+        self.assertIsNotNone(admin)
+        themed_index = INDEX[:admin.start()] + INDEX[admin.end():]
         for token in ("--nav-ink", "--nav-hover", "--nav-active-bg", "--nav-active-ink"):
-            self.assertEqual(INDEX.count(f"{token}:"), 5,
+            self.assertEqual(themed_index.count(f"{token}:"), len(themes),
                              f"{token} 应该在 5 个主题里各定义一次")
+            self.assertEqual(admin.group(1).count(f"{token}:"), 1)
 
 
 class MailboxStepThreeReassuranceTests(unittest.TestCase):

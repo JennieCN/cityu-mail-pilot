@@ -17,6 +17,7 @@ build is green either way.
 import ast
 import pathlib
 import re
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -343,7 +344,8 @@ def _needs_files_the_package_does_not_ship(path: pathlib.Path) -> bool:
     # built, not a payload key.
     return any(
         isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
-        and isinstance(node.right, ast.Constant) and node.right.value in ("tools", "docs")
+        and isinstance(node.right, ast.Constant) and isinstance(node.right.value, str)
+        and node.right.value.split("/", 1)[0] in ("tools", "docs")
         for node in ast.walk(tree)
     )
 
@@ -376,6 +378,15 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertTrue(repo_only, "一个都认不出来，说明这个判定坏了")
         missing = sorted(repo_only - self._excluded())
         self.assertEqual(missing, [], f"这些测试要仓库级文件，却没被排除出发布包：{missing}")
+
+    def test_combined_repository_paths_are_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'sample.py'
+            for folder in ('tools', 'docs'):
+                path.write_text(f'file = ROOT / "{folder}/sample.py"\n', encoding='utf-8')
+                self.assertTrue(_needs_files_the_package_does_not_ship(path))
+            path.write_text('payload = {"tools": []}\nfile = ROOT / "pilot_app/sample.py"\n', encoding='utf-8')
+            self.assertFalse(_needs_files_the_package_does_not_ship(path))
 
     def test_the_exclusion_list_has_no_stale_entries(self):
         """An entry naming a file that no longer needs excluding is a comment

@@ -948,6 +948,105 @@
   @media (max-width:600px){
     p a, li a, td a, dd a, .help a, label a, .check a, summary a{display:inline-block;padding:13px 2px}
   }
+    /* Admin workspace: theme tokens only; existing panels and permissions stay intact. */
+    #section-admin{position:relative}
+    .admin-workspace-nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;margin:20px 0 14px}
+    .admin-workspace-nav button{background:transparent;color:var(--muted);border:0;box-shadow:none;padding:10px 14px;border-radius:8px;font-size:13px}
+    .admin-workspace-nav button[aria-pressed="true"]{background:var(--info-bg);color:var(--blue);font-weight:700}
+    .admin-workspace-heading{padding:8px 0 16px;border-bottom:1px solid var(--line);margin-bottom:16px}
+    .admin-workspace-heading h3{font-size:22px;margin:0 0 6px;color:var(--ink)}
+    .admin-workspace-heading p{margin:0;color:var(--muted);font-size:13px}
+    #section-admin .admin-page-hidden{display:none!important}
+    #section-admin>details.panel{background:var(--card);border-radius:12px;margin:14px 0}
+    #section-admin>details.panel>summary{padding:17px 18px}
+    @media(max-width:600px){.admin-workspace-nav{flex-wrap:nowrap;overflow-x:auto}.admin-workspace-nav button{flex-shrink:0;padding:10px}.admin-workspace-heading h3{font-size:19px}}
+    /* Reference-style admin surface. Ephemeral, never changes the user's saved theme. */
+    html[data-admin-console="true"]{
+      --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;--font-head:var(--font);
+      --bg:#ffffff;--card:#ffffff;--ink:#25282d;--muted:#85888d;--line:#ededf0;--line-soft:#f1f1f3;
+      --blue:#589edc;--navy:#25282d;--navy-ink:#25282d;--surface-2:#fcfcfd;--surface-3:#f8fafc;--panel:#ffffff;
+      --info-bg:#eaf4fc;--info-line:#dceaf6;--input-bg:#ffffff;--input-line:#ececf0;--quiet-bg:#f7f7f9;
+      --appbar-bg:#ffffff;--appbar-ink:#25282d;--appbar-muted:#85888d;--nav-ink:#41454a;
+      --nav-hover:#f7f8fa;--nav-active-bg:#eaf4fc;--nav-active-ink:#458ccb;--card-shadow:0 1px 3px #00000008;
+      --radius-control:18px;--on-accent:#ffffff;
+    }
+    html[data-admin-console="true"] body{background:var(--bg);background-image:none;font-family:var(--font)}
+    html[data-admin-console="true"] .bg-layer{display:none}
+    html[data-admin-console="true"] .sidebar{flex-basis:208px;padding:20px 16px;border-right:1px solid var(--line);background:var(--card);color:var(--ink)}
+    html[data-admin-console="true"] .sidebar-brand{margin:0 8px 24px}
+    html[data-admin-console="true"] .sidebar-brand strong{font-size:15px;font-family:var(--font)}
+    html[data-admin-console="true"] .sidebar-brand strong::before{content:'◇';color:var(--blue);font-size:20px;vertical-align:middle;margin-right:6px}
+    html[data-admin-console="true"] .sidebar-brand small{font-size:11px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] .navlist{gap:3px}
+    html[data-admin-console="true"] .navlist button{font-family:var(--font);font-size:13px;font-weight:450;min-height:34px;padding:7px 10px;border-radius:12px;letter-spacing:0}
+    html[data-admin-console="true"] header.appbar{background:var(--card);color:var(--ink);border-bottom:1px solid var(--line);padding:10px 20px;box-shadow:none;min-height:56px}
+    html[data-admin-console="true"] header.appbar h1{font-family:var(--font);font-size:15px}
+    html[data-admin-console="true"] header.appbar small{font-size:10px}
+    html[data-admin-console="true"] header.appbar .row{gap:8px}
+    html[data-admin-console="true"] header.appbar button,html[data-admin-console="true"] header.appbar .button-link{font-size:12px;padding:6px 12px;min-height:30px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:16px}
+    html[data-admin-console="true"] main{max-width:none;padding:0 8px 8px 0;margin:0;width:100%}
+    html[data-admin-console="true"] #section-admin{padding:20px 18px;background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:var(--card-shadow);min-height:calc(100dvh - 68px)}
+    html[data-admin-console="true"] #section-admin>h2{display:none}
+    html[data-admin-console="true"] .admin-refresh-bar{float:right;margin:0;gap:10px;position:relative;z-index:1}
+    html[data-admin-console="true"] #admin-refreshed{font-size:10px}
+    html[data-admin-console="true"] #section-admin>p.help{font-size:10px;margin:6px 0 12px}
+    html[data-admin-console="true"] .admin-workspace-heading{padding:0 0 15px;margin:0;border:0;min-height:52px}
+    html[data-admin-console="true"] .admin-workspace-heading h3{font-size:19px;font-family:var(--font);padding-right:210px}
+    html[data-admin-console="true"] .admin-workspace-heading p{font-size:11px;max-width:680px}
+    html[data-admin-console="true"] .admin-attention{font-size:11px;margin:6px 0;padding:8px 10px}
+    html[data-admin-console="true"] .admin-workspace-nav{background:transparent;border:0;padding:0;gap:3px;margin:24px 0;flex-direction:column}
+    html[data-admin-console="true"] .admin-workspace-nav::before{content:'管理员';font-size:11px;color:var(--muted);padding:0 10px 8px}
+    html[data-admin-console="true"] .admin-workspace-nav button{font-size:13px;font-family:var(--font);font-weight:450;text-align:left;padding:8px 10px;border-radius:12px;min-height:34px}
+    html[data-admin-console="true"] .admin-workspace-nav button::before{content:attr(data-icon);display:inline-block;width:22px;font-size:16px}
+    html[data-admin-console="true"] #section-admin>details.panel{border:1px solid var(--line);border-radius:16px;box-shadow:none;margin:12px 0}
+    html[data-admin-console="true"] #section-admin .panel-title{font-size:13px;font-family:var(--font)}
+    html[data-admin-console="true"] #section-admin .panel-note{font-size:11px}
+    html[data-admin-console="true"] #section-admin button{font-family:var(--font);font-size:12px;min-height:30px;padding:6px 12px;border-radius:18px;box-shadow:var(--card-shadow)}
+    html[data-admin-console="true"] #section-admin input:not([type=checkbox]),html[data-admin-console="true"] #section-admin select{font-size:12px;padding:7px 12px;min-height:32px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
+    html[data-admin-console="true"] #section-admin .metrics{gap:12px}
+    html[data-admin-console="true"] #section-admin .metrics>div{border-radius:14px;border:1px solid var(--line);background:var(--card);box-shadow:none}
+    html[data-admin-console="true"] #admin-health>.health-lead>div{border:0;background:transparent;padding:0;border-radius:0}
+    html[data-admin-console="true"] #admin-health>.health-lead b{font:600 28px/1.3 var(--font)}
+    .admin-metric-note{display:block;font-size:11px;color:var(--muted);line-height:1.6;margin-top:8px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics>div{padding:16px;min-width:0}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics small{font-size:11px;line-height:1.5;display:block;min-height:17px}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics b{font:600 26px/1.3 var(--font);margin-top:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+    html[data-admin-console="true"] #panel-users[open]{border:0;margin-top:4px}
+    html[data-admin-console="true"] #panel-users[open]>summary{display:none}
+    html[data-admin-console="true"] #section-admin>#panel-users[open]{border-radius:22px}
+    html[data-admin-console="true"] #panel-users>.panel-body{padding:22px}
+    html[data-admin-console="true"] #admin-users{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin:16px 0}
+    html[data-admin-console="true"] #admin-users .admin-user{border:1px solid var(--line);border-radius:20px;padding:22px;background:var(--card);box-shadow:none;margin:0}
+    html[data-admin-console="true"] .admin-user-head{gap:10px}
+    html[data-admin-console="true"] .admin-user-head strong{font-size:13px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] .admin-user-meta{font-size:10px;line-height:1.7;margin-top:12px}
+    html[data-admin-console="true"] .admin-user-head .lights{flex-basis:100%;font-size:11px}
+    html[data-admin-console="true"] #admin-users.admin-list-view{display:block}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user{border-radius:0;padding:12px 16px;border-bottom:0}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user:last-child{border-bottom:1px solid var(--line);border-radius:0 0 12px 12px}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user-head .lights{flex-basis:auto;margin-left:auto}
+    .admin-user-help{margin:0 0 20px;font-size:11px;color:var(--muted);padding:13px 18px;border:1px solid var(--line);border-radius:18px;line-height:1.6}
+    .admin-user-help>summary{cursor:pointer;list-style:none}
+    .admin-view-controls{display:flex;justify-content:flex-end;gap:4px;margin:8px 0}
+    html[data-admin-console="true"] .admin-view-controls{margin:0 0 0 auto;align-self:end;gap:4px}
+    .admin-users-search{gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0}
+    .admin-search-field{margin:0;flex:1 1 280px;min-width:0}
+    .admin-search-field>span{display:block;font-size:11px;font-weight:500;margin-bottom:6px;color:var(--muted)}
+    #users-search{width:100%;max-width:100%;box-sizing:border-box}
+    .admin-users-count{font-size:11px;margin:10px 0 0}
+    .admin-users-bulk{margin:0;gap:8px;flex-wrap:wrap}
+    .admin-users-cost{font-size:11px;line-height:1.6;margin:0;padding:10px 0 14px;border-bottom:1px solid var(--line)}
+    html[data-admin-console="true"] .admin-users-search button,html[data-admin-console="true"] #users-search{height:40px;min-height:40px;padding:9px 16px;border-radius:20px;box-sizing:border-box}
+    html[data-admin-console="true"] #panel-users>.panel-body>.admin-users-bulk{border:0;padding:12px 0 0}
+    html[data-admin-console="true"] .admin-users-bulk button{min-height:32px}
+    html[data-admin-console="true"] #panel-users>.panel-body>.actions{border-bottom:1px solid var(--line);padding:10px 0;align-items:center}
+    html[data-admin-console="true"] #panel-users label:has(>#users-pick-all){white-space:nowrap;flex-shrink:0}
+    .admin-view-controls button[aria-pressed="true"]{background:var(--blue);color:var(--on-accent)}
+    @media(max-width:899px){html[data-admin-console="true"] main{padding:8px}html[data-admin-console="true"] .admin-workspace-nav{flex-direction:row;overflow:auto;flex-wrap:nowrap;margin:10px 0;padding:6px;border:1px solid var(--line);border-radius:14px}html[data-admin-console="true"] .admin-workspace-nav::before{display:none}html[data-admin-console="true"] .admin-workspace-nav button{flex-shrink:0}html[data-admin-console="true"] #section-admin{min-height:calc(100dvh - 170px);padding:16px}html[data-admin-console="true"] .admin-refresh-bar{float:none;justify-content:flex-end;margin-bottom:12px}html[data-admin-console="true"] .admin-workspace-heading h3{padding-right:0}html[data-admin-console="true"] #admin-users{grid-template-columns:1fr}}
+    @media(max-width:1100px){html[data-admin-console="true"] #section-admin .admin-health-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:599px){.admin-search-field{flex-basis:100%}html[data-admin-console="true"] .admin-view-controls{margin-left:auto}html[data-admin-console="true"] #section-admin .admin-health-metrics>div{padding:12px}html[data-admin-console="true"] #section-admin .admin-health-metrics b{font-size:23px}.admin-users-bulk{gap:6px}html[data-admin-console="true"] .admin-users-bulk button{padding:6px 9px;font-size:11px}}
+    @media(max-width:599px){html[data-admin-console="true"] #panel-users>.panel-body{padding:16px}html[data-admin-console="true"] #admin-users .admin-user{padding:18px}.admin-user-help{padding:12px 14px}html[data-admin-console="true"] #admin-users{grid-template-columns:minmax(0,1fr)}}
 </style>
 </head>
 <body>
@@ -1735,7 +1834,9 @@
            我批了、他注册了）在上一行里会消失，而运营者恰恰想知道它发生过。时刻由服务端
            按人记（`admin_seen:<id>`），所以刷新页面、换设备、明天再来都还看得见。 -->
       <div id="admin-activity" class="admin-attention" role="status" aria-live="polite"></div>
-      <p class="help">只有服务器环境变量 <code>INFE_PILOT_ADMIN_EMAILS</code> 里列出的邮箱能看到这一页。此页不会显示任何密钥或邮箱授权码，只能看到"是否已配置"。</p>
+      <p class="help">只有获授权的管理员能看到这一页（环境变量指定或后台授权）。此页不会显示任何现有密钥或邮箱授权码，只能看到"是否已配置"。</p>
+      <nav id="admin-workspace-nav" class="admin-workspace-nav" aria-label="管理后台分区"></nav>
+      <div class="admin-workspace-heading"><h3 id="admin-workspace-title">运行总览</h3><p id="admin-workspace-description">收信与下发证据、待处理异常与近期变化。</p></div>
 
       <div class="metrics" id="admin-health" style="margin:12px 0"></div>
       <!-- 「信有没有到」的证据：每个邮箱最近一次取信、最近一封本校来信、24 小时几封。
@@ -1784,22 +1885,22 @@
                它**只影响显示**，不参与勾选的清理（`renderAdminUsers` 里那段注释
                说明了为什么：拿过滤后的名单去清理 `usersPicked`，搜一次就会把
                没显示出来的人的勾全丢掉，「刷新勾选的」于是静默少刷几个人）。 -->
-          <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0 0 8px">
-            <label style="margin:0">搜索用户
+          <div class="row admin-users-search">
+            <label class="admin-search-field"><span>搜索用户</span>
               <input id="users-search" type="search" autocomplete="off" inputmode="search"
-                     placeholder="邮箱 / 称呼 / 学校邮箱 / 转发邮箱 / 备注" style="width:280px;max-width:100%">
+                     placeholder="邮箱 / 称呼 / 学校邮箱 / 转发邮箱 / 备注">
             </label>
             <button id="users-search-clear" class="ghost" type="button">清空</button>
-            <span class="help" id="users-search-note">—</span>
           </div>
-          <div class="actions" style="margin:0 0 8px">
+          <div class="help admin-users-count" id="users-search-note">—</div>
+          <div class="actions admin-users-bulk">
             <label style="margin:0;display:inline-flex;gap:6px;align-items:center">
               <input type="checkbox" id="users-pick-all"> 全选</label>
             <button id="users-refresh-picked" class="secondary">刷新勾选的（0）</button>
             <button id="users-refresh-all" class="ghost">刷新全部（0）</button>
             <button id="users-refresh-stop" class="ghost" disabled>停止</button>
-            <span class="help" id="users-refresh-note">—</span>
           </div>
+          <div class="help admin-users-cost" id="users-refresh-note">—</div>
           <div id="users-refresh-progress" class="help"></div>
           <!-- 临时密码只在这里露面一次。它不写进任何持久的地方（不落库、不进日志、
                连审计行里也没有），所以这一块必须**留在屏幕上直到运营者自己关掉**：
