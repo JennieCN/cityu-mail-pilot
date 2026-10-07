@@ -3494,8 +3494,11 @@ function adminHealthMetricRows(health) {
     ['启用中', `${health.active_users}`, '人'],
     ['已暂停', `${health.paused_users}`, '人'],
     ['待处理队列', `${health.pending_messages}`, '封邮件'],
-    ['失败报告', `${health.failed_reports}`, health.failed_reports_digests
-      ? `份 · 逐封邮件 ${health.failed_reports_per_mail}，每日简报 ${health.failed_reports_digests}` : '份'],
+    ['累计失败记录', `${health.failed_reports}`, (health.failed_reports_digests
+      ? `份 · 逐封邮件 ${health.failed_reports_per_mail}，每日简报 ${health.failed_reports_digests}` : '份')
+      + (health.failed_reports_created_24h == null ? ' · 近24小时数据未提供'
+        : ` · 最近24小时创建且仍失败 ${health.failed_reports_created_24h} 份`)
+      + ' · 按创建时间统计，不等于当前故障数；旧记录不会因后续成功自动消失'],
     ['轮询在跑', `${health.mailboxes_polled_recently} / ${health.mailboxes}`, '个邮箱 · 含取信失败的'],
     ['登录正常', `${health.healthy_mailboxes} / ${health.mailboxes}`, '个在用的邮箱'
       + (health.mailboxes_paused ? `（另有 ${health.mailboxes_paused} 个已暂停，不算在内）` : '')
@@ -6012,7 +6015,11 @@ function adminAttentionItems() {
   // 「没处理」= 还开着、而且他没点过「已知晓」。已经知晓的不再问他一遍。
   push('alerts', (adminData.alerts || []).filter((row) => row.open && !row.acknowledged).length,
        'panel-alerts', '项巡检异常没人管', 'warn');
-  push('failed', Number(health.failed_reports || 0), 'panel-mail', '份报告生成失败', 'warn');
+  if (health.failed_reports_created_24h != null) {
+    push('failed', Number(health.failed_reports_created_24h), 'panel-mail', '份近24小时新建报告仍失败', 'warn');
+  } else {
+    push('failed', Number(health.failed_reports || 0), 'panel-mail', '份累计失败记录（近期数据未提供）');
+  }
   push('stalled', Number(adminData.stalled_users || 0), 'panel-reminders', '个账号还没配完');
   return items;
 }

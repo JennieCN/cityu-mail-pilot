@@ -31,13 +31,16 @@ class AdminWorkspaceTests(unittest.TestCase):
 const assert=require('node:assert/strict');
 function humanDuration(n){return `${n} 秒`}
 const rows=adminHealthMetricRows({users:97,max_users:300,active_users:92,paused_users:5,
-pending_messages:12,failed_reports:4,failed_reports_per_mail:3,failed_reports_digests:1,
+pending_messages:12,failed_reports:4,failed_reports_per_mail:3,failed_reports_digests:1,failed_reports_created_24h:2,
 mailboxes_polled_recently:28,mailboxes:30,healthy_mailboxes:26,mailboxes_paused:2,
 newest_poll_seconds:90,working:{ok:24},school_mail_24h:8,
 mailboxes_with_school_mail_24h:4,school_mail_7d:99});
 assert.equal(rows.length,8);
 rows.forEach(([label,value,note])=>{assert.match(value,/^\d+( \/ \d+)?$/);assert.ok(label&&note)});
 assert.equal(rows[4][1],'4');assert.match(rows[4][2],/逐封邮件 3，每日简报 1/);
+assert.equal(rows[4][0],'累计失败记录');
+assert.match(rows[4][2],/最近24小时创建且仍失败 2 份/);
+assert.match(rows[4][2],/不等于当前故障数/);
 assert.match(rows[5][2],/含取信失败/);
 assert.match(rows[6][2],/2 个已暂停/);assert.match(rows[6][2],/90 秒前/);
 assert.match(rows[6][2],/多 2 位/);assert.match(rows[6][2],/还没转发/);

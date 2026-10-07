@@ -4537,7 +4537,7 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def failed_reports_summary(self) -> dict[str, int]:
+    def failed_reports_summary(self, *, now: dt.datetime | None = None) -> dict[str, int]:
         """失败的报告拆成两个数：**逐封邮件的** 与 **每日简报的**。
 
         为什么要拆：2026-09-18 用户报「后台显示 5 个报告失败，但我刷新下发情况又没有」。
@@ -4545,14 +4545,23 @@ class Database:
         而每日简报按设计没有 `message_id`（它汇总一整天），所以简报失败永远不可能出现在
         那张表里。一个数字里混着两种东西，就必然有人对不上账。
         """
+        # Creation window, not last retry time or proof of an ongoing outage.
+        current = now or dt.datetime.now(dt.timezone.utc)
+        if current.tzinfo is None:
+            raise ValueError("now must be timezone-aware")
+        cutoff = current - dt.timedelta(hours=24)
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS total,"
-                " SUM(CASE WHEN kind='daily' THEN 1 ELSE 0 END) AS digests"
-                " FROM reports WHERE status='failed'").fetchone()
+                " SUM(CASE WHEN kind='daily' THEN 1 ELSE 0 END) AS digests,"
+                " SUM(CASE WHEN julianday(created_at)>=julianday(?)"
+                " AND julianday(created_at)<=julianday(?) THEN 1 ELSE 0 END) AS recent"
+                " FROM reports WHERE status='failed'",
+                (cutoff.isoformat(), current.isoformat())).fetchone()
         total = int(row["total"] or 0)
         digests = int(row["digests"] or 0)
-        return {"total": total, "digests": digests, "per_mail": total - digests}
+        return {"total": total, "digests": digests, "per_mail": total - digests,
+                "created_failed_24h": int(row["recent"] or 0)}
 
     def failed_digests(self, limit: int = 20) -> list[dict[str, Any]]:
         """失败的那几封每日简报：日期、收件地址、错误——给「下发情况」一个交代。

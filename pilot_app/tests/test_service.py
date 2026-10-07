@@ -625,6 +625,34 @@ class FailedReportAccountingTests(unittest.TestCase):
         for field in ("report_date", "sent_to", "last_error"):
             self.assertIn(field, row, f"面板要拿 {field} 说话")
 
+    def test_failed_creation_window_is_timezone_aware_and_not_history(self):
+        import datetime as dt
+        database = self._db()
+        cases = [
+            ("2026-10-06T12:00:00+00:00", "failed"),  # inclusive cutoff
+            ("2026-10-07T20:00:00+08:00", "failed"),  # inclusive now
+            ("2026-10-06T11:59:59+00:00", "failed"),
+            ("2026-10-07T12:00:01+00:00", "failed"),  # future excluded
+            ("2026-10-07T11:00:00+00:00", "sent"),
+        ]
+        for index, (created, status) in enumerate(cases):
+            rid = database.create_report(user_id="usr_1", message_id=None,
+                kind="daily", subject="s", body="b", sent_to="a@example.com",
+                report_date=f"2026-10-{index+1:02d}")
+            with database.connect() as connection:
+                connection.execute("UPDATE reports SET created_at=?,status=? WHERE id=?",
+                                   (created, status, rid))
+        summary = database.failed_reports_summary(now=dt.datetime(2026,10,7,12,tzinfo=dt.timezone.utc))
+        self.assertEqual(summary["total"], 4)
+        self.assertEqual(summary["created_failed_24h"], 2)
+
+    def test_failed_creation_window_empty_and_naive_clock(self):
+        import datetime as dt
+        database = self._db()
+        self.assertEqual(database.failed_reports_summary()["created_failed_24h"], 0)
+        with self.assertRaises(ValueError):
+            database.failed_reports_summary(now=dt.datetime(2026,10,7))
+
 
 class CredentialClassificationTests(unittest.TestCase):
     """Which model failures may be blamed on the user's key -- and which may not.

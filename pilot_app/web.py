@@ -3837,7 +3837,8 @@ def _failed_report_split(database) -> dict[str, int]:
     """失败报告的三个数：总数、逐封邮件的、每日简报的（定义只有一处）。"""
     summary = database.failed_reports_summary()
     return {"failed_reports_per_mail": summary["per_mail"],
-            "failed_reports_digests": summary["digests"]}
+            "failed_reports_digests": summary["digests"],
+            "failed_reports_created_24h": summary["created_failed_24h"]}
 
 
 @route("GET", "/api/admin/users")
