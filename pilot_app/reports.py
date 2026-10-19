@@ -526,6 +526,20 @@ def date_label(candidate: tuple[int, int, int, int]) -> str:
     return f"{year}/{month}/{day}" if year else f"{month}月{day}日"
 
 
+def _day_before(candidate: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """The day before a candidate, keeping the "did it carry a year" shape.
+
+    ``10月1日``（没有年份）也得答出 ``9月30日``，所以算术跑在一个闰年上，
+    原写法没有年份时再把年份丢掉 —— 否则跨月那一步会退化成 ``10月0日``。
+    """
+    _pos, year, month, day = candidate
+    try:
+        earlier = dt.date(year or 2000, month, day) - dt.timedelta(days=1)
+    except ValueError:
+        return None
+    return (candidate[0], earlier.year if year else 0, earlier.month, earlier.day)
+
+
 def months_to_numbers(text: str) -> str:
     """``"Oct 8"`` → ``"10 8"``，专给「动作里是不是已经写过这个截止」的数字比对用。
 
@@ -564,6 +578,11 @@ def deadline_of(text: str) -> str:
     is almost always the final date mentioned. English spellings (``Oct 8``,
     ``8 October 2026``) are the same date as their Chinese counterparts — a mail
     written in English must not lose its date and keep only its clock.
+
+    **午夜归前一天。** ``截止：2026-10-17 00:00`` 会被写成 ``2026/10/16 24:00``：
+    人话里的「17 号零点」就是「16 号睡前」，而按 17 号记会让清单、日报、.ics、
+    的日历会一起晚一天。只有**正好** 00:00 走这条规则 —— 00:30 之后是明确的
+    凌晨，不再有歧义。
     """
     raw = _strip_inline(text)
     clean = _collapse(raw)
@@ -578,15 +597,15 @@ def deadline_of(text: str) -> str:
     if active and any(date_candidates(part) for part in active):
         clean = _collapse("; ".join(active))
     marker = _DEADLINE_LEAD.search(clean)
-    candidates: list[tuple[int, str]] = []
-    for item in date_candidates(clean):
-        candidates.append((item[0], date_label(item)))
-    candidates.sort()
+    found = sorted(date_candidates(clean))
     pieces: list[str] = []
-    if candidates:
-        after_marker = [item for item in candidates if marker and item[0] >= marker.start()]
-        chosen = (after_marker or candidates)[-1]
-        pieces.append(chosen[1])
+    chosen: tuple[int, int, int, int] | None = None
+    if found:
+        after_marker = [item for item in found if marker and item[0] >= marker.start()]
+        chosen = (after_marker or found)[-1]
+        # 下面那个午夜规则要改写 `pieces[0]`，而它在这一行之后就固定是这个日期：
+        # 全函数只往后面追加时刻。
+        pieces.append(date_label(chosen))
     clock_matches = list(re.finditer(r"(?<!\d)([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)", clean))
     if clock_matches:
         interval = clock_range(clean)
@@ -595,13 +614,25 @@ def deadline_of(text: str) -> str:
             pieces.append(f"{start[0]:02d}:{start[1]:02d}–{end[0]:02d}:{end[1]:02d}")
         else:
             clock = clock_matches[-1]
-            pieces.append(f"{int(clock.group(1)):02d}:{clock.group(2)}")
+            hour, minute = int(clock.group(1)), int(clock.group(2))
+            earlier = _day_before(chosen) if (chosen and hour == 0 and minute == 0) else None
+            if earlier is not None:
+                # 「10月17日 00:00 截止」是人话里的「16 号睡前」。那一刻是 16 号的
+                # 第 24 点，不是 17 号的第 0 点 —— 用户是在 16 号晚上就该做完的，
+                # 而归到 17 号会让清单、日报、.ics 和日历**一起**晚一天。
+                # 写成 24:00 还有一个附带好处：`taskexport` 认时刻的那条正则不收
+                # 24 点，于是这一天自然落成一个**全天**事件，而不是一个凌晨 0 点的
+                # 假约会。
+                pieces[0] = date_label(earlier)
+                pieces.append("24:00")
+            else:
+                pieces.append(f"{hour:02d}:{minute:02d}")
     for marker_word in ("今天", "明天", "后天", "本周", "这周", "下周", "周一", "周二", "周三",
                         "周四", "周五", "周六", "周日", "星期", "tonight", "today", "tomorrow",
                         "this week", "next week"):
         if marker_word not in clean:
             continue
-        if candidates:
+        if chosen is not None:
             # An absolute date (with or without a clock time) already answers
             # "by when"; also printing "周五" reads as a second, contradicting
             # deadline, so the relative marker is only a last resort.

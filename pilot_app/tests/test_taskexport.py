@@ -142,6 +142,40 @@ class DateTests(unittest.TestCase):
         self.assertIn("以邮件为准", title)
 
 
+class MidnightDeadlineTests(unittest.TestCase):
+    """A deadline the mail calls 「17 号 00:00」 is the end of the **16th**.
+
+    ``reports.deadline_of`` writes that instant as ``2026/10/16 24:00`` (see
+    ``test_reports.MidnightDeadlineTests``). What has to hold *downstream* is
+    three things: the event belongs to the 16th, it stays an all-day event
+    (24:00 is not a wall-clock an alarm should ring at), and the row must not end
+    up printing two deadlines because the action spells it the other way.
+    """
+
+    MIDNIGHT = task(action="提交作业到 Canvas（截止：2026-10-17 00:00）",
+                    deadline="2026/10/16 24:00")
+
+    def test_the_event_lands_on_the_previous_day(self):
+        day, clock = tx.deadline_day_and_clock(self.MIDNIGHT, today=dt.date(2026, 10, 12))
+        self.assertEqual(day, dt.date(2026, 10, 16))
+        self.assertIsNone(clock, "24 点不是能定闹钟的时刻，不该长出凌晨的约会")
+
+    def test_it_stays_an_all_day_event(self):
+        lines = unfold(tx.build_ics([self.MIDNIGHT], today=dt.date(2026, 10, 12)))
+        self.assertIn("DTSTART;VALUE=DATE:20261016", lines)
+        self.assertIn("DTEND;VALUE=DATE:20261017", lines)
+        self.assertEqual([line for line in lines if line.startswith("DTSTART;TZID")], [])
+
+    def test_the_row_does_not_print_two_deadlines(self):
+        line = tx.line_for(self.MIDNIGHT)
+        self.assertEqual(line.count("截止"), 1, line)
+        self.assertIn("2026-10-17 00:00", line, "动作原文照旧，一个字都不改")
+
+    def test_a_deadline_the_action_does_not_mention_is_still_printed(self):
+        quiet = task(action="提交作业到 Canvas", deadline="2026/10/16 24:00")
+        self.assertIn("（截止 2026/10/16 24:00）", tx.line_for(quiet))
+
+
 class TextTests(unittest.TestCase):
     def test_escaping_happens_at_the_ics_boundary(self):
         """`line_for` 给的是人读的文本（清单要粘得进去），转义只发生在 iCalendar 那一层。

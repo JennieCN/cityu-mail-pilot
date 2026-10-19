@@ -257,7 +257,35 @@ def _already_states(action: str, deadline: str) -> bool:
     wanted = _numbers(deadline)
     if not wanted:
         return False
-    return set(wanted) <= set(_numbers(action))
+    have = set(_numbers(action))
+    if set(wanted) <= have:
+        return True
+    # 午夜那一条的另一种写法（见 `_midnight_other_spelling`）：我们的标签是
+    # 「16 日 24:00」，而动作里写的几乎总是「17 日 00:00」。不认这一对，同一行
+    # 就会印出两个截止时间 —— 而这个函数存在的全部理由就是防那件事。
+    other = _midnight_other_spelling(deadline)
+    return bool(other) and other <= have
+
+
+def _midnight_other_spelling(deadline: str) -> set[int]:
+    """The same instant written the other way round midnight, as numbers.
+
+    ``reports.deadline_of`` writes a deadline that reads 「16 号睡前」 as
+    ``2026/10/16 24:00``; the sentence the model wrote almost always says
+    ``2026-10-17 00:00``. Compared as they stand, those look like two deadlines.
+    """
+    match = re.search(r"(?<!\d)24[:：]00(?!\d)", deadline)
+    if not match:
+        return set()
+    found = reports.date_candidates(deadline[:match.start()])
+    if not found:
+        return set()
+    _pos, year, month, day = found[-1]
+    try:
+        later = dt.date(year or 2000, month, day) + dt.timedelta(days=1)
+    except ValueError:
+        return set()
+    return set(_numbers(f"{later.month}/{later.day} 00:00"))
 
 
 def _base_title(task: Mapping[str, Any]) -> str:

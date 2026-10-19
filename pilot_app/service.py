@@ -12,7 +12,7 @@ import time
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import alerts, budget, digest_synthesis, mailio, pricing, prompts, providers, reports, tierhealth, triage
+from . import alerts, budget, calendar_index, digest_synthesis, mailio, pricing, prompts, providers, reports, tierhealth, triage
 from .database import Database
 from .security import SecretBox
 
@@ -481,6 +481,30 @@ class PilotService:
 
     def encrypt_report(self, value: str, user_id: str) -> bytes:
         return self.secrets.encrypt(value, context=f"report:{user_id}")
+
+    def _index_calendar_report(self, report_id: str, user_id: str, report: str,
+                               message: dict[str, Any], profile: dict[str, Any] | None) -> None:
+        """Publish the rebuildable date projection alongside a newly saved report."""
+        timezone = str((profile or {}).get("timezone") or "Asia/Hong_Kong")
+        indexed = calendar_index.project_report(
+            self.secrets, user_id,
+            {
+                "id": report_id,
+                "message_id": message.get("id") or "",
+                "message_subject": message.get("subject") or "",
+                "sender_name": message.get("sender_name") or "",
+                "sender_address": message.get("sender_address") or "",
+                "received_at": message.get("received_at") or "",
+                "importance": message.get("importance") or "normal",
+            },
+            report, timezone,
+            fallback_day=dt.datetime.now(ZoneInfo(timezone)).date().isoformat(),
+        )
+        self.db.replace_calendar_report_index(
+            report_id, user_id, timezone=timezone,
+            parser_version=calendar_index.INDEX_VERSION,
+            key_fingerprint=self.secrets.fingerprint(), status="indexed", tasks=indexed,
+        )
 
     def decrypt_message(self, value: str | bytes, user_id: str) -> str:
         # A skipped mail stores an empty body on purpose; it is never queued, so
@@ -954,7 +978,15 @@ class PilotService:
                 report_id = self.db.create_report(
                     user_id=message["user_id"], message_id=message["id"], kind="immediate",
                     subject=subject, body=self.encrypt_report(report, message["user_id"]), sent_to=mailbox["report_to"],
+                    received_at=str(message.get("received_at") or ""),
                 )
+                try:
+                    self._index_calendar_report(report_id, message["user_id"], report,
+                                                message, profile)
+                except Exception as exc:
+                    # Calendar indexing is derived data: a failure must not stop
+                    # delivery. The next calendar request will retry from report.
+                    logging.warning("calendar index deferred report=%s: %s", report_id, exc)
                 log_guard_escalation(guard, user_id=message["user_id"], report_id=report_id,
                                      message_id=message["id"], kind="brief" if brief_mode else "immediate")
             if brief_mode:

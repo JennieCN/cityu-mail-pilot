@@ -368,26 +368,29 @@ class ImportTests(unittest.TestCase):
         self.database = database.Database(os.path.join(self.temporary.name, "pilot.sqlite3"))
         self.database.initialize()
         self.secrets = SecretBox(b"2" * 32)
+        self.now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
     def _row(self, **overrides):
         values = dict(ip="8.8.8.9", path="/", status=200, method="GET",
                       referrer="https://t.co/x", user_agent=IPHONE,
-                      created_at="2026-09-15T16:09:35+00:00")
+                      created_at=self.now.isoformat(timespec="seconds"))
         values.update(overrides)
         return analytics.import_row(self.secrets, **values)
 
     def _write_log(self, *addresses: str) -> None:
         """One real combined-format line per address, as nginx writes them."""
         self.log_path = os.path.join(self.temporary.name, "access.log")
+        local_now = self.now.astimezone(dt.timezone(dt.timedelta(hours=8)))
         lines = [
-            f'{address} - - [16/Sep/2026:00:09:3{index} +0800] "GET / HTTP/1.1" 200 2413 "-" "{IPHONE}"'
+            f'{address} - - [{(local_now + dt.timedelta(seconds=index)).strftime("%d/%b/%Y:%H:%M:%S")} +0800] "GET / HTTP/1.1" 200 2413 "-" "{IPHONE}"'
             for index, address in enumerate(addresses)
         ]
         with open(self.log_path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
 
     def test_the_same_log_imported_twice_is_a_no_op(self) -> None:
-        rows = [self._row(), self._row(path="/app", created_at="2026-09-15T16:10:00+00:00")]
+        later = (self.now + dt.timedelta(seconds=25)).isoformat(timespec="seconds")
+        rows = [self._row(), self._row(path="/app", created_at=later)]
         self.assertEqual(self.database.record_page_views(rows), (2, 0))
         self.assertEqual(self.database.record_page_views(rows), (0, 2), "第二次导入应当全部是重复")
         self.assertEqual(self.database.page_view_totals(days=30)["pv"], 2)
@@ -398,10 +401,10 @@ class ImportTests(unittest.TestCase):
         # dropping one would silently under-count real traffic.
         self.assertTrue(analytics.record(self.database, self.secrets, ip="8.8.8.9", path="/",
                                          status=200, user_agent=IPHONE,
-                                         now=dt.datetime(2026, 9, 15, 16, 9, 35, tzinfo=dt.timezone.utc)))
+                                         now=self.now))
         self.assertTrue(analytics.record(self.database, self.secrets, ip="8.8.8.9", path="/",
                                          status=200, user_agent=IPHONE,
-                                         now=dt.datetime(2026, 9, 15, 16, 9, 35, tzinfo=dt.timezone.utc)))
+                                         now=self.now))
         totals = self.database.page_view_totals(days=30)
         self.assertEqual(totals["pv"], 2)
         self.assertEqual(totals["uv"], 1)

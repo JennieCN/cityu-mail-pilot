@@ -432,6 +432,55 @@ class DigestTests(unittest.TestCase):
         self.assertIn("3 件待办", subject)
 
 
+class MidnightDeadlineTests(unittest.TestCase):
+    """「10月17日 00:00 截止」是人话里的「16 号睡前」。
+
+    用户原话：10.16 号晚上 12 点的 ddl 是我在 16 号睡前就应该做完的，而不是归到
+    10.17 的 0 点。这一刻是 16 号的第 24 点，不是 17 号的第 0 点；按 17 号记，
+    清单、日报、.ics 和日历会**一起**晚一天，而用户是在 16 号晚上就该做完的。
+    """
+
+    def test_midnight_moves_to_the_end_of_the_day_before(self):
+        self.assertEqual(reports.deadline_of("提交（截止：2026-10-17 00:00）"),
+                         "2026/10/16 24:00")
+        self.assertEqual(reports.deadline_of("提交（截止：10月17日 00:00）"),
+                         "10月16日 24:00")
+
+    def test_a_month_boundary_lands_on_a_real_day(self):
+        """11 月 1 日零点退回 10 月 31 日，而不是「10月0日」。"""
+        self.assertEqual(reports.deadline_of("提交（截止：2026-11-01 00:00）"),
+                         "2026/10/31 24:00")
+
+    def test_a_year_boundary_lands_on_a_real_day(self):
+        self.assertEqual(reports.deadline_of("提交（截止：2027-01-01 00:00）"),
+                         "2026/12/31 24:00")
+
+    def test_a_yearless_spelling_does_not_grow_a_year(self):
+        """原本没写年份的写法，退回前一天也不该凭空长出一个年份。"""
+        self.assertEqual(reports.deadline_of("提交（截止：1月1日 00:00）"), "12月31日 24:00")
+
+    def test_only_exactly_midnight_is_moved(self):
+        """00:30 之后是明确的凌晨，不再有歧义 —— 只有正好 00:00 走这条规则。"""
+        self.assertEqual(reports.deadline_of("提交（截止：2026-10-17 00:30）"),
+                         "2026/10/17 00:30")
+        self.assertEqual(reports.deadline_of("提交（截止：2026-10-17 09:00）"),
+                         "2026/10/17 09:00")
+        self.assertEqual(reports.deadline_of("提交（截止：2026-09-18 23:59）"),
+                         "2026/9/18 23:59")
+
+    def test_an_explicit_24_00_is_already_saying_the_same_thing(self):
+        """「24:00」本来就落在它自己那一天，不必再退一天，也不该被退两次。"""
+        self.assertEqual(reports.deadline_of("提交（截止：2026-10-16 24:00）"), "2026/10/16")
+
+    def test_a_clock_with_no_date_is_left_alone(self):
+        """没有日期的 00:00 没有可退的那一天，保持原样（它本来也不会长出约会）。"""
+        self.assertEqual(reports.deadline_of("今晚 00:00 前提交"), "00:00")
+
+    def test_an_interval_is_not_a_midnight_deadline(self):
+        """明确的区间（``00:00–02:00``）说的是开始时刻，不是截止那一刻。"""
+        self.assertEqual(reports.deadline_of("开放时间 00:00–02:00"), "00:00–02:00")
+
+
 class SubjectTests(unittest.TestCase):
     def test_subject_line_does_not_contain_message_body(self):
         subject = "【AI邮件摘要】课程作业截止日期更新"

@@ -616,6 +616,9 @@ async function refreshDashboard({ notify = false } = {}) {
     const [dashboardData, view] = await Promise.all([
       api('/api/dashboard'),
       api(day ? `/api/tasks/day/${day}` : '/api/tasks'),
+      // 截止日历是单独一块，和上面两块并行拉。它自己吞掉错误（失败只在那一块里
+      // 写一行），所以一个读不出来的日历不会把整次首页刷新变成失败。
+      loadCalendar(),
     ]);
     dash = dashboardData;
     taskView = view;
@@ -1039,6 +1042,11 @@ function renderHero() {
 function handleNextStep(kind) {
   if (kind === 'verify') { verifyMailbox(); return; }
   if (kind === 'task') {
+    // The task list is intentionally collapsed behind the four summary cards.
+    // The hero's "查看任务" action must open that details block before scrolling,
+    // otherwise the browser would scroll to a hidden list and appear to do nothing.
+    const details = $('panel-tasks-detail');
+    if (details) details.open = true;
     document.getElementById('tasks').scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
@@ -1203,8 +1211,19 @@ function renderLookHere(links) {
   list.classList.toggle('hidden', !(links || []).length);
 }
 
-// 翻译 / 总结那两个按钮的状态。演示模式是**只读**的：这两个动作要调模型（要花钱），
-// 演示里不调。按钮留着但禁用并说明原因，比藏起来诚实——用户知道正式版有这两个功能。
+// 原信只有成功取回正文后才可交给模型；读取中、失败和正文为空时都禁用翻译 / 总结。
+function setOriginalAssistAvailable(available) {
+  const demo = demoMode();
+  ['original-translate', 'original-summary'].forEach((id) => {
+    const button = $(id);
+    if (!button) return;
+    button.disabled = demo || !available;
+    button.title = demo
+      ? '只读演示：翻译与总结要调用 AI，正式账号里可用'
+      : (available ? '' : '成功读取原信后才可使用');
+  });
+}
+
 function resetAssist() {
   const box = $('original-assist');
   if (box) box.classList.add('hidden');
@@ -1214,13 +1233,7 @@ function resetAssist() {
   if (label) label.textContent = '';
   const note = $('original-assist-note');
   if (note) { note.textContent = ''; note.classList.add('hidden'); }
-  const demo = demoMode();
-  ['original-translate', 'original-summary'].forEach((id) => {
-    const button = $(id);
-    if (!button) return;
-    button.disabled = demo;
-    button.title = demo ? '只读演示：翻译与总结要调用 AI，正式账号里可用' : '';
-  });
+  setOriginalAssistAvailable(false);
 }
 
 async function assistOriginal(kind, button) {
@@ -1279,6 +1292,8 @@ async function openOriginal(task) {
   const help = $('original-help');
   assistOriginal.task = task;
   resetAssist();
+  const copy = $('original-copy');
+  if (copy) copy.disabled = !task.subject;
   // 打开就立刻有反应：一次 IMAP 往返要一两秒，什么都不显示会让人以为没点上，
   // 然后连点五次 —— 那正好是限流会拦下来的行为。
   title.textContent = '正在从你的邮箱取回这一封…';
@@ -1304,13 +1319,36 @@ async function openOriginal(task) {
     return;
   }
   title.textContent = data.subject || task.subject || '（无主题）';
+  if (copy) copy.disabled = !(data.subject || task.subject);
   const who = data.sender_name ? `${data.sender_name} <${data.sender_address}>` : (data.sender_address || '');
   meta.textContent = [who, momentText(data.received)].filter(Boolean).join(' · ');
   body.textContent = data.body || '（这封信没有可显示的正文）';
+  setOriginalAssistAvailable(data.live !== false && Boolean(data.body));
   note.textContent = data.live === false
     ? '演示数据：这里显示的是一封示例来信。'
     : `${data.truncated ? '这封信很长，只显示了前面一部分。' : ''}实时从你的邮箱读取，服务器不留存。`;
   if (data.look_here && data.look_here.length) renderLookHere(data.look_here);
+}
+
+function openOriginalUnavailable(task) {
+  const box = $('original');
+  if (!box) return;
+  const subject = String(task.subject || '').trim();
+  assistOriginal.task = task;
+  resetAssist();
+  $('original-title').textContent = '原信暂不可用';
+  $('original-meta').textContent = subject || '这条任务没有关联的邮件主题';
+  $('original-body').textContent = subject
+    ? '这条历史任务没有可用的邮件记录，无法从邮箱直接读取原信。你可以复制主题，再到下面列出的邮箱中搜索。'
+    : '这条历史任务没有关联的邮件记录或主题，无法从邮箱定位原信。';
+  $('original-note').textContent = '邮件正文不会保存在服务器上。';
+  $('original-help').textContent = '请选择你使用的邮箱；如果有主题，先点「复制主题」再搜索。';
+  const copy = $('original-copy');
+  if (copy) copy.disabled = !subject;
+  renderLookHere((dash && dash.look_here) || []);
+  box.classList.remove('hidden');
+  const card = $('original-card');
+  if (card) card.focus();
 }
 
 // 「轻重缓急」是用户自己的判断，和来信里那个由模型读出来的 priority 是两件事：
@@ -1468,6 +1506,16 @@ function renderTasks() {
   clear(list);
   if (!view) return;
 
+  const detailNote = $('tasks-detail-note');
+  if (detailNote) {
+    const openCount = (view.tasks || []).length;
+    const messageCount = new Set((view.tasks || []).map((task) => task.message_id).filter(Boolean)).size;
+    const snoozedCount = (view.snoozed || []).length;
+    detailNote.textContent = openCount
+      ? `${messageCount || openCount} 封邮件 · ${openCount} 件待办`
+      : (snoozedCount ? `${snoozedCount} 件稍后提醒` : '今天暂无具体待办');
+  }
+
   const label = $('task-day-label');
   label.textContent = view.is_today ? `今天 · ${view.day}` : `${view.day} 的清单`;
   $('task-back-today').classList.toggle('hidden', view.is_today);
@@ -1542,6 +1590,243 @@ async function loadTasksFor(day) {
     renderTaskSummary();
   } catch (error) {
     setStatus('status-note', `无法读取任务：${error.message}`, 'error');
+  }
+}
+
+/* ---------------------------------------------------------------- calendar */
+
+/* 首页那块「截止日历」。
+ *
+ * 它是一个**视图**，不是一个存储：格子里每一条都来自上面那份清单读的同一批
+ * 报告，所以「刚分析完的邮件」不需要任何导入动作就会出现在这里，也不存在第二份
+ * 副本能和报告不一致。用户说的「自动」，来源就是这个：没有中间态可维护。
+ *
+ * 服务端连「这个月第一天是周几」「这个月几天」一起发下来，浏览器不自己算日历 ——
+ * 每个地区对「第一列是周日还是周一」的看法都不同，那种规则一旦写在两边，
+ * 迟早会有一边是错的。
+ */
+
+const CAL_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+const CAL_WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+let calendarMonth = '';        // 已经画出来的那个月（服务端给的，可能是它回退过的）
+let calendarWanted = '';       // 用户正在前往的那个月；'' = 让服务端给今天所在的月份
+let calendarDay = '';          // 用户点开的那一格
+let calendarSeq = 0;           // 只认最后一次发起的那次请求，见 loadCalendar
+
+function calDayText(day) {
+  // 手写解析而不是 `new Date('2026-10-06')`：后者按 UTC 午夜解析，在负时区的
+  // 浏览器里会退回前一天，而那正好是「日历上的日子不对」这类最难解释的 bug。
+  const parts = String(day || '').split('-').map(Number);
+  if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return String(day || '');
+  const local = new Date(parts[0], parts[1] - 1, parts[2]);
+  return `${parts[1]}月${parts[2]}日 ${CAL_WEEKDAY_NAMES[local.getDay()] || ''}`.trim();
+}
+
+/* 前后一个月的**算术**放在这里，而不是读服务端回的 prev/next。
+ *
+ * 不是因为算不动，而是因为连点：三下 ‹ 如果每次都从「已经画出来的那个月」的
+ * prev 去算，三次读到的都是同一个值，于是三次请求都要同一个月 —— 用户点了三下，
+ * 只退一个月。改从 `calendarWanted`（上一次**想去**的月份）接着算，每一下都算数。
+ *
+ * 网格的形状（第一个是周几、这个月几天）仍然由服务端给：那一条才是会因地区而异的
+ * 规则，不该在两边各写一份。
+ */
+function calShift(month, delta) {
+  const parts = String(month || '').split('-').map(Number);
+  if (parts.length !== 2 || parts.some((value) => !Number.isFinite(value))) return '';
+  const index = parts[0] * 12 + (parts[1] - 1) + delta;
+  return `${String(Math.floor(index / 12)).padStart(4, '0')}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
+function stepCalendar(delta) {
+  const base = calendarWanted || calendarMonth;
+  // 首屏还没回来时没有可以进/退的参照，点一下就当没点。
+  if (!base) return;
+  loadCalendar(calShift(base, delta));
+}
+
+async function loadCalendar(month) {
+  const card = $('calendar-card');
+  if (!card) return;
+  if (demoMode()) {
+    // 演示数据是一份冻结的 fixture，里面没有这个接口的数据。藏起来比让整块
+    // 显示成「演示里没有这个接口」要诚实。
+    card.classList.add('hidden');
+    return;
+  }
+  const wanted = month === undefined ? calendarWanted : month;
+  calendarWanted = wanted;
+  // 连点两下 ‹ 会发两次请求，而它们回来的顺序没有保证。谁最后到就用谁，会把
+  // 用户已经翻过去的那一个月又画回来（而且看起来像「点了没反应」）。所以每次
+  // 递增一个序号，**只有最后一次发起的那个才允许写界面**。
+  const seq = (calendarSeq += 1);
+  try {
+    const data = await api('/api/tasks/calendar'
+      + (wanted ? `?month=${encodeURIComponent(wanted)}` : ''));
+    if (seq !== calendarSeq) return;
+    if (data.index && !data.index.ready) {
+      const grid = $('cal-grid');
+      if (grid) clear(grid);
+      const detail = $('cal-day');
+      if (detail) detail.classList.add('hidden');
+      $('cal-label').textContent = data.label;
+      const legend = $('cal-legend');
+      legend.className = 'help';
+      legend.textContent = `正在准备完整日历 · ${data.index.indexed} / ${data.index.total} 封邮件`;
+      calendarWanted = data.month;
+      window.setTimeout(() => {
+        if (seq === calendarSeq) loadCalendar(data.month);
+      }, 500);
+      return;
+    }
+    calendarMonth = data.month;
+    // 服务端会把非法月份（比如翻过了 1970-01）退回来，以它实际给的为准重新对齐，
+    // 否则后面的点击会一直按一个服务端根本不肯给的月份往前算。
+    calendarWanted = data.month;
+    renderCalendar(data);
+  } catch (error) {
+    if (seq !== calendarSeq) return;
+    setStatus('cal-legend', `读不到日历：${error.message}`, 'error');
+  }
+}
+
+function renderCalendar(data) {
+  $('cal-label').textContent = data.label;
+  $('cal-today').classList.toggle('hidden', data.month === String(data.today).slice(0, 7));
+
+  const byDay = {};
+  data.cells.forEach((cell) => { byDay[cell.day] = cell; });
+  const showing = calendarDay.startsWith(data.month) ? calendarDay : '';
+
+  const grid = $('cal-grid');
+  clear(grid);
+  CAL_WEEKDAYS.forEach((name) => grid.appendChild(el('div', 'cal-head', name)));
+  for (let blank = 0; blank < data.first_weekday; blank += 1) {
+    grid.appendChild(el('div', 'cal-cell blank'));
+  }
+  for (let date = 1; date <= data.days_in_month; date += 1) {
+    const key = `${data.month}-${String(date).padStart(2, '0')}`;
+    const cell = byDay[key];
+    const classes = ['cal-cell'];
+    if (key === data.today) classes.push('today');
+    if (key === showing) classes.push('current');
+    // 急事继续保留红色日期边框；普通待办日期只用圆点，避免每格都被框起来。
+    if (cell && cell.urgent) classes.push('urgent');
+    const node = cell ? el('button', `has ${classes.join(' ')}`) : el('div', classes.join(' '));
+    node.appendChild(el('span', 'n', date));
+    if (key === data.today) node.setAttribute('aria-current', 'date');
+    const dots = el('div', 'cal-dots');
+    // 每天只画一个点：红＝有急事，蓝＝有待办，灰＝只有已处理事项。
+    // 急事优先级来自服务端 `urgent`，不在浏览器里重复判断。
+    if (cell && (cell.open || cell.done)) {
+      const marker = cell.open ? (cell.urgent ? 'open urgent' : 'open') : 'done';
+      dots.appendChild(el('i', marker));
+    }
+    node.appendChild(dots);
+    if (cell) {
+      const bits = [];
+      if (cell.open) bits.push(`${cell.open} 件待办${cell.urgent ? '（含急事）' : ''}`);
+      if (cell.done) bits.push(`已处理 ${cell.done}`);
+      node.setAttribute('aria-label', `${calDayText(key)}，${bits.join('，') || '没有待办'}`);
+      node.setAttribute('aria-pressed', String(key === showing));
+      node.addEventListener('click', () => {
+        calendarDay = key;
+        renderCalendar(data);
+      });
+    }
+    grid.appendChild(node);
+  }
+
+  renderCalendarDay(byDay, showing);
+
+  const { open, done } = data.counts;
+  const legend = $('cal-legend');
+  // 读不出来的报告必须说出来：跳过和丢信在用户眼里长得一模一样，而这里少了
+  // 一条任务，看起来和「这封邮件本来就没有待办」没有区别。
+  const missed = data.unreadable
+    ? `${data.unreadable} 封报告暂不可读，日历可能不完整`
+    : '';
+  legend.className = `help cal-legend${data.unreadable ? ' warn' : ''}`;
+  const summary = (!open && !done)
+    ? '本月暂无任务'
+    : `待办 ${open}${done ? ` · 已处理 ${done}` : ''}`;
+  legend.textContent = [summary, missed].filter(Boolean).join(' · ');
+}
+
+function renderCalendarDay(byDay, showing) {
+  const box = $('cal-day');
+  clear(box);
+  if (!showing) {
+    box.classList.add('hidden');
+    return;
+  }
+  // 一格可以因为「这一天的最后一件被处理掉了」而不复存在，但用户点开的那一天
+  // 不该跟着消失 —— 他会以为点错了。所以这一天用空壳继续显示，并说明它是空的。
+  const cell = byDay[showing] || { day: showing, open: 0, done: 0, items: [] };
+  box.classList.remove('hidden');
+
+  const bits = [cell.open ? `${cell.open} 件待办` : '没有待办'];
+  if (cell.done) bits.push(`已处理 ${cell.done}`);
+  box.appendChild(el('h3', null, `${calDayText(cell.day)} · ${bits.join(' · ')}`));
+
+  if (!cell.items.length) {
+    box.appendChild(el('p', 'help', cell.done
+      ? '这一天的都处理完了。'
+      : '这一天没有被解析出截止时间的邮件。'));
+  }
+  cell.items.forEach((item) => {
+    const row = el('div', 'cal-item');
+    const tick = el('button', 'secondary cal-complete', '完成');
+    tick.title = '标为「处理好了」';
+    tick.setAttribute('aria-label', `把「${item.text}」标为处理好了`);
+    tick.addEventListener('click', () => completeCalendarTask(item, tick));
+    row.appendChild(tick);
+    const body = el('div', 'body');
+    body.appendChild(el('div', null, item.text));
+    // `item.text` 来自 line_for，已经包含完整截止日期 / 时刻；不要再显示一次。
+    // 没有可解析截止日期时仍须说明：格子按来信日期显示。
+    const when = item.dated ? '' : '无截止日期 · 按来信日期显示';
+    const meta = el('div', 'when');
+    meta.textContent = [when, item.subject].filter(Boolean).join(' · ');
+    body.appendChild(meta);
+    if (item.message_id) {
+      const view = el('button', 'secondary cal-original', '看原信');
+      view.type = 'button';
+      view.title = '当场从你的邮箱读取这一封，服务器不留存';
+      view.setAttribute('aria-label', `查看邮件「${item.subject || item.text}」的原信`);
+      view.addEventListener('click', () => openOriginal(item));
+      body.appendChild(view);
+    } else {
+      body.appendChild(el('div', 'when cal-original-unavailable', '原信暂不可用'));
+      const find = el('button', 'secondary cal-original', '到邮箱查找');
+      find.type = 'button';
+      find.title = '打开可用邮箱入口，并复制主题搜索这条历史邮件';
+      find.addEventListener('click', () => openOriginalUnavailable(item));
+      body.appendChild(find);
+    }
+    row.appendChild(body);
+    box.appendChild(row);
+  });
+}
+
+async function completeCalendarTask(item, button) {
+  button.disabled = true;
+  try {
+    await api(`/api/tasks/${encodeURIComponent(item.task_key)}`, {
+      method: 'PUT',
+      // 「处理好了」不属于任何一天，所以这里不带 day：服务端回的整天视图我们
+      // 也用不上，日历自己会重画。
+      body: JSON.stringify({ state: 'done' }),
+    });
+    // 同一条任务也挂在上面的清单里。它属于正在看的那一天时，那张清单必须跟着变，
+    // 否则用户看到的是「日历说处理了，清单还挂着」。
+    if (taskView && taskView.day === item.task_day) await loadTasksFor(item.task_day);
+    await loadCalendar(calendarMonth);
+    toast('已处理好了', 'ok');
+  } catch (error) {
+    button.disabled = false;
+    toast(`没能保存：${error.message}`, 'error');
   }
 }
 
@@ -2625,6 +2910,22 @@ $('task-export-all').addEventListener('click', () => {
 $('task-export-none').addEventListener('click', () => {
   taskPicked = new Set();
   renderTasks();
+});
+// 逐个判空：这三颗按钮只是日历的一部分，缺一颗不该让同一段里后面所有接线
+// （暂停、退出、导出、删账号…）跟着一起不跑 —— 那种故障看起来和这个功能毫无
+// 关系，最难查。
+[
+  ['cal-prev', () => stepCalendar(-1)],
+  ['cal-next', () => stepCalendar(1)],
+  ['cal-today', () => {
+    // 回本月并清掉选中日期；日期详情只在用户主动点开时出现。
+    calendarDay = '';
+    calendarWanted = '';
+    loadCalendar('');
+  }],
+].forEach(([id, handler]) => {
+  const node = $(id);
+  if (node) node.addEventListener('click', handler);
 });
 $('pause').addEventListener('click', async () => {
   if (confirm('暂停后不会再读取或发送邮件。继续吗？')) {

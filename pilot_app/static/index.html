@@ -433,6 +433,60 @@
                  font-size:14px;cursor:pointer}
     .history-day.current{border-color:var(--blue)}
     .history-day .count{float:right;color:var(--muted)}
+
+    /* 截止日历。格子按**截止日**排，用的是和「导出到手机日历」同一个
+       `deadline_day_and_clock`，所以三处不会把同一条任务放在不同的日子上。
+       格子尺寸用 aspect-ratio 固定下来：有内容的日子会长出圆点，尺寸一变，
+       整片网格就会在刷新时抖动。 */
+    .cal-nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .cal-nav button{padding:6px 10px}
+    .cal-label{font-weight:600;font-size:14px;min-width:104px;text-align:center}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin-top:8px}
+    .cal-head{font-size:12px;color:var(--muted);text-align:center;padding:3px 0}
+    .cal-cell{position:relative;aspect-ratio:1/1;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:3px;padding:2px;min-width:0;
+      border:1px solid transparent;border-radius:10px;background:transparent;
+      font:inherit;font-size:14px;color:inherit;text-align:center}
+    .cal-cell.blank{visibility:hidden}
+    .cal-cell.today{background:var(--surface-2);font-weight:650}
+    .cal-cell.has{cursor:pointer}
+    .cal-cell.has:hover{background:var(--surface-2)}
+    /* 急事日期继续用报告里的红框；普通待办日期只留蓝点。
+       红色和边框粗细共同标出急事；`box-sizing:border-box` 是全局的，所以加粗
+       不改外层尺寸，整片网格不会跟着抖。 */
+    .cal-cell.urgent{border-color:var(--bad);border-width:2px}
+    .cal-cell.current{outline:2px solid var(--blue);outline-offset:1px}
+    /* 选中的急事日同时保留红色急事框和蓝色选中圈：两个状态各有自己的颜色。 */
+    .cal-cell.current.urgent{outline-color:var(--blue)}
+    .cal-dots{display:flex;gap:3px;align-items:center;min-height:6px}
+    .cal-dots i{width:6px;height:6px;border-radius:99px;display:inline-block}
+    .cal-dots .open{background:var(--blue)}
+    /* 急事：用的是报告里「高」同一个语义色 token（--bad），不是日历自己挑的颜色。只换颜色不换尺寸 ——
+       圆点一大，格子里的内容就会跟着上下跳。 */
+    .cal-dots .open.urgent{background:var(--bad)}
+    .cal-dots .done{background:var(--muted)}
+    .cal-meta{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;flex-wrap:wrap;margin-top:8px}
+    .cal-legend{font-size:12px;color:var(--muted)}
+    .cal-legend.warn{color:var(--warn)}
+    .cal-key{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px}
+    .cal-key span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+    .cal-key i{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--blue)}
+    .cal-key .done{background:var(--muted)}
+    .cal-key .urgent{background:var(--bad)}
+    .cal-hint{font-size:12px;color:var(--muted)}
+    .cal-day{margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px}
+    .cal-day h3{font-size:14px;margin:0 0 6px}
+    .cal-item{display:flex;gap:10px;align-items:flex-start;padding:9px 0;
+      border-top:1px solid var(--line-soft)}
+    .cal-item:first-of-type{border-top:0}
+    .cal-item .body{flex:1;min-width:0}
+    /* 模型给出的行动里可能带一条很长的链接，而它没有可以断行的空格。`min-width:0`
+       只解决 flex 不肯收缩的问题，不肯断行的长串仍然会把整页撑出横向滚动 ——
+       app 别处（`.tasklist`）为同一个原因写了 `word-break`。 */
+    .cal-item .body > div{overflow-wrap:anywhere}
+    .cal-item .when{color:var(--muted);font-size:13px}
+    .cal-item .cal-complete{flex:0 0 auto;min-height:44px;padding:8px 12px}
+    .cal-item .cal-original{display:block;margin-top:4px;padding:8px 12px;min-height:44px;font-size:13px}
     .pill{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--line-soft);color:var(--muted);margin-right:6px}
     .pill.high{background:var(--bad-bg);color:var(--bad)}
     .pill.medium{background:var(--warn-bg);color:var(--warn)}
@@ -1217,6 +1271,39 @@
       <div id="status-note" class="status"></div>
     </details>
 
+    <!-- 截止日历。**不是**一块存储，而是同一批报告的另一个视图：邮件被 worker
+         分析出截止时间之后，它自己就会出现在这里，没有「导入」这一步，也就没有
+         第二份副本可以和报告不一致。
+
+         放在「现在的状态」下面、今天的任务上面：用户先看到接下来什么时候到期，
+         再进入「今天要处理的事」动手，手机上不用先滚过整张任务清单才能找到日历。
+
+         格子按**截止日**排 —— 和「导出到手机日历」同一个
+         `deadline_day_and_clock`。三处对同一条任务必须说同一天，否则用户会看到
+         「app 说周四、手机说周五」，而这种事他根本没法描述清楚。 -->
+    <div class="card" id="calendar-card">
+      <div class="spread">
+        <h2 style="font-size:16px">截止日历</h2>
+        <div class="cal-nav">
+          <button id="cal-prev" class="ghost" title="上个月" aria-label="上个月">‹</button>
+          <span id="cal-label" class="cal-label">—</span>
+          <button id="cal-next" class="ghost" title="下个月" aria-label="下个月">›</button>
+          <button id="cal-today" class="secondary hidden">回到本月</button>
+        </div>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div class="cal-meta">
+        <div class="help cal-legend" id="cal-legend" aria-live="polite"></div>
+        <div class="cal-key" aria-label="日期标记说明">
+          <span><i></i>待办</span>
+          <span><i class="done"></i>已处理</span>
+          <span><i class="urgent"></i>急事</span>
+        </div>
+        <span class="cal-hint">点有标记的日期查看待办</span>
+      </div>
+      <div class="cal-day hidden" id="cal-day"></div>
+    </div>
+
     <div class="card">
       <div class="spread">
         <h2 style="font-size:16px">今天要处理的事</h2>
@@ -1227,85 +1314,93 @@
       </div>
       <div class="metrics" id="metrics" style="margin:12px 0"></div>
 
-      <!-- 筛选与排序：**只改这一屏显示什么、按什么顺序显示**。勾选按 task_key 记、
-           导出取的是全量清单，所以筛掉几条再筛回来勾不会丢，也不会出现「导出的比看到的少」
-           这种事（细节见 app.js `visibleTasks` 的注释）。
-           「紧急优先」那一档不是浏览器自己发明的顺序：它保持服务器给的顺序（报告里按
-           优先级、有无截止时间排好的），只有「按时间」是这里换的一个看法。 -->
-      <div class="task-tools" id="task-tools">
-        <div class="filters" id="task-filter" role="group" aria-label="筛选今天的清单">
-          <button type="button" class="chip" data-filter="all" aria-pressed="true">全部</button>
-          <button type="button" class="chip" data-filter="high" aria-pressed="false">重要</button>
-          <button type="button" class="chip" data-filter="deadline" aria-pressed="false">有截止时间</button>
-        </div>
-        <div class="filters" id="task-sort" role="group" aria-label="清单排序">
-          <button type="button" class="chip" data-sort="priority" aria-pressed="true">紧急优先</button>
-          <button type="button" class="chip" data-sort="time" aria-pressed="false">按时间</button>
-        </div>
-      </div>
-
-      <ul class="tasklist" id="tasks"></ul>
-
-      <!-- 「稍后提醒」：你主动挪开的那些待办。默认收起，但**必须看得见** ——
-           「东西去哪了」说不清的功能比没有这个功能更糟（同理还有「已处理」那一栏）。
-           到点它们自己回到上面的列表：判断发生在服务器**读**列表的时候，没有定时任务。 -->
-      <details class="panel hidden" id="panel-tasks-snoozed">
-        <summary><span class="panel-title">稍后提醒</span><span class="panel-note" id="tasks-snoozed-note">—</span></summary>
+      <!-- 默认只露出上面的四个汇总数字。具体邮件、筛选、导出和历史记录放进同一个
+           原生 details，用户点「具体邮件与待办」才展开；这样首页先回答「今天有多少、
+           有多少要行动」，不会被整张邮件清单占满。 -->
+      <details class="panel task-detail-panel" id="panel-tasks-detail">
+        <summary><span class="panel-title">具体邮件与待办</span><span class="panel-note" id="tasks-detail-note">点开查看</span></summary>
         <div class="panel-body">
-          <div class="help">到点它们自己回到上面的列表，不用你做什么；想提前拿回来点「取消稍后提醒」。</div>
-          <ul class="tasklist" id="tasks-snoozed"></ul>
-        </div>
-      </details>
-
-      <!-- 导出到手机：一条是日历文件，一条是可以粘进「提醒事项 / Google Tasks」的清单。
-           两条路都在这里说清楚各自会发生什么，因为 iOS 的提醒事项**不接受文件导入**
-           （只有 VTODO 的日历文件在 iPhone 上「打开什么也不显示」），而日历能收。 -->
-      <div id="task-export" class="task-export hidden">
-        <div class="actions" style="margin:6px 0 0">
-          <button id="task-export-ics" class="secondary">导出到手机日历（.ics）</button>
-          <button id="task-export-copy" class="ghost">复制成清单</button>
-          <button id="task-export-all" class="ghost">全选</button>
-          <button id="task-export-none" class="ghost">全不选</button>
-          <span class="help" id="task-export-note">—</span>
-        </div>
-        <details class="advanced" id="task-export-help">
-          <summary>这两条路在手机上分别会发生什么？</summary>
-          <div class="body">
-            <div class="help">
-              <b>导出到手机日历（.ics）</b>：下载一个日历文件。iPhone 上点一下就会交给
-              「日历」，安卓上会问用哪个应用打开（日历 / Google 日历都认）。
-              每个任务是一条<b>全天日程</b>，落在它的截止日；没有截止时间的落在来信那天。
-              <b>重复导出不会产生重复条目</b>——同一条任务的标识是固定的，日历会就地更新。
+          <!-- 筛选与排序：**只改这一屏显示什么、按什么顺序显示**。勾选按 task_key 记、
+               导出取的是全量清单，所以筛掉几条再筛回来勾不会丢，也不会出现「导出的比看到的少」
+               这种事（细节见 app.js `visibleTasks` 的注释）。
+               「紧急优先」那一档不是浏览器自己发明的顺序：它保持服务器给的顺序（报告里按
+               优先级、有无截止时间排好的），只有「按时间」是这里换的一个看法。 -->
+          <div class="task-tools" id="task-tools">
+            <div class="filters" id="task-filter" role="group" aria-label="筛选今天的清单">
+              <button type="button" class="chip" data-filter="all" aria-pressed="true">全部</button>
+              <button type="button" class="chip" data-filter="high" aria-pressed="false">重要</button>
+              <button type="button" class="chip" data-filter="deadline" aria-pressed="false">有截止时间</button>
             </div>
-            <div class="help">
-              <b>复制成清单</b>：把勾选的任务复制成多行文本。iOS「提醒事项」里粘贴会一行一条
-              （提醒事项没有文件导入，这是唯一的路）；安卓可以粘进 Google Tasks / Keep。
-            </div>
-            <div class="help">
-              两边都<b>只包含你勾选的任务</b>，都只是副本：在这里点「✓ 处理好了」不会同步回手机，
-              在手机上勾掉也不会同步回来。
-            </div>
-            <div class="help" id="task-export-text-wrap" style="display:none">
-              <label for="task-export-text">浏览器不允许自动复制，请手动复制下面这段：</label>
-              <textarea id="task-export-text" rows="5" style="width:100%"></textarea>
+            <div class="filters" id="task-sort" role="group" aria-label="清单排序">
+              <button type="button" class="chip" data-sort="priority" aria-pressed="true">紧急优先</button>
+              <button type="button" class="chip" data-sort="time" aria-pressed="false">按时间</button>
             </div>
           </div>
-        </details>
-      </div>
 
-      <details class="panel" id="panel-tasks-done">
-        <summary><span class="panel-title">已处理</span><span class="panel-note" id="tasks-done-note">—</span></summary>
-        <div class="panel-body">
-          <div class="help">点「恢复」就会放回待处理列表。<strong>任务不会被删除</strong>，随时找得回来。</div>
-          <ul class="tasklist done" id="tasks-done"></ul>
-        </div>
-      </details>
+          <ul class="tasklist" id="tasks"></ul>
 
-      <details class="panel" id="panel-tasks-history">
-        <summary><span class="panel-title">按天回看</span><span class="panel-note" id="tasks-history-note">—</span></summary>
-        <div class="panel-body">
-          <div class="help">这是你处理过任务的日期，点进去可以看当天完整清单，也可以把处理过的再放回来。</div>
-          <div id="tasks-history"></div>
+          <!-- 「稍后提醒」：你主动挪开的那些待办。默认收起，但**必须看得见** ——
+               「东西去哪了」说不清的功能比没有这个功能更糟（同理还有「已处理」那一栏）。
+               到点它们自己回到上面的列表：判断发生在服务器**读**列表的时候，没有定时任务。 -->
+          <details class="panel hidden" id="panel-tasks-snoozed">
+            <summary><span class="panel-title">稍后提醒</span><span class="panel-note" id="tasks-snoozed-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">到点它们自己回到上面的列表，不用你做什么；想提前拿回来点「取消稍后提醒」。</div>
+              <ul class="tasklist" id="tasks-snoozed"></ul>
+            </div>
+          </details>
+
+          <!-- 导出到手机：一条是日历文件，一条是可以粘进「提醒事项 / Google Tasks」的清单。
+               两条路都在这里说清楚各自会发生什么，因为 iOS 的提醒事项**不接受文件导入**
+               （只有 VTODO 的日历文件在 iPhone 上「打开什么也不显示」），而日历能收。 -->
+          <div id="task-export" class="task-export hidden">
+            <div class="actions" style="margin:6px 0 0">
+              <button id="task-export-ics" class="secondary">导出到手机日历（.ics）</button>
+              <button id="task-export-copy" class="ghost">复制成清单</button>
+              <button id="task-export-all" class="ghost">全选</button>
+              <button id="task-export-none" class="ghost">全不选</button>
+              <span class="help" id="task-export-note">—</span>
+            </div>
+            <details class="advanced" id="task-export-help">
+              <summary>这两条路在手机上分别会发生什么？</summary>
+              <div class="body">
+                <div class="help">
+                  <b>导出到手机日历（.ics）</b>：下载一个日历文件。iPhone 上点一下就会交给
+                  「日历」，安卓上会问用哪个应用打开（日历 / Google 日历都认）。
+                  每个任务是一条<b>全天日程</b>，落在它的截止日；没有截止时间的落在来信那天。
+                  <b>重复导出不会产生重复条目</b>——同一条任务的标识是固定的，日历会就地更新。
+                </div>
+                <div class="help">
+                  <b>复制成清单</b>：把勾选的任务复制成多行文本。iOS「提醒事项」里粘贴会一行一条
+                  （提醒事项没有文件导入，这是唯一的路）；安卓可以粘进 Google Tasks / Keep。
+                </div>
+                <div class="help">
+                  两边都<b>只包含你勾选的任务</b>，都只是副本：在这里点「✓ 处理好了」不会同步回手机，
+                  在手机上勾掉也不会同步回来。
+                </div>
+                <div class="help" id="task-export-text-wrap" style="display:none">
+                  <label for="task-export-text">浏览器不允许自动复制，请手动复制下面这段：</label>
+                  <textarea id="task-export-text" rows="5" style="width:100%"></textarea>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <details class="panel" id="panel-tasks-done">
+            <summary><span class="panel-title">已处理</span><span class="panel-note" id="tasks-done-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">点「恢复」就会放回待处理列表。<strong>任务不会被删除</strong>，随时找得回来。</div>
+              <ul class="tasklist done" id="tasks-done"></ul>
+            </div>
+          </details>
+
+          <details class="panel" id="panel-tasks-history">
+            <summary><span class="panel-title">按天回看</span><span class="panel-note" id="tasks-history-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">这是你处理过任务的日期，点进去可以看当天完整清单，也可以把处理过的再放回来。</div>
+              <div id="tasks-history"></div>
+            </div>
+          </details>
         </div>
       </details>
     </div>

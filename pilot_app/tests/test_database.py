@@ -539,8 +539,8 @@ class SchemaVersionGateTests(unittest.TestCase):
        永远补不上，一读就 `no such column`）。
     """
 
-    #: 2026-09-19 实测。**动它之前先读上面那段**：改这里等于宣布"我知道闸门在放行什么"。
-    RECORDED = 3
+    #: 2026-10-19：日历索引及报告来信时间持久化加入 schema 5。
+    RECORDED = 5
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

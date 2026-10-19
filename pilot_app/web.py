@@ -40,6 +40,7 @@ from . import __version__ as VERSION
 from . import agent as agent_mod
 from . import alerting
 from . import analytics as analytics_mod
+from . import calendar_index as calendar_index_mod
 from . import i18n
 from . import imageguard
 from . import groupqr, website_content
@@ -80,6 +81,19 @@ from .service import PilotService
 
 SESSION_COOKIE = "cityu_mail_session"
 SESSION_DAYS = 14
+
+# The years the month calendar will answer for. Wider than any "which month is
+# it" question a person can ask, and narrow enough that the arithmetic around a
+# month's edges cannot reach year 0 or year 10000 -- both of which raise, and a
+# read-only page must not 500 on a query string. See `_calendar_month`.
+CALENDAR_MIN_YEAR = 1970
+CALENDAR_MAX_YEAR = 2100
+
+# A calendar request indexes a bounded batch of retained reports. The browser
+# keeps asking until the projection is complete; it never presents a partial
+# month as if it were complete.
+CALENDAR_INDEX_BATCH = 100
+CALENDAR_INDEX_VERSION = calendar_index_mod.INDEX_VERSION
 APP_ROOT = Path(__file__).resolve().parent
 
 MAX_BODY_BYTES = 64 * 1024
@@ -2977,6 +2991,62 @@ def tasks_for_day(request: Request, day: str) -> Response:
     return json_response(task_day_view(user, day=day))
 
 
+def _calendar_task_snapshot(user: dict[str, Any], task_key: str) -> dict[str, Any] | None:
+    """Recover a trusted task snapshot when its source message has been purged.
+
+    The key must still resolve through an immediate report owned by this user.
+    If the derived row is damaged, rebuild it from that encrypted source report;
+    never accept task text from the request body.
+    """
+    database = get_db()
+    profile = database.get_profile(user["id"]) or {}
+    timezone = str(profile.get("timezone") or "Asia/Hong_Kong")
+    service = get_service()
+    row = database.calendar_task_for_user(user["id"], task_key)
+    if row is None:
+        return None
+
+    try:
+        decoded = service.secrets.decrypt(
+            row["encrypted_payload"],
+            context=f"calendar-index:{user['id']}:{task_key}",
+        )
+        task = json.loads(decoded)
+        if isinstance(task, dict) and task.get("task_key") == task_key:
+            return task
+    except (SecurityError, ValueError, TypeError):
+        pass
+
+    try:
+        body = service.decrypt_report(row["body_markdown"], user["id"])
+    except SecurityError:
+        database.replace_calendar_report_index(
+            row["report_id"], user["id"], timezone=timezone,
+            parser_version=CALENDAR_INDEX_VERSION,
+            key_fingerprint=service.secrets.fingerprint(), status="unreadable", tasks=[],
+        )
+        return None
+
+    _start, _end, _now, local_date = _local_window(timezone)
+    projected = calendar_index_mod.project_report(
+        service.secrets, user["id"], row, body, timezone, fallback_day=local_date,
+    )
+    database.replace_calendar_report_index(
+        row["report_id"], user["id"], timezone=timezone,
+        parser_version=CALENDAR_INDEX_VERSION,
+        key_fingerprint=service.secrets.fingerprint(), status="indexed", tasks=projected,
+    )
+    for projected_key, _day_token, encrypted in projected:
+        if projected_key != task_key:
+            continue
+        text = service.secrets.decrypt(
+            encrypted, context=f"calendar-index:{user['id']}:{task_key}",
+        )
+        recovered = json.loads(text)
+        return recovered if isinstance(recovered, dict) else None
+    return None
+
+
 @route("PUT", r"/api/tasks/(?P<task_key>[0-9a-f]{32})")
 def set_task(request: Request, task_key: str) -> Response:
     """Hide one task ("handled") or bring it back.
@@ -3002,6 +3072,8 @@ def set_task(request: Request, task_key: str) -> Response:
         if task["task_key"] == task_key:
             snapshot = task
             break
+    if snapshot is None:
+        snapshot = _calendar_task_snapshot(user, task_key)
     if snapshot is None:
         raise ApiError(404, "找不到这个任务。")
     database.set_task_state(user["id"], task_key, state, snapshot)
@@ -3157,6 +3229,303 @@ def export_tasks_ics(request: Request) -> Response:
                 'attachment; filename="' + taskexport.filename(view["day"]).replace('"', "") + '"'),
         },
     )
+
+
+# --------------------------------------------------------------------------
+# the in-app calendar
+#
+# A *view*, never a store: every cell comes from the same reports the day list
+# and the phone feed read, so a mail that has just been analyzed is on the page
+# with nothing to import and no second copy that could drift. Anything that
+# looked like "import into the app's calendar" would be a second place holding
+# the same task, and the two would disagree the first time one changed.
+# --------------------------------------------------------------------------
+
+
+def _calendar_month(value: str, today: dt.date) -> tuple[int, int]:
+    """``(year, month)`` from a ``YYYY-MM`` string, falling back to today's month.
+
+    A stale bookmark or a typo must not turn a read-only page into a 500, which
+    is the same rule ``_local_window`` follows for a day.
+
+    The year is bounded as well, and not out of tidiness: ``9999-12`` needs a
+    ``dt.date(10000, 1, 1)`` to find its last day, and ``0001-01`` needs a report
+    window that starts before year 1. Both raise inside the arithmetic below, so
+    a plain ``?month=`` query string could 500 the calendar. Nobody's term is
+    outside these years, so anything else means the value was not meant.
+    """
+    try:
+        if len(value) != 7 or value[4] != "-":
+            raise ValueError(value)
+        year, month = int(value[0:4]), int(value[5:7])
+        dt.date(year, month, 1)
+    except (ValueError, IndexError):
+        return today.year, today.month
+    if not CALENDAR_MIN_YEAR <= year <= CALENDAR_MAX_YEAR:
+        return today.year, today.month
+    return year, month
+
+
+def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1
+
+
+@route("GET", "/api/tasks/calendar")
+def tasks_calendar(request: Request) -> Response:
+    """One month of deadlines, for the calendar on the home page.
+
+    The day a task lands on is the deadline the report extracted -- the same
+    ``taskexport.deadline_day_and_clock`` the .ics export and the phone feed
+    use, so the app's calendar and the phone's cannot show one task on two
+    different days. A task with no deadline we could parse keeps the day its
+    mail arrived, and says so in the payload rather than pretending.
+
+    「稍后提醒」 tasks **are** here, unlike in the phone feed. Snoozing means
+    "stop showing me this in the action list", not "this is not due on Friday":
+    the calendar is where the deadlines live, and hiding a real deadline there
+    would make the one place that answers "what is due when" lie.
+
+    Each cell also carries ``urgent``: true when the day holds at least one open
+    task the rest of the app would label 急. It is decided here rather than by
+    comparing `priority` in the browser for the same reason the day a task lands
+    on is decided here -- one rule, one place. (What counts as urgent is
+    ``reports.PRIORITY_HIGH`` after the user's own ranking; the red it drives is
+    the same ``#b42318`` the report's own 高 badge uses.)
+    """
+    user = _require_user(request)
+    database = get_db()
+    profile = database.get_profile(user["id"]) or {}
+    timezone = str(profile.get("timezone") or "Asia/Hong_Kong")
+    _start, _end, _local_now, local_date = _local_window(timezone)
+    today = dt.date.fromisoformat(local_date)
+    year, month = _calendar_month(request.query.get("month", [""])[0], today)
+    first = dt.date(year, month, 1)
+    last = dt.date(*_shift_month(year, month, 1), 1) - dt.timedelta(days=1)
+    service = get_service()
+    key_fingerprint = service.secrets.fingerprint()
+    missing = database.calendar_reports_to_index(
+        user["id"], timezone=timezone, parser_version=CALENDAR_INDEX_VERSION,
+        key_fingerprint=key_fingerprint, limit=CALENDAR_INDEX_BATCH,
+    )
+    for row in missing:
+        try:
+            body = service.decrypt_report(row["body_markdown"], user["id"])
+        except SecurityError:
+            logging.warning("日历索引跳过无法解密的报告 report=%s user=%s", row["id"], user["id"])
+            database.replace_calendar_report_index(
+                row["id"], user["id"], timezone=timezone,
+                parser_version=CALENDAR_INDEX_VERSION, key_fingerprint=key_fingerprint,
+                status="unreadable", tasks=[],
+            )
+            continue
+        indexed_tasks = calendar_index_mod.project_report(
+            service.secrets, user["id"], row, body, timezone, fallback_day=local_date,
+        )
+        database.replace_calendar_report_index(
+            row["id"], user["id"], timezone=timezone,
+            parser_version=CALENDAR_INDEX_VERSION, key_fingerprint=key_fingerprint,
+            status="indexed", tasks=indexed_tasks,
+        )
+
+    progress = database.calendar_index_progress(
+        user["id"], timezone=timezone, parser_version=CALENDAR_INDEX_VERSION,
+        key_fingerprint=key_fingerprint,
+    )
+    indexing = {**progress, "ready": progress["indexed"] >= progress["total"]}
+    if not indexing["ready"]:
+        return json_response({
+            "month": f"{year:04d}-{month:02d}",
+            "label": f"{year} 年 {month} 月",
+            "today": local_date,
+            "days_in_month": last.day,
+            "first_weekday": first.weekday(),
+            "cells": [],
+            "counts": {"open": 0, "done": 0},
+            "unreadable": progress["unreadable"],
+            "index": indexing,
+        })
+
+    tokens = [service.secrets.anonymized(
+        f"calendar-day:v1:{user['id']}:{dt.date(year, month, day):%Y-%m-%d}"
+    ) for day in range(1, last.day + 1)]
+    rows = database.calendar_tasks_for_days(user["id"], tokens)
+    damaged_reports: set[str] = set()
+    decoded_tasks: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            text = service.secrets.decrypt(
+                row["encrypted_payload"],
+                context=f"calendar-index:{user['id']}:{row['task_key']}",
+            )
+            task = json.loads(text)
+            if not isinstance(task, dict) or task.get("task_key") != row["task_key"]:
+                raise ValueError("日历索引内容与任务编号不匹配。")
+            decoded_tasks[row["task_key"]] = task
+        except (SecurityError, ValueError, TypeError):
+            damaged_reports.add(row["report_id"])
+
+    if damaged_reports:
+        rebuild_needed = False
+        for report_id in damaged_reports:
+            report = database.calendar_report_for_indexing(user["id"], report_id)
+            if report is None:
+                continue
+            try:
+                service.decrypt_report(report["body_markdown"], user["id"])
+            except SecurityError:
+                # Only an unreadable source report is terminal. Its derived rows
+                # are removed and the marker prevents an endless retry loop.
+                database.replace_calendar_report_index(
+                    report_id, user["id"], timezone=timezone,
+                    parser_version=CALENDAR_INDEX_VERSION,
+                    key_fingerprint=key_fingerprint, status="unreadable", tasks=[],
+                )
+            else:
+                # The source remains authoritative. Dropping the marker sends
+                # it through the normal bounded batch on the next request.
+                database.invalidate_calendar_report_index(user["id"], report_id)
+                rebuild_needed = True
+        progress = database.calendar_index_progress(
+            user["id"], timezone=timezone, parser_version=CALENDAR_INDEX_VERSION,
+            key_fingerprint=key_fingerprint,
+        )
+        indexing = {**progress, "ready": progress["indexed"] >= progress["total"]}
+        if rebuild_needed or not indexing["ready"]:
+            return json_response({
+                "month": f"{year:04d}-{month:02d}",
+                "label": f"{year} 年 {month} 月",
+                "today": local_date,
+                "days_in_month": last.day,
+                "first_weekday": first.weekday(),
+                "cells": [],
+                "counts": {"open": 0, "done": 0},
+                "unreadable": progress["unreadable"],
+                "index": indexing,
+            })
+        rows = database.calendar_tasks_for_days(user["id"], tokens)
+
+    states = database.task_states(user["id"])
+    cells: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        task = decoded_tasks.get(row["task_key"])
+        if task is None:
+            # A row may have arrived between the preflight and the fresh read
+            # after terminal source failures were marked unreadable.
+            try:
+                text = service.secrets.decrypt(
+                    row["encrypted_payload"],
+                    context=f"calendar-index:{user['id']}:{row['task_key']}",
+                )
+                task = json.loads(text)
+                if not isinstance(task, dict) or task.get("task_key") != row["task_key"]:
+                    raise ValueError("日历索引内容与任务编号不匹配。")
+            except (SecurityError, ValueError, TypeError):
+                logging.warning("日历索引条目无法读取 task=%s user=%s", row["task_key"], user["id"])
+                database.invalidate_calendar_report_index(user["id"], row["report_id"])
+                continue
+        state = states.get(row["task_key"]) or {}
+        task["user_priority"] = str(state.get("user_priority") or "")
+        task["snoozed_until"] = str(state.get("snoozed_until") or "")
+        task["effective_priority"] = taskexport.effective_priority(task)
+        task_day, clock = taskexport.deadline_day_and_clock(
+            task, today=dt.date.fromisoformat(task["task_day"] or local_date),
+        )
+        if not first <= task_day <= last:
+            continue
+        key = task_day.isoformat()
+        cell = cells.setdefault(key, {"day": key, "open": 0, "done": 0,
+                                      "urgent": False, "items": []})
+        if state.get("state") == "done":
+            cell["done"] += 1
+            continue
+        cell["open"] += 1
+        if task["effective_priority"] == reports_mod.PRIORITY_HIGH:
+            cell["urgent"] = True
+        cell["items"].append({
+            "task_key": task["task_key"],
+            "message_id": str(task.get("message_id") or ""),
+            "text": taskexport.line_for(task),
+            "deadline": str(task.get("deadline") or ""),
+            "clock": str(task.get("clock") or (f"{clock[0]:02d}:{clock[1]:02d}" if clock else "")),
+            "dated": bool(str(task.get("deadline") or "").strip()),
+            "priority": task["effective_priority"],
+            "subject": str(task.get("subject") or ""),
+            "sender": str(task.get("sender") or ""),
+            "task_day": str(task.get("task_day") or ""),
+            "archived": not bool(task.get("message_id")),
+        })
+
+    # Keep task snapshots visible when their source report has been removed.
+    # They are already durable user-owned state and may not have a report index.
+    # Query after decrypting the month so a corrupt entry invalidated above no
+    # longer suppresses its durable task snapshot in this same response.
+    # The month query only returns this month's tasks. Keep all indexed keys in
+    # the seen set so older task snapshots cannot reappear in a second month.
+    seen = database.calendar_task_keys(user["id"])
+    for task_key, state in states.items():
+        if task_key in seen:
+            continue
+        task = dict(state)
+        task["task_key"] = task_key
+        task["user_priority"] = str(state.get("user_priority") or "")
+        task["effective_priority"] = taskexport.effective_priority(task)
+        try:
+            task_day, clock = taskexport.deadline_day_and_clock(
+                task, today=dt.date.fromisoformat(str(task.get("task_day") or local_date)),
+            )
+        except ValueError:
+            continue
+        if not first <= task_day <= last:
+            continue
+        key = task_day.isoformat()
+        cell = cells.setdefault(key, {"day": key, "open": 0, "done": 0,
+                                      "urgent": False, "items": []})
+        if state.get("state") == "done":
+            cell["done"] += 1
+            continue
+        cell["open"] += 1
+        if task["effective_priority"] == reports_mod.PRIORITY_HIGH:
+            cell["urgent"] = True
+        cell["items"].append({
+            "task_key": task_key,
+            "message_id": str(task.get("message_id") or ""),
+            "text": taskexport.line_for(task),
+            "deadline": str(task.get("deadline") or ""),
+            "clock": f"{clock[0]:02d}:{clock[1]:02d}" if clock else "",
+            "dated": bool(str(task.get("deadline") or "").strip()),
+            "priority": task["effective_priority"],
+            "subject": str(task.get("subject") or ""),
+            "sender": str(task.get("sender") or ""),
+            "task_day": str(task.get("task_day") or ""),
+            "archived": True,
+        })
+    open_count = sum(cell["open"] for cell in cells.values())
+    done_count = sum(cell["done"] for cell in cells.values())
+    progress = database.calendar_index_progress(
+        user["id"], timezone=timezone, parser_version=CALENDAR_INDEX_VERSION,
+        key_fingerprint=key_fingerprint,
+    )
+    indexing = {**progress, "ready": progress["indexed"] >= progress["total"]}
+    for cell in cells.values():
+        cell["items"].sort(key=lambda item: (reports_mod.priority_rank(item["priority"]),
+                                             0 if item["deadline"] else 1))
+    return json_response({
+        "month": f"{year:04d}-{month:02d}",
+        "label": f"{year} 年 {month} 月",
+        "today": local_date,
+        "days_in_month": last.day,
+        # 0 = Monday. Sent as a number so the browser does no calendar maths of
+        # its own: every locale's idea of "which column is Sunday" would be one
+        # more rule living in two places.
+        "first_weekday": first.weekday(),
+        "cells": [cells[key] for key in sorted(cells)],
+        "counts": {"open": open_count, "done": done_count},
+        # 有多少封邮件因为读不出来而没进这张日历。跳过是必须的（否则一行坏数据
+        # 就能让首页 500），但**跳过和丢信在用户眼里长得一模一样**，所以要报数。
+        "unreadable": progress["unreadable"],
+        "index": indexing,
+    })
 
 
 @route("POST", "/api/mailbox/verify")

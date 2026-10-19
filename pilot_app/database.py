@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS reports (
     status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','sent','failed')),
     sent_to TEXT NOT NULL DEFAULT '',
     report_date TEXT NOT NULL DEFAULT '',
+    received_at TEXT NOT NULL DEFAULT '',
     last_error TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     sent_at TEXT,
@@ -435,6 +436,30 @@ CREATE TABLE IF NOT EXISTS task_states (
     PRIMARY KEY (user_id, task_key)
 );
 CREATE INDEX IF NOT EXISTS idx_task_states_day ON task_states(user_id, task_day DESC);
+-- Rebuildable calendar projection. Report bodies remain the source of truth;
+-- task payloads are encrypted and the only searchable date is a keyed token so
+-- the index does not turn private deadlines into plaintext database metadata.
+CREATE TABLE IF NOT EXISTS calendar_report_index (
+    report_id TEXT PRIMARY KEY REFERENCES reports(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    timezone TEXT NOT NULL,
+    parser_version INTEGER NOT NULL,
+    key_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('indexed','unreadable')),
+    indexed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_report_index_user
+    ON calendar_report_index(user_id,timezone,parser_version,key_fingerprint,status);
+CREATE TABLE IF NOT EXISTS calendar_task_index (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_key TEXT NOT NULL,
+    report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    day_token TEXT NOT NULL,
+    encrypted_payload BLOB NOT NULL,
+    PRIMARY KEY(user_id,task_key)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_task_index_day
+    ON calendar_task_index(user_id,day_token);
 -- People who asked for a pilot account from the public landing page.
 --
 -- Deliberately separate from `invites`: an application is a *request*, not a
@@ -731,7 +756,7 @@ MMAP_BYTES = 268_435_456
 # migration (the `messages` table rebuild) run again; a database already at this
 # version skips it. **Bump it in the same commit as any change to `SCHEMA` or to
 # `RETIRED_INDEXES`.**
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 #: 端到端样本里「最近这一小段」有多长（天）。**为什么需要它**：中位数是用来回答
 #: 「这一台现在多快」的，而换主服务会把整个延迟分布搬走——2026-09-23 切到本机那台时，
@@ -1136,6 +1161,18 @@ class Database:
             report_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_reports)")}
             if "action" not in report_columns:
                 connection.execute("ALTER TABLE agent_reports ADD COLUMN action TEXT NOT NULL DEFAULT ''")
+            saved_report_columns = {row[1] for row in connection.execute("PRAGMA table_info(reports)")}
+            if "received_at" not in saved_report_columns:
+                connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
+                # Preserve arrival time when mailbox reconnection removes messages.
+                connection.execute(
+                    """UPDATE reports SET received_at=(
+                           SELECT received_at FROM messages WHERE messages.id=reports.message_id)
+                       WHERE received_at='' AND message_id IS NOT NULL"""
+                )
+                # UPDATE opens a transaction. The versioned message-table rebuild
+                # below owns an explicit BEGIN, so finish this additive migration first.
+                connection.commit()
             announcement_columns = {row[1] for row in connection.execute(
                 "PRAGMA table_info(announcements)")}
             if "is_public" not in announcement_columns:
@@ -4428,13 +4465,16 @@ class Database:
             )
 
     def create_report(self, *, user_id: str, message_id: str | None, kind: str, subject: str,
-                      body: str | bytes, sent_to: str, report_date: str = "") -> str:
+                      body: str | bytes, sent_to: str, report_date: str = "",
+                      received_at: str = "") -> str:
         report_id = new_id("rpt")
         with self.connect() as connection:
             connection.execute(
-                """INSERT INTO reports(id,user_id,message_id,kind,subject,body_markdown,sent_to,report_date,created_at)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
-                (report_id, user_id, message_id, kind, subject[:500], body, sent_to[:320], report_date, utc_now()),
+                """INSERT INTO reports(id,user_id,message_id,kind,subject,body_markdown,sent_to,
+                       report_date,received_at,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (report_id, user_id, message_id, kind, subject[:500], body, sent_to[:320],
+                 report_date, received_at[:40], utc_now()),
             )
         return report_id
 
@@ -4503,6 +4543,140 @@ class Database:
                    ORDER BY m.received_at DESC""", (user_id, start_utc, end_utc)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def calendar_reports_to_index(self, user_id: str, *, timezone: str,
+                                  parser_version: int, key_fingerprint: str,
+                                  limit: int = 100) -> list[dict[str, Any]]:
+        """A bounded page of immediate reports missing the current projection."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT r.id,r.message_id,r.body_markdown,r.subject,r.created_at,
+                          r.received_at AS report_received_at,
+                          m.subject AS message_subject,m.sender_name,m.sender_address,
+                          m.received_at,m.importance
+                   FROM reports r LEFT JOIN messages m ON m.id=r.message_id
+                   LEFT JOIN calendar_report_index i ON i.report_id=r.id
+                   WHERE r.user_id=? AND r.kind='immediate'
+                     AND (i.report_id IS NULL OR i.timezone!=? OR i.parser_version!=?
+                          OR i.key_fingerprint!=?)
+                   ORDER BY r.created_at,r.id LIMIT ?""",
+                (user_id, timezone, parser_version, key_fingerprint, max(1, min(int(limit), 500))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def calendar_index_progress(self, user_id: str, *, timezone: str,
+                                parser_version: int, key_fingerprint: str) -> dict[str, int]:
+        """Counts reports covered by the current, rebuildable calendar projection."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN i.report_id IS NOT NULL THEN 1 ELSE 0 END) AS indexed,
+                          SUM(CASE WHEN i.status='unreadable' THEN 1 ELSE 0 END) AS unreadable
+                   FROM reports r LEFT JOIN calendar_report_index i
+                     ON i.report_id=r.id AND i.timezone=? AND i.parser_version=?
+                        AND i.key_fingerprint=?
+                   WHERE r.user_id=? AND r.kind='immediate'""",
+                (timezone, parser_version, key_fingerprint, user_id),
+            ).fetchone()
+        return {key: int(row[key] or 0) for key in ("total", "indexed", "unreadable")}
+
+    def calendar_task_for_user(self, user_id: str, task_key: str) -> dict[str, Any] | None:
+        """Return a task's encrypted snapshot only through its owner's immediate report."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT i.task_key,i.report_id,r.id AS id,i.encrypted_payload,
+                          r.message_id,r.body_markdown,r.subject,r.created_at,
+                          r.received_at AS report_received_at,
+                          m.subject AS message_subject,m.sender_name,m.sender_address,
+                          m.received_at,m.importance
+                   FROM calendar_task_index i
+                   JOIN reports r ON r.id=i.report_id AND r.user_id=i.user_id
+                   LEFT JOIN messages m ON m.id=r.message_id
+                   WHERE i.user_id=? AND i.task_key=? AND r.kind='immediate'
+                   LIMIT 1""",
+                (user_id, task_key),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def calendar_report_for_indexing(self, user_id: str, report_id: str) -> dict[str, Any] | None:
+        """Read an owned immediate report and optional mail metadata for projection repair."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT r.id,r.message_id,r.body_markdown,r.subject,r.created_at,
+                          r.received_at AS report_received_at,
+                          m.subject AS message_subject,m.sender_name,m.sender_address,
+                          m.received_at,m.importance
+                   FROM reports r LEFT JOIN messages m ON m.id=r.message_id
+                   WHERE r.id=? AND r.user_id=? AND r.kind='immediate'""",
+                (report_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def invalidate_calendar_report_index(self, user_id: str, report_id: str) -> None:
+        """Drop a damaged derived projection so the bounded backfill can rebuild it."""
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM calendar_task_index WHERE user_id=? AND report_id=?",
+                (user_id, report_id),
+            )
+            connection.execute(
+                "DELETE FROM calendar_report_index WHERE user_id=? AND report_id=?",
+                (user_id, report_id),
+            )
+
+    def replace_calendar_report_index(self, report_id: str, user_id: str, *,
+                                      timezone: str, parser_version: int,
+                                      key_fingerprint: str, status: str,
+                                      tasks: list[tuple[str, str, bytes]]) -> None:
+        """Atomically replace one report's encrypted task projection and marker."""
+        if status not in {"indexed", "unreadable"}:
+            raise ValueError("日历索引状态无效。")
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM calendar_task_index WHERE user_id=? AND report_id=?",
+                (user_id, report_id),
+            )
+            connection.execute(
+                """INSERT INTO calendar_report_index
+                       (report_id,user_id,timezone,parser_version,key_fingerprint,status,indexed_at)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(report_id) DO UPDATE SET user_id=excluded.user_id,
+                       timezone=excluded.timezone,parser_version=excluded.parser_version,
+                       key_fingerprint=excluded.key_fingerprint,status=excluded.status,
+                       indexed_at=excluded.indexed_at""",
+                (report_id, user_id, timezone, parser_version, key_fingerprint,
+                 status, utc_now()),
+            )
+            if tasks:
+                connection.executemany(
+                    """INSERT INTO calendar_task_index
+                           (user_id,task_key,report_id,day_token,encrypted_payload)
+                       VALUES(?,?,?,?,?)""",
+                    [(user_id, task_key, report_id, day_token, payload)
+                     for task_key, day_token, payload in tasks],
+                )
+
+    def calendar_tasks_for_days(self, user_id: str, day_tokens: list[str]) -> list[dict[str, Any]]:
+        """Fetch encrypted task projections for a month without exposing dates in SQL."""
+        if not day_tokens:
+            return []
+        placeholders = ",".join("?" for _ in day_tokens)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT task_key,report_id,day_token,encrypted_payload
+                    FROM calendar_task_index WHERE user_id=? AND day_token IN ({placeholders})
+                    ORDER BY task_key""",
+                (user_id, *day_tokens),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def calendar_task_keys(self, user_id: str) -> set[str]:
+        """Keys already represented by reports, across every indexed month."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT task_key FROM calendar_task_index WHERE user_id=?", (user_id,)
+            ).fetchall()
+        return {str(row["task_key"]) for row in rows}
 
     def messages_by_ids(self, user_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
         if not message_ids:
