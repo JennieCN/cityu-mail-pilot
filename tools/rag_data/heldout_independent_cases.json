@@ -1,0 +1,388 @@
+[
+  {
+    "id": "dorm-zh01",
+    "language": "zh",
+    "query": "四年制本科一共要修满多少学分才能毕业？最多可以修多少学分？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zh02",
+    "language": "zh",
+    "query": "辅修（minor）要求多少学分？如果我已经获批的学分超过了上限，还能申请辅修吗？",
+    "expected": [
+      "regulations",
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-zh03",
+    "language": "zh",
+    "query": "如果同一门必修课我考了三次都没过，学校会怎么处理？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zh04",
+    "language": "zh",
+    "query": "成绩公布后想申请复核，最迟要在多少个工作天内联系任课老师？正式复核最晚多久有结果？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zh05",
+    "language": "zh",
+    "query": "成绩单上出现的 TR、Z、AU、X 这些代码会计入 GPA 吗？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zh06",
+    "language": "zh",
+    "query": "课表里有一栏用「Y」或「S」标示课程的上课学期安排，这两个代码分别是什么意思？",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-zh07",
+    "language": "zh",
+    "query": "开学前学校会帮我预先注册核心课程吗？之后我还可以自己改吗？",
+    "expected": [
+      "registration"
+    ]
+  },
+  {
+    "id": "dorm-zh08",
+    "language": "zh",
+    "query": "选课系统里的课程参考编号（CRN）是什么？",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-zh09",
+    "language": "zh",
+    "query": "选课规划工具里的 What-if 方案可以保存下来吗？导师能看到吗？",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-zh10",
+    "language": "zh",
+    "query": "如果某门课只限商学院的学生修读，我不是商学院的，还能选吗？",
+    "expected": [
+      "restrictions"
+    ]
+  },
+  {
+    "id": "dorm-zh11",
+    "language": "zh",
+    "query": "我忘记了 AIMS 的密码，要怎么重置？",
+    "expected": []
+  },
+  {
+    "id": "dorm-zh12",
+    "language": "zh",
+    "query": "DegreeWorks 的学习进度报告应该多久看一次？",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-zht01",
+    "language": "zh",
+    "query": "如果想修讀雙主修，申請時最低 CGPA 要求係幾多？第二主修最少要完成幾多個新學分？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zht02",
+    "language": "zh",
+    "query": "同一科最多可以重修幾多次？之前考得差嘅成績會唔會計入 CGPA？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zht03",
+    "language": "zh",
+    "query": "課表上嘅 Level 一欄代表咩？點解會有 A、B、P、D、R 之分？",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-zht04",
+    "language": "zh",
+    "query": "課堂係咪逢整點開始？通常幾點落堂？",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-zht05",
+    "language": "zh",
+    "query": "DegreeWorks 入面嗰啲 GPA 同正式成績單嘅 GPA 有咩分別？邊個先係官方數字？",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-zht06",
+    "language": "zh",
+    "query": "一級榮譽學位一般要求 CGPA 幾多？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-zht07",
+    "language": "zh",
+    "query": "學校會唔會主動將我由某一科退走？",
+    "expected": [
+      "registration"
+    ]
+  },
+  {
+    "id": "dorm-zht08",
+    "language": "zh",
+    "query": "我入學嗰陣未揀主修，幾時要申報主修？",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-zht09",
+    "language": "zh",
+    "query": "我想申請宿舍，截止日期係幾時？",
+    "expected": []
+  },
+  {
+    "id": "dorm-en01",
+    "language": "en",
+    "query": "How many credit units do I need to complete for a normative 4-year degree, and what is the maximum number of credit units allowed?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en02",
+    "language": "en",
+    "query": "What is the minimum CGPA to declare a second major, and how many new credit units must I complete for it?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en03",
+    "language": "en",
+    "query": "What is the minimum CGPA required in order to be awarded a bachelor's degree?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en04",
+    "language": "en",
+    "query": "What is the maximum number of transfer credits for a normative 4-year degree, and do transfer credits count towards my GPA?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en05",
+    "language": "en",
+    "query": "If my SGPA is below 1.70 for three enrolled semesters, what can happen to my studies?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en06",
+    "language": "en",
+    "query": "How many credit units and what GPA do I need to be placed on the Dean's List?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en07",
+    "language": "en",
+    "query": "If illness stops me from taking an exam or an in-course assessment, how soon must I submit my case and what assessment weighting counts?",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-en08",
+    "language": "en",
+    "query": "What is the maximum period of study for an Advanced Standing I student, and can I get an extension?",
+    "expected": [
+      "regulations",
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-en09",
+    "language": "en",
+    "query": "What are the University class hours on weekdays, and when do evening classes normally start?",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-en10",
+    "language": "en",
+    "query": "What does the 'Waitlist Avail' column tell me in the Master Class Schedule?",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-en11",
+    "language": "en",
+    "query": "In the Master Class Schedule, what does 'N' under the WEB column mean?",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-en12",
+    "language": "en",
+    "query": "Which subject code is used for Gateway Education courses?",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-en13",
+    "language": "en",
+    "query": "Where can I view my own personal class schedule for the term?",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-en14",
+    "language": "en",
+    "query": "A course section is marked 'only for College: CB' and 'not for Major AC'. Can a College of Business student majoring in Accountancy register for it?",
+    "expected": [
+      "restrictions"
+    ]
+  },
+  {
+    "id": "dorm-en15",
+    "language": "en",
+    "query": "If I am not in the group allowed by a registration restriction, how and when can I ask for approval to take the course?",
+    "expected": [
+      "restrictions"
+    ]
+  },
+  {
+    "id": "dorm-en16",
+    "language": "en",
+    "query": "I put a course with a prerequisite into my study plan. Will the planner warn me if I have not met the prerequisite?",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-en17",
+    "language": "en",
+    "query": "I missed this semester's application period for graduation but I want to graduate this semester. Can I submit a late application?",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-en18",
+    "language": "en",
+    "query": "Will the University tell my parents about my grades or academic results?",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-en19",
+    "language": "en",
+    "query": "I was admitted with an undeclared major. When do I need to declare my home major?",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-en20",
+    "language": "en",
+    "query": "What are the key dates or events I should watch for in the course registration cycle, such as release of the pre-registration schedule, time-tickets and waitlist?",
+    "expected": [
+      "registration"
+    ]
+  },
+  {
+    "id": "dorm-en21",
+    "language": "en",
+    "query": "How do I get approval to add a course that is not web-enabled?",
+    "expected": [
+      "registration",
+      "schedule",
+      "restrictions"
+    ]
+  },
+  {
+    "id": "dorm-en22",
+    "language": "en",
+    "query": "What are the exact dates of the Semester A 2026/27 course add/drop period?",
+    "expected": []
+  },
+  {
+    "id": "dorm-en23",
+    "language": "en",
+    "query": "How much tuition fee will a local Year 1 BBA student pay in 2026/27?",
+    "expected": []
+  },
+  {
+    "id": "dorm-mx01",
+    "language": "mixed",
+    "query": "我想 add 一科，但個 section 寫住 only for College: CB，我唔係 CB 嘅可以點做？",
+    "expected": [
+      "restrictions"
+    ]
+  },
+  {
+    "id": "dorm-mx02",
+    "language": "mixed",
+    "query": "AIMS 入面邊度可以睇到我嘅 weekly schedule？",
+    "expected": [
+      "schedule"
+    ]
+  },
+  {
+    "id": "dorm-mx03",
+    "language": "mixed",
+    "query": "Year 2 想 declare second major，CGPA 要求係 3.00 定 3.30？",
+    "expected": [
+      "regulations"
+    ]
+  },
+  {
+    "id": "dorm-mx04",
+    "language": "mixed",
+    "query": "Last sem 去咗 exchange，張 transcript 仲未到，想 defer graduation 應該點做？",
+    "expected": [
+      "faq"
+    ]
+  },
+  {
+    "id": "dorm-mx05",
+    "language": "mixed",
+    "query": "我想知嗰科今個 sem 仲有冇位，Avail 剩幾多？",
+    "expected": []
+  }
+]

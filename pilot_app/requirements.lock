@@ -1,0 +1,7 @@
+# Fully pinned runtime set for `pip install -r requirements.lock`.
+# 23 packages -> 4 after the standard-library web layer removed FastAPI,
+# uvicorn, Starlette, pydantic, click, python-dotenv, PyYAML and httpx.
+cffi==2.0.0
+cryptography==50.0.1
+pycparser==2.23
+typing_extensions==4.16.0

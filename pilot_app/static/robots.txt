@@ -1,0 +1,23 @@
+# The landing page is meant to be found; the application is not.
+#
+# `/` is prose a stranger should be able to search for, and it is the only page
+# worth indexing. `/app` is a login shell: a crawler that renders it gets an
+# empty application frame, and one that indexes it puts a page in the results
+# that a visitor cannot do anything with. `/api/` and `/download/` are not
+# pages at all.
+#
+# `/demo` is the opposite case and is deliberately NOT disallowed: it is the
+# product itself with made-up data, it renders without JavaScript beyond the
+# shell, and it is the one page that answers "what does this actually look
+# like?" for somebody deciding whether to apply. Index it.
+#
+# There is deliberately no `Sitemap:` line: this site is two indexable URLs now,
+# and a sitemap for two pages is still noise that has to be kept in sync for no
+# benefit.
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /app.js
+Disallow: /api/
+Disallow: /download/
+Disallow: /.well-known/

@@ -1,0 +1,20 @@
+[Unit]
+Description=Run the CityU Mail Pilot backup when the worker asks for one
+# The worker runs with ProtectSystem=strict and ReadWritePaths limited to its own
+# data directory, so it cannot write into /var/backups/cityu-mail-pilot -- and it
+# must not. The worker holds the live database; the backups are what survives the
+# worker being wrong, so giving it write access to them would remove the last line
+# of defence against a compromised worker. It drops a request file inside its own
+# directory instead, and systemd starts the same audited backup service the
+# nightly timer uses -- outside the sandbox, with the paths it actually needs.
+#
+# Unit= is spelled out because the default would be cityu-mail-pilot-backup-request.service,
+# which does not exist. The failure mode of forgetting it is a unit that loads,
+# looks enabled, and never runs anything.
+
+[Path]
+PathExists=/var/lib/cityu-mail-pilot/backup.request
+Unit=cityu-mail-pilot-backup.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+[
+  {
+    "code": "zh-Hans",
+    "label": "简体中文",
+    "reviewed": true
+  },
+  {
+    "code": "en",
+    "label": "English",
+    "reviewed": true
+  },
+  {
+    "code": "zh-Hant",
+    "label": "繁體中文",
+    "reviewed": true
+  },
+  {
+    "code": "ja",
+    "label": "日本語",
+    "reviewed": false
+  },
+  {
+    "code": "ko",
+    "label": "한국어",
+    "reviewed": false
+  }
+]

@@ -1,0 +1,33 @@
+[Unit]
+Description=Mail the operator that %i failed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Oneshot: it runs, sends one e-mail, exits. Triggered only by OnFailure=, so
+# there is deliberately no [Install] section.
+Type=oneshot
+# Runs as the same account as the worker, not root. Root writing to the SQLite
+# database would leave root-owned -wal/-shm files behind and break the worker's
+# writes; this account already owns them.
+User=cityumail
+Group=cityumail
+# journalctl refuses to read another unit's logs for an unprivileged user, and
+# an alert that says "no logs" for every failure is worse than useless.
+SupplementaryGroups=systemd-journal
+WorkingDirectory=/opt/cityu-mail-pilot
+EnvironmentFile=/etc/cityu-mail-pilot/pilot.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/cityu-mail-pilot/.venv/bin/python -m pilot_app.manage notify-unit-failure --unit %i
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Reading pilot.env needs no write access; the database does, because
+# Database.initialize() is idempotent and may create the alert_state table.
+ReadWritePaths=/var/lib/cityu-mail-pilot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

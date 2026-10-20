@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>隐私政策 · CityU Mail Pilot</title>
+<style>
+  :root{--navy:#123b63;--blue:#1769aa;--ink:#172b3a;--muted:#64748b;--line:#dbe3eb;
+        --bg:#ffffff;--card:#ffffff;--ok-bg:#e8f5ef;--ok:#087a55;--warn-bg:#fff8e8;--warn:#8a6100;
+        --radius:12px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.7;
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+  main{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:18px;color:var(--navy);margin:32px 0 10px;padding-top:16px;border-top:1px solid var(--line)}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:20px}
+  a{color:var(--blue)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--card)}
+  /* Only the "你的权利" table has single-word labels in column one. Elsewhere
+     the first column holds a sentence, so a blanket nowrap would push the table
+     off a phone screen. */
+  table.labels th:first-child,table.labels td:first-child{white-space:nowrap;width:1%}
+  .callout{background:var(--warn-bg);color:var(--warn);border-radius:var(--radius);
+           padding:14px 16px;margin:16px 0}
+  .note{background:var(--ok-bg);color:var(--ok);border-radius:var(--radius);padding:14px 16px;margin:16px 0}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:#eef2f6;padding:1px 5px;border-radius:4px}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+
+  /* 语言切换器（2026-09-23）。颜色只走 currentColor / 继承，不写死任何色值：
+     组件规则里不许写死颜色（不变量 6），而这一小块要同时活在介绍页（浅底）、
+     应用外壳（深色 appbar 与浅色卡片都有）和法规页三种底色上。 */
+  .lang-switch{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+  .lang-switch-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .lang-switch select{font:inherit;font-size:13px;padding:4px 6px;border-radius:8px;
+    border:1px solid currentColor;background:transparent;color:inherit;opacity:.9}
+  .lang-switch button{font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;
+    border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
+  /* 手机上 ≥16px：低于 16px 的控件在 iOS Safari 里**一聚焦就把整页放大**（那条自动缩放
+     规则只认字号，不认你有什么理由用 13px）。高度同时给到 40px —— 13px 的胶囊只有 28px 高，
+     手指点不准。桌面仍是 13px 的小胶囊。 */
+  @media (max-width:600px){
+    /* `height` 与 `min-height` **两个都写**：Safari（WebKit）不给 `<select>` 认
+       `min-height` —— 只写 min-height 的话它在 iPhone 上仍然是 23px 高（2026-09-23
+       跑 WebKit 那一遍量到的，chromium 上完全看不出来）。 */
+    .lang-switch select{font-size:16px;padding:10px 10px;min-height:44px;height:44px}
+    .lang-switch button{font-size:16px;min-height:44px;height:44px}
+  }
+
+  /* ---------------------------------------------- 手机端：正文里的行内链接也要点得到
+     2026-09-23 体检的收尾：`《隐私政策》` 这类链接夹在句子里，只有 17–36px 高。
+     行内元素加纵向 `padding` **不会**改变行高（文字位置一个字不动），但会把可点区域
+     撑到 44px —— 这正是手机需要的。桌面不加（鼠标不需要这么大的热区，加了反而容易误触）。 */
+  @media (max-width:600px){
+    p a, li a, td a, dd a, .help a, label a, .check a, summary a{display:inline-block;padding:13px 2px}
+  }
+</style>
+{{HREFLANG}}
+</head>
+<body>
+<main>
+
+<h1>隐私政策</h1>
+{{LANG_SWITCH}}
+<div class="meta">版本 1.3 · 生效日期 2026-09-22 · 适用服务：CityU Mail Pilot</div>
+
+<p><strong>一句话：</strong>你把学校邮箱的信自动转发到自己的私人邮箱，我们用<strong>只读</strong>方式读取其中的<strong>本校来信</strong>，
+用大模型生成中文摘要，再用邮件发回给你。本页说明我们碰了哪些数据、放到哪里、留多久、你怎么删掉它。</p>
+
+<h2>1. 我们读取什么</h2>
+<table>
+  <tr><th>数据</th><th>用途</th></tr>
+  <tr><td>你注册的邮箱地址、密码（以哈希存储，不可逆）</td><td>登录</td></tr>
+  <tr><td>你私人邮箱的 IMAP/SMTP <strong>授权码</strong></td><td>只读收信、发回报告</td></tr>
+  <tr><td>调用大模型所需的 <strong>API key</strong></td><td>调用模型生成报告。<strong>在另行通知前默认用管理员提供的 key 并由管理员付费</strong>；你也可以换成自己的 key</td></tr>
+  <tr><td>联网搜索所需的 <strong>搜索 API key</strong></td><td>开启联网核实时调用搜索服务商。<strong>在另行通知前默认用管理员提供的搜索 key 并由管理员付费</strong>；你也可以换成自己的 key</td></tr>
+  <tr><td>你填写的学校邮箱、专业、年级、课程、关注方向</td><td>让报告更相关</td></tr>
+  <tr><td>从你私人邮箱读到的<strong>本校发件域</strong>来信（默认 <code>cityu.edu.hk</code>）的元数据与正文</td><td>生成报告</td></tr>
+  <tr><td>运行记录：下发状态、错误信息、token 用量、时间</td><td>排错与用量统计</td></tr>
+  <tr><td>你自己添加的日历事项：标题、备注、日期、时刻和时区</td><td>在日历展示和管理。标题、备注加密保存；日期、时刻、时区和状态以可查询的元数据保存。你可以编辑、导出或删除。删除会立即清空标题、备注和日程元数据，只保留事项编号、账号关联、修订号和删除时间。保存请求编号用于7天内的重复保存保护；过期记录会在下次服务启动或任一账号新增日历事项时全局清理，若期间服务未重启且无人新增，物理删除会延迟。删除账号时一并清理</td></tr>
+  <tr><td>你自己上传的<strong>背景照片</strong>（如果上传了）</td><td>只做界面背景。<strong>在你的浏览器里先缩小并重新编码</strong>，因此拍摄地点、设备型号、拍摄时间这些信息在离开你的设备之前就已经不存在；服务器也不解析图片内容，只验证它确实是一张 JPEG/PNG。带元数据的文件会被<strong>拒绝</strong>，不会被保存</td></tr>
+</table>
+
+<p>若你主动开启系统通知，我们会加密保存浏览器推送订阅地址与密钥，记录设备绑定代际、提醒规则及投递状态。通知服务商可能看到推送地址、请求时间、网络地址与加密流量元数据；推送内容仅含通用提示和不含账号信息的记录编号，不包含邮件正文、事项标题或课程内容。设备连接与登录会话关联，退出、会话失效或撤销后需要重新连接。锁屏只显示通用提醒，展示仍由设备权限、网络和系统设置决定。你可关闭单个事项或设备的提醒；已经在途的通用通知可能晚到，点击仍须重新登录并校验归属。</p>
+<h2>2. 我们不读取什么</h2>
+<div class="note">
+  <p><strong>非本校发件域的邮件，正文根本不进数据库。</strong>我们只留一行记录：发件人、主题、时间和"已跳过"的原因，用于向你如实汇报过滤结果。</p>
+  <p><strong>我们不修改你的邮箱。</strong>全程只读（IMAP <code>BODY.PEEK[]</code>）：不标记已读、不删除、不移动、不改标签。</p>
+  <p><strong>本服务没有任何遥测</strong>：不向作者或任何第三方上报使用情况。</p>
+</div>
+
+<h2>3. 邮件正文去哪了（这一段最重要，请务必读）</h2>
+<div class="callout">
+  <p><strong>生成报告时，邮件正文会通过加密连接发送给你自己选择的大模型服务商。</strong></p>
+</div>
+<ul>
+  <li><strong>在另行通知前默认使用管理员提供的大模型 API key，费用由管理员承担</strong>，你不必自己准备 key，也不必付任何费用。</li>
+  <li>你也可以<strong>换成自己的 API key</strong>：在「AI 模型」里填上即可，此后费用由你直接付给服务商，调用记录也只在你自己的账号下。</li>
+  <li><strong>两种选择的数据流向不同</strong>：用管理员的 key 时，服务商是把"收到过你的邮件正文"记在<u>管理员</u>账号下的；用你自己的 key 时则记在你名下。请按你的接受程度选择。</li>
+  <li><strong>联网核实另算一笔</strong>：开启后，从邮件主题提取的检索词会发给搜索服务商（豆包）；<strong>用管理员提供的搜索 key 时，这些查询记录同样落在管理员账号下</strong>，换成自己的搜索 key 就只在你名下。</li>
+  <li>该服务商受其<strong>自己的隐私政策</strong>约束，其服务器可能位于中国内地或其他司法管辖区。</li>
+  <li>我们<strong>不控制</strong>它对数据的处理，也<strong>不能替你保证</strong>它不将数据用于训练。</li>
+  <li>本服务支持的服务商以你实际选择的为准，目前包括：DeepSeek、OpenAI、火山方舟（豆包）。</li>
+  <li><strong>建议</strong>：不要用它处理你无法接受外传的内容。</li>
+</ul>
+<p><strong>报告发出后，数据库中保存的邮件正文会被立即清空</strong>，只保留报告本身与元数据（发件人、主题、时间、状态）。</p>
+<p>那之后你还想再看原信，可以点任务上的「<strong>看原信</strong>」：我们会用<strong>只读</strong>连接<strong>当场</strong>把你邮箱里的那一封读回来给你看，
+<strong>服务器不留存</strong>——不写进数据库，也不写进日志，关掉就没了。
+因为它读的是你邮箱里的原件，所以信如果已经被删除或移动，我们会直说取不到，而不会拿别的东西顶上。</p>
+<p>同一个面板里的「<strong>翻译成中文</strong>」和「<strong>AI 总结</strong>」是<strong>按需</strong>的：你点一次，我们才把<strong>那一封的正文</strong>发给上面同一类大模型服务商一次
+（同一批服务商、同一把 key：用管理员的 key 时记在管理员账下，用你自己的 key 时记在你名下）。
+生成结果<strong>只显示给你看，不保存</strong>——不写数据库，也不写日志。不点，就什么都不发。</p>
+
+<h3>每日简报里的那段「综览」</h3>
+<p>每日简报本身是<strong>程序拼出来的清单</strong>：每封处理过的邮件占一行，不经过模型，所以不会有哪封被模型漏掉。
+运营者可以额外开启一段<strong>模型写的综览</strong>（例如「三门课都有作业」）附在清单之外。
+开启时，<strong>当天那封简报的正文</strong>（也就是你马上会收到的那份清单，其中包含主题与发件人）
+会发给上面同一类大模型服务商；<strong>不会</strong>额外发送原始邮件正文——简报本来就是由报告整理出来的。
+关闭时这一段不产生任何调用。这段综览是模型写的，可能与清单不符，一切以清单与原邮件为准。</p>
+
+<h3>运营者的「AI 运维助手」（只涉及运行状态，不涉及你的邮件）</h3>
+<p>运营者可以开启一个给自己用的运维助手：服务出故障时，它把<strong>系统运行状态</strong>交给模型，
+让模型写一份排障建议，附在发给运营者的告警邮件里。这里说明它的数据边界：</p>
+<ul>
+  <li>它拿到的<strong>只有计数、状态、时间、耗时和错误代码</strong>（例如「某账号排队 3 封、上次收信 40 分钟前」），
+    以及<strong>按账号 id 而不是邮箱地址</strong>标识的对象。</li>
+  <li>它<strong>不会</strong>拿到邮件正文、邮件主题、发件人或你的邮箱地址——这与运营者在后台看不到正文是同一条边界。</li>
+  <li>这些运行状态会发给上面同一类大模型服务商，因此同样受该服务商自己的隐私政策约束。</li>
+  <li>该助手<strong>只能读、只能写分析文字</strong>：它没有任何执行动作的能力，也不能指定收件人。</li>
+  <li>它由运营者开启或关闭，关闭时不产生任何调用。</li>
+</ul>
+
+<h2>4. 保留多久</h2>
+<table>
+  <tr><th>数据</th><th>保留期</th></tr>
+  <tr><td>本校来信正文</td><td>报告发出后<strong>立即清空</strong>，不长期保存</td></tr>
+  <tr><td>本校来信正文（生成失败、等待重试的）</td><td>保留至重试成功或你删除账号——重试需要原文</td></tr>
+  <tr><td>非本校来信正文</td><td><strong>从不存入</strong></td></tr>
+  <tr><td>报告正文</td><td>直到你删除账号</td></tr>
+  <tr><td>邮件元数据（发件人、主题、时间、状态）</td><td>直到你删除账号</td></tr>
+  <tr><td>你点「处理好了」记下的任务状态</td><td>直到你删除账号；随时可在「已处理」和「按天回看」里查看或恢复</td></tr>
+  <tr><td>邮箱授权码、API key</td><td>直到你删除账号或更换</td></tr>
+  <tr><td>背景照片（如果上传了）</td><td>直到你删除它、换一张，或删除账号。删账号时随账号一起删除，不会留下孤儿文件</td></tr>
+  <tr><td>账号最后一次活跃的时间（你最后一次打开应用是什么时候）</td><td>直到你删除账号。只记「什么时候用过」，不记你看了哪一页、点了什么</td></tr>
+  <tr><td>数据库备份</td><td>每日一份，<strong>按时间滚动保留：服务器上最近 7 天</strong>（同时至少保留 7 份、最多 60 份，先到哪个算哪个），期外自动删除</td></tr>
+</table>
+<p>你随时可以在网页里<strong>导出</strong>或<strong>删除</strong>你的数据（见第 6 节）。</p>
+
+<h2>5. 谁可以看到</h2>
+<ul>
+  <li><strong>只有自动化程序</strong>读取你的邮件。运营者<strong>不查看</strong>用户邮件正文。</li>
+  <li>运营者能在管理后台看到<strong>元数据</strong>（哪个账号、什么时候、多少封、成功与否、错误信息），<strong>看不到正文</strong>。</li>
+  <li>运营者还能看到<strong>账号最后一次活跃的时间</strong>（用于判断「你还没配好」那封提醒有没有被看到）。它只记「什么时候用过」，不记你看了哪一页、点了什么。</li>
+  <li>大模型服务商（见第 3 节）。<strong>用管理员提供的 key 时，服务商把该调用记在管理员账号下</strong>——运营者本人仍然不查看正文；换成你自己的 key 之后，调用记录就只在你名下。</li>
+  <li>除此之外，我们<strong>不向任何第三方提供</strong>你的数据，也不用于广告、画像或训练。</li>
+  <li><strong>背景照片只有你自己能看到</strong>：下发接口要求登录，并且只返回请求者本人的那张，没有公开地址可以猜。运营者看不到它，别人也看不到。</li>
+</ul>
+
+<h2>6. 你的权利</h2>
+<table class="labels">
+  <tr><th>权利</th><th>怎么行使</th></tr>
+  <tr><td>查看</td><td>登录网页，随时看到你的报告与全部设置</td></tr>
+  <tr><td>更正</td><td>登录网页，随时修改</td></tr>
+  <tr><td><strong>导出</strong></td><td>「报告与账户」→「导出我的数据」，下载一份 JSON</td></tr>
+  <tr><td><strong>删除</strong></td><td>「报告与账户」→「删除账号」。会移除你的邮箱授权码、API key、报告、邮件记录与背景照片；<strong>不可恢复</strong></td></tr>
+  <tr><td>联系我们</td><td>{{CONTACT_LINK}}</td></tr>
+</table>
+<p>账号删除后，其数据也会随备份的<strong>同一个滚动窗口</strong>自然消失（服务器上最近 7 天）。</p>
+
+<h2>7. 官网留言板（没注册也能写）</h2>
+<p>官网（<code>/</code>）上有一个留言板，<strong>不需要注册、不需要登录</strong>就能写。它和「注册账号」是两件事：
+<b>留言不等于注册</b>，写留言不会给你建号，也不会替你填任何注册信息。</p>
+<table>
+  <tr><th>我们存什么</th><th>做什么用</th><th>保留多久</th></tr>
+  <tr><td>留言正文</td><td>呈现在后台由运营者阅读；被选中的会<strong>匿名</strong>刊登在官网留言板上</td><td>直到运营者或你要求删除</td></tr>
+  <tr><td>昵称（可选）</td><td>刊登时署名；不填就写「一位同学」</td><td>同上</td></tr>
+  <tr><td>邮箱（可选）</td><td><strong>只给运营者看，永不刊登</strong>，用来回你</td><td>同上</td></tr>
+  <tr><td>你的 IP 地址的<strong>单向摘要</strong>（不是一个能反查的地址）</td><td>限流与去重，防止有人刷屏</td><td>与留言同时删除</td></tr>
+  <tr><td>提交时间</td><td>显示与排序</td><td>同上</td></tr>
+</table>
+<ul>
+  <li><strong>默认不公开</strong>：写下的内容只有运营者看得到，刊登必须由人点一次。所以原则上不会有垃圾、广告或别人的隐私出现在这一页。</li>
+  <li>刊登时<strong>只显示昵称与正文</strong>，<strong>不显示邮箱、不显示时间以外的任何信息</strong>。</li>
+  <li>留言里最多 2 个链接；超过会被拒绝，不会被截断。</li>
+  <li>想删掉自己写过的那条：用留言时留的邮箱<a href="{{CONTACT_LINK}}">联系我们</a>，或直接在留言里说。你留了邮箱我们才找得到你。</li>
+  <li>这一页看到的所有留言都是<span>纯文本</span>——我们不会把留言当成网页代码执行。</li>
+</ul>
+
+<h2>8. 访问统计（谁来看过这个网站）</h2>
+<p>官网与应用的页面上有一个<strong>自己做的</strong>访问计数器，用来回答「有多少人看过」。它<strong>不加载任何第三方统计脚本、不用 cookie、不跨站跟踪你</strong>，
+你在这里看到的内容也不会被拿去卖给谁。我们只记下面这些：</p>
+<table>
+  <tr><th>我们存什么</th><th>做什么用</th><th>保留多久</th></tr>
+  <tr><td>看的是哪个页面、什么时候</td><td>数出「今天/本周有多少人看」</td><td>最多 180 天，到期自动删除</td></tr>
+  <tr><td>来源站点的<strong>域名</strong>（例如 <code>google.com</code>）</td><td>知道访客是从哪儿点进来的</td><td>同上</td></tr>
+  <tr><td>你的 IP 地址的<strong>单向摘要</strong>（与留言板同一套做法，不是一个能反查的地址）</td><td>把「同一个人看了 5 次」算成 1 个人</td><td>同上</td></tr>
+  <tr><td>从 IP 判断出的<strong>国家/城市</strong></td><td>让我们知道访客大致从哪里来</td><td>同上</td></tr>
+  <tr><td>浏览器/系统的<strong>粗略类别</strong>，以及是不是机器人</td><td>把扫描器与真人分开，网页兼容性也有用</td><td>同上</td></tr>
+</table>
+<ul>
+  <li><strong>你的 IP 地址本身不写进数据库</strong>。库里只有那把单向摘要，事后<strong>无法还原</strong>成地址；它也不会被复制进每日备份（备份里同样只有摘要）。</li>
+  <li>后台「最近访问」里能看到完整 IP，但那一份<strong>只存在服务器内存里</strong>：服务一重启就没了，也从不落盘。</li>
+  <li>来源网址只保留域名：<strong>搜索关键词不会被记录</strong>（那属于搜的人，不属于我们）。</li>
+  <li>你的浏览器如果发了 <code>DNT: 1</code> 或 <code>Sec-GPC: 1</code>，这一条访问<strong>完全不记</strong>。</li>
+  <li>「有多少人」是<strong>估算</strong>：同一个网络（比如宿舍、教学楼）下的人可能算成一个，手机切换网络可能算成两个。我们宁可说清楚，也不给一个看起来很确定的假数字。</li>
+  <li>国家/城市来自离线的 <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP Lite</a> 数据库（CC BY 4.0），查询<strong>不经过任何第三方服务器</strong>——你的地址不会被发出去问。</li>
+  <li>服务器自身的 nginx 访问日志仍会按运维需要保留（排查故障用），它<strong>不在这个统计库里</strong>，并按系统默认的日志滚动被删除。</li>
+</ul>
+
+<h2>9. 我们怎么保护它</h2>
+<ul>
+  <li>邮箱授权码与 API key 使用 <strong>AES-256-GCM</strong> 信封加密，并按用户与用途隔离（一个用户的密文无法用另一个用户的上下文解开）。</li>
+  <li>全程 HTTPS，证书自动续期并有到期告警。</li>
+  <li>密码只存哈希；会话令牌同样只存哈希，改密码会吊销全部会话。</li>
+  <li><strong>忘记密码没有自助找回</strong>：我们没有第二个能验证「你是你」的渠道给你发重置链接（发到那个邮箱里，就等于把只读的邮箱变成了登录凭据），所以这件事由运营者人工处理——他会替你设一个<strong>临时密码</strong>并告诉你怎么登录。<strong>他看不到你的旧密码</strong>（库里只有哈希），但在他把临时密码交给你、你登录后改掉它之前，他会短暂地知道这个临时密码；这一步会留在后台的操作记录里。</li>
+  <li>数据库与配置在服务器上权限收紧（<code>0600</code>），备份同样。备份按时间滚动保留（服务器上最近 7 天），期外自动删除。</li>
+  <li><strong>备份可能被复制到服务器之外</strong>（由运营者配置的异地存储，用于磁盘损坏时可恢复）。异地副本里<strong>没有主密钥</strong>：数据库中的邮箱授权码与 API key 仍是密文，没有运营者保管的那把密钥就无法解开。异地副本同样受上面的滚动窗口限制。</li>
+</ul>
+<p><strong>诚实的说明</strong>：我们<strong>不能</strong>承诺绝对安全。我们能做的是尽可能少留：正文不在库里长期保存，非本校邮件不留正文。</p>
+
+<h2>10. 如果出了事</h2>
+<p>如果发生可能影响你的数据泄露，我们会通过你注册的邮箱通知你：发生了什么、影响了哪些数据、你应该做什么。我们会在确认后尽快通知，不会等到调查完全结束。</p>
+
+<h2>11. 未成年人</h2>
+<p>本服务面向大学生。如果你未满 18 岁，请先取得父母或监护人的同意再使用。</p>
+
+<h2>12. 政策的变更</h2>
+<p>本政策如有变更，会在本页更新并修改顶部的版本与日期。涉及你权利的<strong>重大变更</strong>会另发邮件通知。继续使用即视为接受更新后的政策。</p>
+
+<h2>13. 适用法律与依据</h2>
+<p>本服务由香港特别行政区的服务器提供，本政策按香港《个人资料（私隐）条例》（PDPO）的原则编写。</p>
+<div class="callout">
+  <p><strong>我们不给自己或你贴上「资料使用者／处理者」这类法定角色的标签。</strong>谁是、谁不是，
+  由<strong>事实与适用法律</strong>决定，不由本页自己宣布。宣布一个对自己有利的结论，
+  对你没有任何用处，反而可能让人误以为已经满足某项法律要求。下面只写事实。</p>
+</div>
+<p><strong>我们按你的设置处理，不为你以外的目的使用。</strong>你可以在「报告与账户」里随时导出或删除你的全部数据。
+在另行通知前默认用<strong>管理员</strong>提供的大模型与搜索 key 并由管理员付费；你也可以随时换成<strong>自己的</strong> key，
+那样调用就只在你自己的账号下（见第 1 节与第 3 节）。
+若你位于欧盟或英国，我们按当地资料保护法对处理他人资料所要求的方式来对待这些数据。</p>
+<p>需要一份正式的数据处理协议（DPA）时，按第 6 节「你的权利」那一行里的联系方式找我们。</p>
+
+<h3>13.1 与城大的关系：没有数据处理协议</h3>
+<div class="callout">
+  <p><strong>本服务与香港城市大学（CityU）之间不存在任何数据处理协议（DPA），也不存在任何数据处理者与资料使用者之间的委托关系。</strong>
+  城大<strong>没有</strong>把任何个人资料交给我们处理，<strong>也没有</strong>委托我们做这件事。本服务不是学校的信息系统，
+  不接在学校网络或学校账号体系里，学校和它的人员都<strong>看不到</strong>也不经手这些数据。</p>
+</div>
+<p>这意味着：<strong>不要假定本服务处在一个学校安排的合规框架之下。</strong>数据只经过两个地方——
+你使用的这台服务器，和你自己选择的大模型服务商（第 3 节）。若你需要一份学校认可的 DPA，
+本服务<strong>无法</strong>提供，也不代表学校提供。</p>
+<p>本服务<strong>不是城大的官方服务</strong>：它由个人独立维护，未获城大授权、认可或委托。
+<strong>「可以处理哪些邮件」的前提由你自己确认</strong>（见 <a href="/terms">服务条款</a> 第 3 条），
+我们不代你判断，也不因学校的规定对你或学校承担义务。</p>
+
+<footer>
+  <p>CityU Mail Pilot · 版权人 余剑篪 · 以 AGPL-3.0 发布 · <a href="/terms">服务条款</a></p>
+</footer>
+
+</main>
+<script src="/i18n.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,642 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-09-26",
+  "scope_note": "Evidence-level companion to eval_cases/heldout_cases/heldout_independent_cases. Page-level source hit rates are kept; each answerable case adds one or more verbatim quotes from the fixed fetched snapshot, so an evidence hit means the returned passage contains the quoted sentence, not merely the right page. applicable_year is 'unknown' when the page cannot establish it; a fetch timestamp is never an effective date. Unanswerable cases have no expected source and no evidence: a returned candidate is a false candidate, not a generation hallucination, because this tool has no generator.",
+  "snapshot": {
+    "registration": {
+      "url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+      "content_sha256": "92c23946cf72608dfb3498d825daa6f5ca6d7928665dfaa2c7be3d34d6830877"
+    },
+    "regulations": {
+      "url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+      "content_sha256": "9d0c6f52883fb91236652da90dece9101e63b2aeef64cba13498e59539be4456"
+    },
+    "schedule": {
+      "url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+      "content_sha256": "829f14196988dba2e2fb3690e060a22a123706cb6389245fe0f48208e593645d"
+    },
+    "restrictions": {
+      "url": "https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm",
+      "content_sha256": "95d8e455b2f3e3000d82680695f5e7a7ea36ab7f94d9afa73149ed6d6ea7b34f"
+    },
+    "faq": {
+      "url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+      "content_sha256": "f2d1f35e4b477aa4bcdff1b9be3e92be3d839479eea96ab31c68380a1b84c19d"
+    }
+  },
+  "cases": [
+    {
+      "id": "ev-zh01",
+      "language": "zh",
+      "category": "credit-requirement",
+      "query": "四年制本科最低要修满多少学分才能毕业？最多可以修多少学分？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "年级要求因学院/课程而异，这里只是大学最低/上限。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "The minimum graduation requirement for a normative 4-year bachelor’s degree is 120 credit units",
+          "chunk_ordinal": 11
+        },
+        {
+          "source": "regulations",
+          "quote": "the maximum number of credit units completed should not exceed 144",
+          "chunk_ordinal": 11
+        }
+      ]
+    },
+    {
+      "id": "ev-zh02",
+      "language": "zh",
+      "category": "study-load",
+      "query": "全日制学生每学期最少和最多可以修多少学分？",
+      "expected": [
+        "registration"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "同一句也出现在 restrictions/schedule 页面。",
+      "evidence": [
+        {
+          "source": "registration",
+          "quote": "full-time students must register for courses summing to a total of at least 12 credit units, and for not more than 18 credit units",
+          "chunk_ordinal": 1
+        }
+      ]
+    },
+    {
+      "id": "ev-zh03",
+      "language": "zh",
+      "category": "max-study-period",
+      "query": "本科最多可以读多久？超过会怎样？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "条文明写 4 年制 8 年；不含双学位等特例。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "eight years for normative 4-year degree, six years for Advanced Standing I, and five years for Advanced Standing II",
+          "chunk_ordinal": 27
+        }
+      ]
+    },
+    {
+      "id": "ev-zh04",
+      "language": "zh",
+      "category": "second-major",
+      "query": "申报第二主修，最低 CGPA 要求是多少？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "该 3.00 是申报第二主修的门槛，页面并未按入学年级分档；不是 2020/21 的专属要求。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "minimum CGPA of 3.00 at the end of the semester when the declaration is submitted",
+          "chunk_ordinal": 17
+        }
+      ]
+    },
+    {
+      "id": "ev-zh05",
+      "language": "zh",
+      "category": "double-degree",
+      "query": "申报双学位最低 CGPA 是多少？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "与第二主修的 3.00 不同，别混。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "minimum CGPA of 3.30 at the end of the semester when the declaration is submitted",
+          "chunk_ordinal": 18
+        }
+      ]
+    },
+    {
+      "id": "ev-zh06",
+      "language": "zh",
+      "category": "repeat-course",
+      "query": "同一门课最多可以重修几次？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "“两次重考机会”的原文措辞。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "Only two repeat attempts may be permitted.",
+          "chunk_ordinal": 35
+        }
+      ]
+    },
+    {
+      "id": "ev-zh07",
+      "language": "zh",
+      "category": "grade-review",
+      "query": "成绩公布后想申请复核，最迟要在多少个工作天内找任课老师？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "正式复核还有 13 个工作天的另一处规定。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "within 5 working days of the announcement of grades by the University with a view to resolving the matter informally",
+          "chunk_ordinal": 38
+        }
+      ]
+    },
+    {
+      "id": "ev-zh08",
+      "language": "zh",
+      "category": "transfer-credit",
+      "query": "转学分会计入 GPA 吗？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "联合培养等特殊安排例外。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "Transfer credits do not count in the calculation of a student’s GPA",
+          "chunk_ordinal": 25
+        }
+      ]
+    },
+    {
+      "id": "ev-zh09",
+      "language": "zh",
+      "category": "advanced-standing",
+      "query": "Advanced Standing I 学生要修满多少学分？最多能修多少？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "AS II 的 60/84 是另一档。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "Advanced Standing I students have to achieve a minimum requirement of 90 credit units for graduation",
+          "chunk_ordinal": 20
+        },
+        {
+          "source": "regulations",
+          "quote": "the maximum number of credit units completed should not exceed 114",
+          "chunk_ordinal": 20
+        }
+      ]
+    },
+    {
+      "id": "ev-zh10",
+      "language": "zh",
+      "category": "master-schedule-term",
+      "query": "课表里的 CRN 是什么？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "术语解释，不含个人课表。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "Course Reference Number. A unique number assigned to a particular section of a class",
+          "chunk_ordinal": 1
+        }
+      ]
+    },
+    {
+      "id": "ev-zh11",
+      "language": "zh",
+      "category": "master-schedule-term",
+      "query": "课表里 WEB 一栏写 N 是什么意思？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "N = 非 web-enabled，要走电子表审批。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "Description “N” under the heading means they are NOT web-enabled.",
+          "chunk_ordinal": 1
+        }
+      ]
+    },
+    {
+      "id": "ev-zh12",
+      "language": "zh",
+      "category": "master-schedule-term",
+      "query": "Master Class Schedule 里的 Waitlist Avail 代表什么？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "网页只解释 Y/N/Full，不给个人排队号。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "Waitlist quota available for a course or course section",
+          "chunk_ordinal": 2
+        }
+      ]
+    },
+    {
+      "id": "ev-zh13",
+      "language": "zh",
+      "category": "class-hours",
+      "query": "平时上课时间是什么时候到什么时候？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "给出的是平时与周六时段，未给学期日历。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "All classes start on the hour and finish at 10 minutes to the hour.",
+          "chunk_ordinal": 0
+        }
+      ]
+    },
+    {
+      "id": "ev-zh14",
+      "language": "zh",
+      "category": "registration-restriction",
+      "query": "某门课只限商学院学生，我不是商学院的，还能选吗？",
+      "expected": [
+        "restrictions"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "页面说可申请，不等于会批准。",
+      "evidence": [
+        {
+          "source": "restrictions",
+          "quote": "Students who do not belong to those groups but wish to take the course should seek approval from the course-offering units",
+          "chunk_ordinal": 0
+        }
+      ]
+    },
+    {
+      "id": "ev-zh15",
+      "language": "zh",
+      "category": "privacy-results",
+      "query": "学校会把我的成绩告诉我父母吗？",
+      "expected": [
+        "faq"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "紧急情况有例外，原文已写。",
+      "evidence": [
+        {
+          "source": "faq",
+          "quote": "The University will not release information relating to a student, either academic or personal, to any party without the student’s consent.",
+          "chunk_ordinal": 2
+        }
+      ]
+    },
+    {
+      "id": "ev-zh16",
+      "language": "zh",
+      "category": "declare-major",
+      "query": "入学时没有申报主修，什么时候要申报？",
+      "expected": [
+        "faq"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "具体日期以当年公布的流程为准。",
+      "evidence": [
+        {
+          "source": "faq",
+          "quote": "In mid to late May of your first year of study.",
+          "chunk_ordinal": 21
+        }
+      ]
+    },
+    {
+      "id": "ev-zh17",
+      "language": "zh",
+      "category": "minor-declaration",
+      "query": "已经拿了超过上限的额外学分，还能申报辅修吗？",
+      "expected": [
+        "faq"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "页面给出上限数字（144/114/84），按学制不同。",
+      "evidence": [
+        {
+          "source": "faq",
+          "quote": "Students who have already been granted extra credits above the maximum credit limit",
+          "chunk_ordinal": 23
+        }
+      ]
+    },
+    {
+      "id": "ev-zh18",
+      "language": "zh",
+      "category": "effective-version",
+      "query": "这份本科学术规章是什么时候开始生效的？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "2025/26",
+      "answerable": true,
+      "caveat": "“生效于 2025/26 学年 A 学期”不等于每条都适用于所有年级。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "(Effective from Semester A 2025/26)",
+          "chunk_ordinal": 0
+        }
+      ]
+    },
+    {
+      "id": "ev-zh19",
+      "language": "zh",
+      "category": "cohort-version",
+      "query": "2019/20 年或之前入学的学生，毕业最低 CGPA 要求是多少？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "2019/20 and before",
+      "answerable": true,
+      "caveat": "与 2020/21 起的 2.00 是同一页上的不同版本，不能混算。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "For students admitted in 2019/20 and before, the minimum CGPA requirement is 1.70.",
+          "chunk_ordinal": 51
+        }
+      ]
+    },
+    {
+      "id": "ev-zh20",
+      "language": "zh",
+      "category": "cohort-version",
+      "query": "2020/21 年及以后入学的学生，第二主修的毕业最低 CGPA 要求是多少？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "2020/21 and thereafter",
+      "answerable": true,
+      "caveat": "与 2019/20 及之前的 1.70 是同一页上的不同版本，不能混算；这条说的是获授学位的要求。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "The minimum CGPA requirement mentioned in AR16.3 and AR16.4 only applies to students admitted in 2020/21 and thereafter",
+          "chunk_ordinal": 51
+        }
+      ]
+    },
+    {
+      "id": "ev-zht01",
+      "language": "zht",
+      "category": "credit-requirement",
+      "query": "四年制本科最少要修滿幾多學分？最多可以修幾多？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "繁体写法，证据同简体那条。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "The minimum graduation requirement for a normative 4-year bachelor’s degree is 120 credit units",
+          "chunk_ordinal": 11
+        }
+      ]
+    },
+    {
+      "id": "ev-zht02",
+      "language": "zht",
+      "category": "second-major",
+      "query": "申報第二主修最低 CGPA 係幾多？",
+      "expected": [
+        "regulations"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "只覆盖词表有的繁体写法。",
+      "evidence": [
+        {
+          "source": "regulations",
+          "quote": "minimum CGPA of 3.00 at the end of the semester when the declaration is submitted",
+          "chunk_ordinal": 17
+        }
+      ]
+    },
+    {
+      "id": "ev-zht03",
+      "language": "zht",
+      "category": "official-gpa",
+      "query": "DegreeWorks 嘅 GPA 同正式成績單嘅 GPA，邊個先係官方數字？",
+      "expected": [
+        "faq"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "官方口径只在成绩单，DegreeWorks 只作参考。",
+      "evidence": [
+        {
+          "source": "faq",
+          "quote": "Only the GPA as shown in your transcript is the official GPA recorded by the University.",
+          "chunk_ordinal": 5
+        }
+      ]
+    },
+    {
+      "id": "ev-zht04",
+      "language": "zht",
+      "category": "master-schedule-term",
+      "query": "課表嘅 Waitlist Avail 代表咩？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "术语解释，不给个人排队。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "Waitlist quota available for a course or course section",
+          "chunk_ordinal": 2
+        }
+      ]
+    },
+    {
+      "id": "ev-mx01",
+      "language": "mixed",
+      "category": "class-hours",
+      "query": "課堂係咪逢整點開始？通常幾點落堂？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "粤语问法，证据在英文原文。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "All classes start on the hour and finish at 10 minutes to the hour.",
+          "chunk_ordinal": 0
+        }
+      ]
+    },
+    {
+      "id": "ev-mx02",
+      "language": "mixed",
+      "category": "personal-schedule",
+      "query": "AIMS 入面邊度可以睇到我嘅 weekly schedule？",
+      "expected": [
+        "schedule"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "页面给的是入口路径，看不到个人内容。",
+      "evidence": [
+        {
+          "source": "schedule",
+          "quote": "AIMS [Course Registration > Weekly Schedule]",
+          "chunk_ordinal": 0
+        }
+      ]
+    },
+    {
+      "id": "ev-mx03",
+      "language": "mixed",
+      "category": "late-drop",
+      "query": "add/drop deadline 之後仲可以 drop 嗎？",
+      "expected": [
+        "registration"
+      ],
+      "applicable_year": "unknown",
+      "answerable": true,
+      "caveat": "可申请，但只在例外情况下批准。",
+      "evidence": [
+        {
+          "source": "registration",
+          "quote": "late requests for dropping courses after the add/drop deadline must be submitted no later than the end of the teaching period",
+          "chunk_ordinal": 6
+        }
+      ]
+    },
+    {
+      "id": "ev-none01",
+      "language": "zh",
+      "category": "personal-fact",
+      "query": "我明天考试的座位号是多少？",
+      "expected": [],
+      "applicable_year": "unknown",
+      "answerable": false,
+      "unanswerable_reason": "个人座位号只存在于个人 AIMS/考试安排，五个公开页没有任何个人数据。",
+      "caveat": "retriever 可能返回一般考试规则页；那是候选，不是答案。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none02",
+      "language": "zh",
+      "category": "personal-fact",
+      "query": "我现在的 CGPA 是多少？",
+      "expected": [],
+      "applicable_year": "unknown",
+      "answerable": false,
+      "unanswerable_reason": "个人成绩记录在 AIMS/DegreeWorks，公开页只解释 GPA 的算法。",
+      "caveat": "一般 GPA 规则页会被召回，不能当作个人数字。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none03",
+      "language": "zh",
+      "category": "future-deadline",
+      "query": "2026/27 上学期 add/drop 截止的准确日期是哪天？",
+      "expected": [],
+      "applicable_year": "2026/27",
+      "answerable": false,
+      "unanswerable_reason": "静态页只写“Key Dates/时间票”术语，不列具体日期；课程表也声明会变。",
+      "caveat": "抓取时间 2026-09-26 不是政策生效时间，也不是截止日期。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none04",
+      "language": "zh",
+      "category": "fee-not-in-corpus",
+      "query": "2026/27 本地 BBA 一年级学生要交多少学费？",
+      "expected": [],
+      "applicable_year": "2026/27",
+      "answerable": false,
+      "unanswerable_reason": "学费不在五个 ARRO 页面里，页面只指向 Regulations on Tuition Fees。",
+      "caveat": "缺来源，不是检索失败。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none05",
+      "language": "zh",
+      "category": "eligibility-guarantee",
+      "query": "你能保证我一定选得上这门课吗？",
+      "expected": [],
+      "applicable_year": "unknown",
+      "answerable": false,
+      "unanswerable_reason": "公开页面明确说名额是实时变动的、申请逐案审批且不保证批准。",
+      "caveat": "任何“保证”都不是这些页面能给出的结论。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none06",
+      "language": "zh",
+      "category": "expired-policy",
+      "query": "2015/16 学年入学的学生，毕业最低要修多少学分？",
+      "expected": [],
+      "applicable_year": "2015/16",
+      "answerable": false,
+      "unanswerable_reason": "这份规章只写生效于 2025/26；快照里没有 2015/16 的版本。",
+      "caveat": "拿现行条文回答过去学年的问题是把旧政策当新政策的反面。",
+      "evidence": []
+    },
+    {
+      "id": "ev-none07",
+      "language": "mixed",
+      "category": "outside-corpus",
+      "query": "宿舍申請截止日期係幾時？",
+      "expected": [],
+      "applicable_year": "unknown",
+      "answerable": false,
+      "unanswerable_reason": "学生宿舍不在五个 ARRO 页面的范围内。",
+      "caveat": "没有来源不等于答案是否定。",
+      "evidence": []
+    }
+  ],
+  "provenance": {
+    "supersedes_commit": "a1dc195",
+    "previous_regulations_content_sha256": "fa9e706fe814870746d69a8a772a37d14336d3c1dfbdf13b54d2ad90b67fd70e",
+    "extractor_commit": "e7c9db0",
+    "note": "Re-annotated for the e7c9db0 preserve-superscript extractor. The 544d38c page hash fa9e706f is recoverable from commit a1dc195. Only the regulations page differs between the two extractors (14 [sup:N] markers); quotes and applicable_year are unchanged and were re-verified verbatim. chunk_ordinal pins each quote to the 1200-char build chunk that contains it."
+  }
+}

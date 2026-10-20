@@ -1,0 +1,74 @@
+# 真卸一次（第 13 项）。
+#
+# 安装器的 `--uninstall` 到底删了什么、留下了什么，只能在真机器上回答，而**生产上
+# 不能试**——那会把 7 个真实用户的服务停掉。这个作业给它一台一次性的 Ubuntu：
+# runner 是全新的、跑完就扔，所以它是唯一一个可以「装完就卸、卸完再装」的地方。
+#
+# 为什么不是每次 push 都跑：它要装 nginx 之外的整套东西、起 systemd 单元、
+# 走完 install → uninstall → reinstall → purge → reinstall 五个来回，比单测慢得多。
+# 每周一次 + 手动触发，足够发现「有人改了安装器却没更新卸载路径」这类漂移。
+#
+# 它挡的是哪一类回归（都是读代码看不出来的）：
+#   * 服务账号不再被创建 → 干净机器上根本装不上；
+#   * `--uninstall` 留下还在生效的 nginx 站点；
+#   * 重装把数据库重建了（而不是沿用同一个文件）；
+#   * `--purge` 变成一道单向门（删了服务账号之后再也装不回来）。
+name: 真卸一次
+
+on:
+  workflow_dispatch:
+  # Whenever the installer, its units or the drill itself change. This is the
+  # regression it guards: someone edits the install path and the uninstall path
+  # stops matching. It deliberately does NOT run on every push -- the ordinary
+  # three-job CI already covers those, and this one installs real systemd units.
+  push:
+    paths:
+      - "pilot_app/deploy_pilot.sh"
+      - "pilot_app/systemd/**"
+      - "tools/uninstall_drill.sh"
+      - ".github/workflows/uninstall-drill.yml"
+  schedule:
+    # 每周一 04:17 UTC（服务器在 UTC+8，那是午间，不会和备份撞）。
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uninstall-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: 装 → 卸 → 再装 → purge → 再装
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # The drill installs the *release artifact*, not the checkout: that is what
+      # a self-hoster runs, and it is the thing whose file list can be wrong.
+      - name: 打包
+        run: bash pilot_app/build_release.sh
+      - name: 解开包
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          tar xzf "$(ls dist/cityu-mail-pilot-*.tar.gz)" -C "$RUNNER_TEMP/release"
+          ls "$RUNNER_TEMP/release"
+      - name: 演练（全程需要 root：安装器要写 /etc 与 /var/lib）
+        # --ci is passed as an *argument* because sudo resets the environment:
+        # GITHUB_ACTIONS does not survive `sudo bash …`, and a drill that
+        # cannot say why it failed is a drill nobody can act on.
+        run: sudo bash tools/uninstall_drill.sh --ci "$RUNNER_TEMP/release"
+      # The runner is thrown away, but a failure should still say what the
+      # machine looked like -- the drill's own output is the diagnosis.
+      - name: 失败时把安装/卸载日志打出来
+        if: failure()
+        run: |
+          for log in /tmp/drill-*.log; do
+            [ -f "$log" ] || continue
+            echo "──── $log ────"
+            tail -n 40 "$log"
+          done

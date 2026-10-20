@@ -1,0 +1,21 @@
+[Unit]
+Description=Back up CityU Mail Pilot SQLite database
+
+[Service]
+Type=oneshot
+User=cityumail
+Group=cityumail
+WorkingDirectory=/opt/cityu-mail-pilot
+EnvironmentFile=/etc/cityu-mail-pilot/pilot.env
+# Consume a pending "back up now" request *before* running. The path unit fires
+# when the file appears, and systemd will not fire again for a file that is still
+# there -- so a request left behind would silence every later one. Taking it away
+# first (rather than after) also means a failed run cannot wedge the mechanism:
+# the failure is reported by OnFailure= below, and the next press still works.
+ExecStartPre=/usr/bin/rm -f /var/lib/cityu-mail-pilot/backup.request
+ExecStart=/opt/cityu-mail-pilot/.venv/bin/python -m pilot_app.backup
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cityu-mail-pilot /var/backups/cityu-mail-pilot

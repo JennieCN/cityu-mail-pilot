@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily CityU Mail Pilot database backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 Asia/Hong_Kong
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

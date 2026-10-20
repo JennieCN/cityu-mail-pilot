@@ -1,0 +1,32 @@
+[Unit]
+Description=CityU Mail Pilot IMAP and report worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cityumail
+Group=cityumail
+WorkingDirectory=/opt/cityu-mail-pilot
+EnvironmentFile=/etc/cityu-mail-pilot/pilot.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/cityu-mail-pilot/.venv/bin/python -m pilot_app.worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/cityu-mail-pilot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=600M
+TasksMax=96
+
+[Install]
+WantedBy=multi-user.target

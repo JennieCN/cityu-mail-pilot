@@ -1,0 +1,24 @@
+# Local-only. Kept out of the repository on purpose: the master key never leaves
+# the server's 0600 environment file, and a database with real mail in it does
+# not belong in a public repository either.
+.secrets/
+pilot.env
+*.env
+# 本机导出规则（`publish-private.json`）**以及它的备份/改名副本**：2026-09-23 那台机器
+# 给这份文件做过 `.bak-日期` 副本，精确名挡不住 —— 副本同样是要藏起来的东西。
+# （这条与源码树的 `.gitignore` 同源，`test_preflight.PrivateFileBackupTests` 两棵树都盯。）
+publish-private.json*
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.venv/
+.venv-pilot/
+__pycache__/
+*.pyc
+dist/
+preview/
+# Scratch output from running the app locally (`run.ps1` writes a throwaway
+# database here). Never committed — it is a working directory, not source, and
+# the database in it is exactly the kind of file the header above is about.
+local-run/
+.DS_Store

@@ -1,0 +1,496 @@
+[
+  {
+    "id": "d190-en-01",
+    "language": "en",
+    "query": "In the Master Class Schedule, what does a 'Part of Term' value of S indicate about a course?",
+    "expected": [
+      "schedule"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "The terminology table only explains the column; which term an individual course actually belongs to still has to be checked in the live Master Class Schedule.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Description “S” under the heading means the course does not follow the regular term."
+      }
+    ]
+  },
+  {
+    "id": "d190-en-02",
+    "language": "en",
+    "query": "In the Master Class Schedule terminology list, what does Cap mean for a course or course section?",
+    "expected": [
+      "schedule"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "Cap is the maximum quota; how many seats are actually left is a different column (Avail) and is live data.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Maximum quota for the course or course section."
+      }
+    ]
+  },
+  {
+    "id": "d190-en-03",
+    "language": "en",
+    "query": "Within the hour, when do CityU classes start and finish?",
+    "expected": [
+      "schedule"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "This is the University class-hour rule; the actual meeting time of a section is shown in the personal class schedule.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "All classes start on the hour and finish at 10 minutes to the hour."
+      }
+    ]
+  },
+  {
+    "id": "d190-en-04",
+    "language": "en",
+    "query": "I am a College of Business student majoring in Accountancy (AC). Can I register for a section marked 'only for College: CB' and 'not for Major AC'?",
+    "expected": [
+      "restrictions"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "Eligibility follows the restriction printed on the section itself; the current course catalogue and any approval from the course-offering unit still apply.",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "it means the course can be taken by students in College of Business but except for those from AC (Accountancy) Major."
+      }
+    ]
+  },
+  {
+    "id": "d190-en-05",
+    "language": "en",
+    "query": "I was admitted to a normative 4-year degree in 2019/20. According to the regulations currently published on the ARRO page, what minimum CGPA applies to me for the award of my degree?",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "2019/20 and before",
+    "caveat": "The 2.00 CGPA text in AR16.3/AR16.4 is for students admitted in 2020/21 and thereafter; the footnote keeps 1.70 for the 2019/20-and-before cohort.",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "For students admitted in 2019/20 and before, the minimum CGPA requirement is 1.70."
+      }
+    ]
+  },
+  {
+    "id": "d190-en-n01",
+    "language": "en",
+    "query": "What is the exact last date for adding or dropping a course in Semester A 2026/27?",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "The registration page's Key Dates block contains event labels only (for example 'Course add/drop period ends'); the dates are injected by JavaScript from a separate spreadsheet and no concrete date appears anywhere in the text of the five pages.",
+    "caveat": "For a real deadline, check the ARRO Key Dates / the current term's AIMS pages."
+  },
+  {
+    "id": "d190-en-n02",
+    "language": "en",
+    "query": "What is the student residence (hall) application deadline for 2026/27?",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "None of the five ARRO pages contains any student residence or hall application information, so there is no evidence to answer with.",
+    "caveat": "Contact the Student Residence Office / the hall application channel instead."
+  },
+  {
+    "id": "d190-en-n03",
+    "language": "en",
+    "query": "How many seats (Avail) are left right now in a particular course section for Semester A 2026/27?",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "The pages only define what the Avail column means; the seat count itself is real-time dynamic data held in the Master Class Schedule behind the Portal/AIMS, not in the page text.",
+    "caveat": "Look up the live Master Class Schedule after signing in."
+  },
+  {
+    "id": "d190-zht-01",
+    "language": "zht",
+    "query": "我在 2025/26 學年入學，通識教育（Gateway Education）要修多少學分？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "2025/26 and thereafter",
+    "caveat": "31 學分只適用於 2025/26 及之後入學的學生；2024/25 及之前入學的是 30 學分。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "The Gateway Education requirement of 31 credit units mentioned in AR 4.7.1 only applies to students admitted in 2025/26 and thereafter."
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-02",
+    "language": "zht",
+    "query": "我是 2022/23 學年入學的四年制本科生，AR4.9.2 所指的大學要求（實習／顧問項目／研究項目）是否適用於我？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "2022/23 and thereafter",
+    "caveat": "這項要求只適用於 2022/23 及之後入學的四年制學位學生。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "The University Requirement stipulated in AR4.9.2 only applies to normative 4-year degree students admitted in 2022/23 and thereafter."
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-03",
+    "language": "zht",
+    "query": "休學（leave of absence）最短可以多久？最多可以累積多少個學期？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "休學須先獲批准，而且每個學期都要繳付續讀費（continuation fee）。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "Periods of approved leave of absence may not be less than one full semester, and may not accumulate to more than four semesters."
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-04",
+    "language": "zht",
+    "query": "我打算修讀雙學位（double degree），第五年及之後所修的學分是否要自費？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "四年內超出 144 學分以及第五年起所修的學分都以自資方式收費；細節以 Fees and Charges 為準。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "credits taken in the 5th year of study and beyond will be charged on a self-financing basis."
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-05",
+    "language": "zht",
+    "query": "如果在加退選期限（add/drop deadline）之後才申請退選，最遲要在何時提交？",
+    "expected": [
+      "registration",
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "遲退選須由開課學術單位主管批准，而且只在特殊情況下才會獲批；同一條規則在 registration 與 faq 兩頁都有。",
+    "evidence": [
+      {
+        "source": "registration",
+        "quote": "must be submitted no later than the end of the teaching period for the relevant semester/term"
+      },
+      {
+        "source": "faq",
+        "quote": "must be submitted no later than the end of the teaching period for the relevant semester/term"
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-06",
+    "language": "zht",
+    "query": "如果我不屬於某個科目組別指定的學院或主修，但想修讀該科，應該怎樣做？",
+    "expected": [
+      "restrictions"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "要透過非網上課程的電子表格向開課單位申請，並在最後一個 time-ticket 內提交。",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "Students who do not belong to those groups but wish to take the course should seek approval from the course-offering units"
+      },
+      {
+        "source": "restrictions",
+        "quote": "during the last time-ticket"
+      }
+    ]
+  },
+  {
+    "id": "d190-zht-n01",
+    "language": "zht",
+    "query": "2026/27 學年 Semester B 的網上報名時間票（time-ticket）在哪一天開始？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "Key Dates 區塊只有事件名稱（例如 Available of web registration time-tickets），實際日期由 JavaScript 從外部檔案注入，五頁文字中沒有任何日期。",
+    "caveat": "請查 ARRO Key Dates 或登入 AIMS 查看。"
+  },
+  {
+    "id": "d190-zht-n02",
+    "language": "zht",
+    "query": "我今個學期的 personal time-ticket 是幾月幾日幾點？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "個人 time-ticket 屬個人化資料，只可登入 AIMS／Portal 查看；這五頁沒有任何個人時間表或個人時段資料。",
+    "caveat": "登入 AIMS 的 Course Registration 查看自己的 time-ticket。"
+  },
+  {
+    "id": "d190-zh-01",
+    "language": "zh",
+    "query": "我是全日制本科生，这学期想少修一些（低于12个学分），应该怎么申请？",
+    "expected": [
+      "registration"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "须以电子表格提出申请，并交由所属学院或学系考虑。",
+    "evidence": [
+      {
+        "source": "registration",
+        "quote": "Students who wish to take a reduced study load in a semester (full-time students less than 12 credits) due to special circumstances may make an application via an electronic form available"
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-02",
+    "language": "zh",
+    "query": "我在入学前八年以前获得的学分，还能用来转学分吗？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "个别学院可以订出更严格的年限要求。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Transfer credits must have been earned no earlier than eight years before the date of enrolment at the University."
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-03",
+    "language": "zh",
+    "query": "要获得学位，除了专业要求之外，还必须满足哪些语言方面的要求？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "英文与中文（如适用）语言要求以大学公布的要求为准。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Students are required to fulfil the English language requirement and Chinese language requirement, as appropriate, in accordance with the requirements stipulated by the University."
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-04",
+    "language": "zh",
+    "query": "我入学时还没有申报主修（undeclared major），什么时候需要申报？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "实际时间表与程序以 Declaring a Home Major 页面为准。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "In mid to late May of your first year of study."
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-05",
+    "language": "zh",
+    "query": "我在学习计划里列出的课程，能保证一定选上吗？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "课位取决于教师与其他资源，列入计划并不保证有位置，也不保证没有时间冲突。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "Listing a course in your plan does not guarantee that the course will have available places for your registration"
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-06",
+    "language": "zh",
+    "query": "如果因为学业原因被终止学业，还可以申请重新入学吗？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "因学业原因被终止学业的学生不获考虑重新入学。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "For termination of studies due to academic reasons, students will not be considered for readmission to the University."
+      }
+    ]
+  },
+  {
+    "id": "d190-zh-n01",
+    "language": "zh",
+    "query": "2026/27 学年本地生工商管理学士（BBA）一年级的学费是多少港元？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "FAQ 只说学费取决于课程、公民身份与学籍，并指向 Fees and Charges 页面；这五页中没有任何金额数字。",
+    "caveat": "请查 Fees and Charges 页面的最新收费表。"
+  },
+  {
+    "id": "d190-zh-n02",
+    "language": "zh",
+    "query": "我忘记了 AIMS 密码，应该怎样重置？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "这五页只把 AIMS 当作操作入口引用，完全没有账号或密码重置流程的说明。",
+    "caveat": "请联络 IT 服务台或 CityU 的账号服务渠道。"
+  },
+  {
+    "id": "d190-mx-01",
+    "language": "mixed",
+    "query": "Master Class Schedule 里面 WEB 一栏写 N 是什么意思？我还可以 online add/drop 吗？",
+    "expected": [
+      "schedule"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "这类科目不是 web-enabled，要经开课单位批准（用电子表格）才可加退选。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Description “N” under the heading means they are NOT web-enabled."
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-02",
+    "language": "mixed",
+    "query": "DegreeWorks 的 What-if scenario 可不可以 save？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "答案只讲储存问题；画面操作与打印方式以 DegreeWorks 实际界面为准。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "No, the What-if scenario cannot be saved in DegreeWorks."
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-03",
+    "language": "mixed",
+    "query": "系统弹出 Too many requests ahead of you 的提示，是不是 server 出了问题？",
+    "expected": [
+      "registration"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "这是注册高峰期的网络流量管制措施，应该稍后再试，而不是服务器故障。",
+    "evidence": [
+      {
+        "source": "registration",
+        "quote": "As a measure of network traffic control, it is a standard measure to restrict the number of accesses to the server to maintain the operation of the server."
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-04",
+    "language": "mixed",
+    "query": "我是 2020/21 至 2023/24 入学的 4-year degree 学生，Degree with Distinction 是按 GPA 排名还是绝对分数决定？",
+    "expected": [
+      "regulations"
+    ],
+    "answerable": true,
+    "applicable_year": "2020/21 to 2023/24",
+    "caveat": "排名是相对同一学系／学院同期毕业的同学计算，而且 Dean 可按学术单位建议作例外处理。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "For Students on Programmes of a Normal Study Duration of 4 Years or More (Admitted from 2020/21 to 2023/24)"
+      },
+      {
+        "source": "regulations",
+        "quote": "Degrees with Distinction are awarded based on the CGPA ranking for students in the respective departments/schools graduating in the same semester/term."
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-05",
+    "language": "mixed",
+    "query": "DegreeWorks worksheet 上面的 area GPA，和 transcript 上面的 GPA，哪一个才是 official 的？",
+    "expected": [
+      "faq"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "worksheet 上的 area GPA 仅供参考；官方 GPA 只在成绩单上。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "Only the GPA as shown in your transcript is the official GPA recorded by the University."
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-06",
+    "language": "mixed",
+    "query": "Registration 页说的 time-ticket (period) 到底是做什么用的？",
+    "expected": [
+      "registration"
+    ],
+    "answerable": true,
+    "applicable_year": "unknown",
+    "caveat": "time-ticket 是分配给学生的一段注册时段；实际日期与时段要登入 AIMS 查看。",
+    "evidence": [
+      {
+        "source": "registration",
+        "quote": "change course sections during the specific registration time-ticket (period)"
+      }
+    ]
+  },
+  {
+    "id": "d190-mx-n01",
+    "language": "mixed",
+    "query": "我在 2026/27 Semester A 某科的 supplementary exam 具体安排在几号？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "2026/27",
+    "unanswerable_reason": "五页没有考试时间表或补考安排；规例只提到 I grade 之后最迟四周要评定成绩的规则，并不涉及任何具体日期。",
+    "caveat": "请查教务处／学院的考试时间表。"
+  },
+  {
+    "id": "d190-mx-n02",
+    "language": "mixed",
+    "query": "我提交了 late drop 申请，会不会获批？",
+    "expected": [],
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "规例与 FAQ 只说迟退选申请会按个别情况考虑、不保证获批，并须由开课单位主管批准；五页没有任何判据可以推出个别申请的结果。",
+    "caveat": "结果只能由开课学术单位按个别情况决定。"
+  }
+]

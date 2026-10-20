@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>设计系统 · CityU Mail Pilot</title>
+<!-- 给维护者看的说明书，不是给访客看的页面：不索引、不进主导航（页脚有个小入口）。 -->
+<meta name="robots" content="noindex,nofollow">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="/icon-192.png">
+<style>
+  /* 这一页的样式**故意复刻介绍页那一套令牌**（同一段变量块），
+     它同时是"说明书"和"会不会漂移"的对照物：改介绍页的令牌时，这一页要跟着改。
+     没有脚本、没有表单、没有服务端占位符。 */
+  :root{
+    --bg:#eae9e7;--bg-deep:#dcdad6;--fg:#2b2b2b;--muted:#5d5b57;
+    --hair:rgba(43,43,43,.12);--hair-strong:rgba(43,43,43,.22);
+    --core:rgba(255,255,255,.78);--core-solid:#fffefc;--shell:rgba(255,255,255,.44);
+    --inner-light:rgba(255,255,255,.85);
+    --accent:#c62a1c;--accent-ink:#ffffff;--accent-strong:#9d1f13;--accent-soft:rgba(198,42,28,.10);
+    --ok-ink:#0d5b41;--ok-bg:#e9f2ec;
+    --warn:#8a5a12;--warn-bg:#fbf3e2;--warn-line:#eddcc0;
+    --mark:rgba(255,242,0,.62);
+    --glow-blue:rgba(90,150,190,1);--glow-grey:rgba(143,143,143,1);
+    --ink-dark:#141414;--ink-dark-fg:#f2f1ef;--ink-dark-muted:rgba(242,241,239,.72);
+    --r-shell:40px;--r-core:32px;--r-sm:14px;--r-xs:10px;--r-pill:999px;
+    --ease:cubic-bezier(.32,.72,0,1);--spring:cubic-bezier(.16,1.16,.3,1);
+    --sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+           "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,
+            "Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif;
+  }
+  @property --gx{syntax:'<percentage>';inherits:true;initial-value:18%}
+  @property --gy{syntax:'<percentage>';inherits:true;initial-value:-45%}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+       font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased;
+       background-image:
+         radial-gradient(1100px 620px at 10% -12%,#f6f5f3 0%,rgba(246,245,243,0) 62%),
+         radial-gradient(900px 520px at 92% 2%,#dde3ea 0%,rgba(221,227,234,0) 64%)}
+  a{color:var(--accent-strong)}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+  header{padding:40px 0 8px}
+  h1{font-size:clamp(30px,4.4vw,52px);letter-spacing:-.04em;line-height:1.05;margin:0 0 14px}
+  h2{font-size:clamp(20px,2.6vw,28px);letter-spacing:-.03em;margin:52px 0 6px}
+  h3{font-size:16px;margin:22px 0 6px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+          font-weight:600;margin:0 0 12px}
+  .note{color:var(--muted);font-size:14px;margin:0 0 12px}
+  .lead{color:#3c3b38;max-width:62ch}
+  code{font-family:var(--mono);font-size:.88em;background:rgba(43,43,43,.06);
+       padding:2px 6px;border-radius:6px}
+  .back{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:10px 20px;
+        border-radius:var(--r-pill);border:1px solid var(--hair-strong);
+        background:rgba(255,255,255,.8);color:var(--fg);text-decoration:none;font-weight:650;
+        font-size:15px;margin:10px 0 0}
+  .back:hover{background:#fff;border-color:var(--fg)}
+  .rule{border:0;border-top:1px solid var(--hair);margin:40px 0}
+
+  /* 色卡 */
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;
+            margin:16px 0 6px}
+  .sw{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--core-solid);
+      overflow:hidden}
+  .sw i{display:block;height:74px}
+  .sw div{padding:9px 11px}
+  .sw b{display:block;font-size:13px}
+  .sw code{background:none;padding:0;color:var(--muted)}
+  .sw em{display:block;font-style:normal;font-size:12px;color:var(--muted);margin-top:4px}
+  .ratio{font-family:var(--mono);font-size:12px;color:var(--ok-ink)}
+  .ratio.bad{color:var(--accent-strong)}
+
+  /* 玻璃壳与卡片（与介绍页同一套材质） */
+  .shell{background:linear-gradient(180deg,var(--core-solid),var(--shell));
+         border:1px solid var(--hair);border-radius:var(--r-shell);padding:8px;
+         box-shadow:inset 0 1px 0 var(--inner-light),0 30px 60px -44px rgba(43,43,43,.75)}
+  .core{background:var(--core-solid);border:1px solid var(--hair);border-radius:var(--r-core);
+        padding:20px 22px}
+  .shell,.core{position:relative}
+  .spec::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:radial-gradient(34% 62% at var(--gx,30%) var(--gy,6%),rgba(255,255,255,.34),rgba(255,255,255,0) 62%),
+               radial-gradient(76% 150% at var(--gx,30%) var(--gy,6%),rgba(255,255,255,.16),rgba(255,255,255,0) 70%)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:16px 0}
+
+  /* 组件样例 */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;
+       padding:11px 22px;border-radius:var(--r-pill);font:inherit;font-size:15px;font-weight:650;
+       text-decoration:none;border:1px solid var(--accent);background:var(--accent);
+       color:var(--accent-ink);margin:0 10px 10px 0}
+  .btn.quiet{background:rgba(255,255,255,.82);color:var(--fg);border-color:var(--hair-strong)}
+  .ghost{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--hair-strong);
+         padding-bottom:2px;margin-right:12px}
+  .chip{display:inline-block;font-size:11.5px;font-weight:650;border-radius:var(--r-pill);
+        padding:2px 9px;margin-right:8px}
+  .chip.high{background:var(--accent-soft);color:var(--accent-strong)}
+  .chip.mid{background:rgba(43,43,43,.07);color:var(--muted)}
+  .chip.skip{background:var(--ok-bg);color:var(--ok-ink)}
+  .meter{display:flex;align-items:center;gap:10px;font-size:13px;margin:6px 0}
+  .meter i{display:block;height:6px;border-radius:3px;background:var(--accent)}
+  .meter.mid i{background:rgba(43,43,43,.35);width:52%}
+  .meter.low i{background:rgba(43,43,43,.18);width:30%}
+  .b-card{padding:18px 20px;border-radius:var(--r-core);position:relative;
+          background:linear-gradient(180deg,var(--core-solid),var(--shell));
+          border:1px solid var(--hair)}
+  /* bento 与跨列/跨行（与介绍页同一套，2026-09-23 加）：`span-2` 两列、`span-3`
+     三列、`span-4` 四列、`row-2` 两行高；窄屏一律单列并且**行也 reset**。 */
+  .bento{display:grid;gap:14px;grid-template-columns:repeat(6,1fr);margin:16px 0}
+  .b-card{grid-column:span 2}
+  .b-card.span-2{grid-column:span 2}
+  .b-card.span-3{grid-column:span 3}
+  .b-card.span-4{grid-column:span 4}
+  .b-card.row-2{grid-row:span 2}
+  /* 深色变体：颜色只写在变量与这一块里，组件规则里不出现裸色值。 */
+  .b-card.dark{background:linear-gradient(180deg,#1f1f1d,var(--ink-dark));
+               border-color:rgba(255,255,255,.10);color:var(--ink-dark-fg)}
+  .b-card.dark b,.b-card.dark strong{color:var(--ink-dark-fg)}
+  .b-card.dark .idx{color:rgba(242,241,239,.62)}
+  .b-card .idx{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+               letter-spacing:.08em;margin-bottom:8px}
+  .b-card .stat{display:flex;align-items:baseline;gap:10px;margin-top:16px}
+  .b-card .stat b{font-size:36px;font-weight:800;letter-spacing:-.04em;line-height:1}
+  .b-card .stat span{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+                     text-transform:uppercase;color:var(--muted)}
+  .b-card.dark .stat span{color:rgba(242,241,239,.66)}
+  /* 发件人首字方块徽章（他的 `.mono-badge`） */
+  .mono-badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+    border-radius:7px;background:rgba(43,43,43,.09);font-family:var(--mono);font-size:12px;
+    font-weight:700;color:var(--fg);vertical-align:middle;margin-right:6px}
+  /* 「判定依据」卡（他的 `.urg`）：档位 + 三格刻度 + 一句提示 + 条目 */
+  .urg{margin:12px 0 0;padding:12px 14px;border-radius:var(--r-sm);
+       background:rgba(43,43,43,.035);border:1px solid var(--hair)}
+  .urg-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .urg-head strong{font-size:14px}
+  .urg-head .urg-hint{font-size:12.5px;color:var(--muted)}
+  .urg-meter{display:inline-flex;gap:4px;align-items:center}
+  .urg-meter i{display:block;width:20px;height:5px;border-radius:99px;background:rgba(43,43,43,.16)}
+  .urg-meter i.on{background:var(--accent)}
+  .urg.lv-mid .urg-meter i.on{background:rgba(43,43,43,.42)}
+  .urg.lv-skip .urg-meter i.on{background:var(--ok-ink)}
+  .urg-why{margin-top:11px;padding-top:11px;border-top:1px solid var(--hair)}
+  .urg-why .urg-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .urg-why ul{list-style:none;margin:7px 0 0;padding:0;display:grid;gap:6px}
+  .urg-why li{position:relative;padding-left:14px;font-size:13px;color:#3c3b38;line-height:1.5}
+  .urg-why li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;
+                      border-radius:50%;background:currentColor;opacity:.55}
+  /* 带对勾的要点清单（他的 `.mini-list`）：对勾是 CSS 画的两条线，不引图标字体。 */
+  ul.mini-list{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:8px}
+  ul.mini-list li{display:flex;gap:9px;align-items:flex-start;font-size:14px;color:#3c3b38;line-height:1.55}
+  ul.mini-list li::before{content:"";flex:0 0 auto;width:9px;height:5px;margin-top:6px;
+    border-left:2px solid var(--ok-ink);border-bottom:2px solid var(--ok-ink);transform:rotate(-45deg)}
+  /* 表单控件（与介绍页 `.signup` 同一套尺寸与焦点样式） */
+  .ds-form{display:grid;gap:7px;max-width:420px}
+  .ds-form label{font-size:14px;font-weight:650;margin-top:6px}
+  .ds-form input,.ds-form textarea,.ds-form select{width:100%;padding:12px 14px;font:inherit;
+    font-size:16px;color:var(--fg);background:var(--core-solid);border:1px solid var(--hair-strong);
+    border-radius:var(--r-sm)}
+  .ds-form textarea{min-height:88px;resize:vertical}
+  .ds-form input:focus-visible,.ds-form textarea:focus-visible,.ds-form select:focus-visible{
+    outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .ds-form .btn{width:max-content;margin-top:10px}
+  /* 布局示意（三种骨架的尺寸，与介绍页逐条对应） */
+  .ds-layout{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+  .ds-layout > div{min-height:96px;border-radius:var(--r-core);padding:16px 18px;font-size:13.5px;
+    background:rgba(255,255,255,.42);border:1px solid var(--hair);color:#3c3b38}
+  .ds-layout .bar{grid-column:1/-1;min-height:56px;background:rgba(255,255,255,.62)}
+  .ds-layout .side{background:rgba(43,43,43,.06)}
+  ol.steps{margin:12px 0 0;padding-left:0;list-style:none;counter-reset:step}
+  ol.steps li{position:relative;padding:6px 0 6px 34px;font-size:15px;counter-increment:step}
+  ol.steps li::before{content:counter(step);position:absolute;left:0;top:9px;width:22px;height:22px;
+    border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:12.5px;
+    font-weight:700;line-height:22px;text-align:center}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:12px 0}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--hair);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  .closing-demo{background:var(--ink-dark);color:var(--ink-dark-fg);border-radius:var(--r-core);
+                padding:26px 24px;margin:16px 0}
+  .closing-demo p{color:var(--ink-dark-muted);margin:6px 0 0}
+  footer{border-top:1px solid var(--hair);margin-top:56px;padding:26px 0;color:var(--muted);
+         font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="kicker">维护者文档 · Design System</p>
+    <h1>介绍页的设计系统</h1>
+    <p class="lead">这一页把 <code>/</code>（介绍页）用到的东西列全：颜色变量、字体栈、玻璃材质、
+    环境光与颗粒、组件、动效与可达性。它的来历是 PR #4（作者的设计）——我们收下了他的视觉语言与结构，
+    <b>这一页也是"改介绍页时要跟着改"的对照物</b>。</p>
+    <p class="note">给维护者看：不索引（<code>noindex</code>）、不在主导航里，页脚有个小入口。</p>
+    <a class="back" href="/">← 返回首页</a>
+  </header>
+
+  <hr class="rule">
+
+  <h2>01 · 色板</h2>
+  <p class="note">对比度是按本页画布 <code>#eae9e7</code> 用 WCAG 公式实算的（不是估的）。</p>
+  <div class="swatches">
+    <div class="sw"><i style="background:#eae9e7"></i><div><b>画布</b><code>--bg</code>
+      <em>#eae9e7 · 页面底色</em></div></div>
+    <div class="sw"><i style="background:#dcdad6"></i><div><b>画布深处</b><code>--bg-deep</code>
+      <em>#dcdad6 · 备用</em></div></div>
+    <div class="sw"><i style="background:#2b2b2b"></i><div><b>正文</b><code>--fg</code>
+      <em>#2b2b2b · <span class="ratio">11.67:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:#5d5b57"></i><div><b>次要文字</b><code>--muted</code>
+      <em>#5d5b57 · <span class="ratio">5.58:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:#c62a1c"></i><div><b>单点红</b><code>--accent</code>
+      <em>大字号/线条/按钮底 · <span class="ratio">4.62:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:#9d1f13"></i><div><b>小字红</b><code>--accent-strong</code>
+      <em>链接与小号红字 · <span class="ratio">6.56:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:#0d5b41"></i><div><b>完成绿</b><code>--ok-ink</code>
+      <em>#0d5b41 · <span class="ratio">6.68:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:#8a5a12"></i><div><b>注意琥珀</b><code>--warn</code>
+      <em>#8a5a12 · <span class="ratio">4.87:1 ✓</span></em></div></div>
+    <div class="sw"><i style="background:rgba(255,242,0,.62)"></i><div><b>荧光笔</b><code>--mark</code>
+      <em>首屏那句话的底（压在深色字下）</em></div></div>
+    <div class="sw"><i style="background:rgba(90,150,190,1)"></i><div><b>环境光·蓝</b><code>--glow-blue</code>
+      <em>光斑用，不当文字</em></div></div>
+    <div class="sw"><i style="background:rgba(143,143,143,1)"></i><div><b>环境光·灰</b><code>--glow-grey</code>
+      <em>光斑用，不当文字</em></div></div>
+    <div class="sw"><i style="background:#141414"></i><div><b>深色收尾</b><code>--ink-dark</code>
+      <em>#141414 · 其上是 #f2f1ef（16.32:1 ✓）</em></div></div>
+  </div>
+
+  <h3>我们<b>故意没照抄</b>的两支（同一个设计，不同的底线）</h3>
+  <table>
+    <tr><th>他们那支</th><th>问题</th><th>我们怎么做</th></tr>
+    <tr>
+      <td><code>--link #1eaedb</code>「链接青」</td>
+      <td>当文字色只有 <b>2.13:1</b>（设计规格里按它的底层色实测 1.71:1）——远低于 AA 的 4.5:1</td>
+      <td>链接一律用 <code>--accent-strong</code>（6.56:1）；青色只留在环境光斑里（不当文字）</td>
+    </tr>
+    <tr>
+      <td><code>#fff200</code> 当状态色（量表/圆点）</td>
+      <td>在浅底上只有 <b>1.01:1</b>，等于看不见</td>
+      <td>荧光笔只当<b>背景</b>（深色字压在上面），状态一律用文字 + 形状（我们的 chip）</td>
+    </tr>
+  </table>
+
+  <h2>02 · 字体</h2>
+  <p class="note"><b>不引外部字体</b>：CSP 是 <code>default-src 'self'</code>（外部字体根本加载不出来），
+  而且不该把访客 IP 交给字体 CDN。中文本来就走系统字体。</p>
+  <div class="grid2">
+    <div class="core">
+      <h3 style="margin-top:0">正文 / 界面</h3>
+      <p style="font-family:var(--sans);margin:0">系统无衬线栈：<code>--sans</code>。
+      中文依次落到 PingFang SC / 微软雅黑。</p>
+    </div>
+    <div class="core">
+      <h3 style="margin-top:0">落款 / 引用</h3>
+      <p style="font-family:var(--serif);margin:0">衬线栈：<code>--serif</code>。
+      介绍页里只用在信末落款那一行。</p>
+    </div>
+    <div class="core">
+      <h3 style="margin-top:0">代码 / 编号</h3>
+      <p style="font-family:var(--mono);margin:0">等宽栈：<code>--mono</code>。
+      用在 <code>code</code> 与 bento 卡的编号（<code>01 · 重要</code>）。</p>
+    </div>
+    <div class="core">
+      <h3 style="margin-top:0">标题阶梯</h3>
+      <p style="margin:0">首屏 <code>clamp(38px,7.4vw,76px)</code>／章节 <code>clamp(25px,3.6vw,40px)</code>／
+      小标题 18px。字距负一点（<code>-.028em</code>～<code>-.04em</code>）。</p>
+    </div>
+  </div>
+
+  <h2>03 · 玻璃材质</h2>
+  <p class="note">外壳 40px / 内芯 32px 的<b>同心圆角</b>，磨砂 <code>backdrop-filter: blur(18px) saturate(1.7)</code>，
+  一圈内亮边 + 一层细边。镜面高光用两个可插值属性 <code>--gx/--gy</code> 跟着指针走。</p>
+  <div class="grid2">
+    <div class="shell spec"><div class="core">
+      <b>外壳 + 内芯</b>
+      <p class="note" style="margin:6px 0 0">把鼠标移到这块卡片上，高光会跟着走（300ms 过渡；
+      系统里选了「减少动态效果」时不动）。</p>
+    </div></div>
+    <div class="b-card spec">
+      <b>bento 卡</b>
+      <p class="note" style="margin:6px 0 0">同一个材质的小号版本，圆角用内芯那一档（32px），
+      hover 抬升 3px（<code>.lift</code>）。</p>
+    </div>
+  </div>
+
+  <h2>04 · 环境光与颗粒</h2>
+  <p class="note">玻璃要有可折射的东西才存在：四个模糊光斑在漂移 + 一层 SVG 噪点当颗粒
+  （<code>feTurbulence</code>，opacity .11）。没有这一层，<code>backdrop-filter</code> 磨的就是一片纯色。</p>
+  <table>
+    <tr><th>层</th><th>参数</th></tr>
+    <tr><td>光斑</td><td>640–820px 圆，<code>filter: blur(30px)</code>，27–42s <code>alternate</code> 漂移</td></tr>
+    <tr><td>颗粒</td><td>data URI 的 SVG 噪点，<code>opacity:.11</code>（CSP 允许 <code>img-src data:</code>）</td></tr>
+    <tr><td>层级</td><td>光斑在 <code>z-index:0</code>，内容在 <code>z-index:1</code> 之上；减少动效时停漂移</td></tr>
+  </table>
+
+  <h2>05 · 组件</h2>
+  <div class="core" style="margin:16px 0">
+    <h3 style="margin-top:0">按钮</h3>
+    <a class="btn" href="#0">主按钮</a>
+    <a class="btn quiet" href="#0">次按钮</a>
+    <a class="ghost" href="#0">文字链</a>
+    <p class="note" style="margin:10px 0 0">主按钮实心红（白字 5.6:1）；次按钮白底描边；第三条是文字链。
+    <b>首屏只放"一个实心 + 一个白底 + 一条文字链"</b> —— 三颗实心会有一个被挤到第二行，看不出主次。</p>
+
+    <h3>状态胶囊（chip）</h3>
+    <span class="chip high">重要</span><span class="chip mid">一般</span><span class="chip skip">已跳过</span>
+    <p class="note" style="margin:10px 0 0">三档来自应用界面真实的分法（
+    <code>app.js</code> 的 <code>importanceLabel</code>）：重要 / 一般 / 低。
+    <b>不是</b>作者设计里那套「紧急 / 较急 / 常规」。</p>
+
+    <h3>量表</h3>
+    <div class="meter"><i style="width:88%"></i><em>先看这些</em></div>
+    <div class="meter mid"><i></i><em>今天顺手办</em></div>
+    <div class="meter low"><i></i><em>之后再说</em></div>
+
+    <h3>编号步骤</h3>
+    <ol class="steps"><li><b>下载</b>：套件会量圆点的 <code>content</code>、宽度、背景与文字留白</li>
+      <li><b>安装</b>：浏览器自带编号让位给圆点（<code>list-style:none</code>）</li></ol>
+
+    <h3>发件人首字徽章 <span class="note">（2026-09-23 收，出处 PR #6）</span></h3>
+    <p style="margin:6px 0 0"><span class="mono-badge" aria-hidden="true">教</span>教务处
+      <span class="mono-badge" aria-hidden="true">图</span>图书馆</p>
+    <p class="note" style="margin:10px 0 0">一行 22px 的方块，只用<b>首字</b>（不写全名）：
+    它让「这几封是同一个人发的」一眼看得出来，又不会因为名字长短把行撑开。
+    它是纯装饰（<code>aria-hidden</code>）——同一行里紧跟着就是发件人的名字。</p>
+
+    <h3>判定依据卡（档位 + 三格刻度 + 提示 + 条目）</h3>
+    <div class="urg lv-mid">
+      <div class="urg-head">
+        <strong>一般</strong>
+        <span class="urg-meter" role="img" aria-label="重要程度：一般"><i class="on"></i><i class="on"></i><i></i></span>
+        <span class="urg-hint">今天顺手办</span>
+      </div>
+      <div class="urg-why">
+        <span class="urg-label">判定依据</span>
+        <ul>
+          <li>先写「谁发的、什么时候截止」这两类<b>能核对</b>的事实</li>
+          <li>刻度是三格，不是一个百分比：数得出来的东西不需要假精确</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>要点清单（带对勾）</h3>
+    <ul class="mini-list">
+      <li>清单说的是承诺，所以用对勾而不是圆点</li>
+      <li>对勾是 CSS 画的两条线：不引图标字体，也不引外部 SVG</li>
+    </ul>
+
+    <h3>表单 / 输入控件</h3>
+    <div class="ds-form">
+      <label for="ds-email">校园邮箱</label>
+      <!-- 占位符用 `student@`（我们各处的夹具局部名）而不是 `name@`：公开树的闸门
+           （`tools/publish_export.py::_scan_private`）要求每一个地址的**局部名**是
+           `FIXTURE_LOCAL_PARTS` 里的替身词，否则导出被拒——2026-09-23 就是 `name@`
+           拦下了这一行。改这里而不是往名单里加 `name`：名单放宽一次，QQ 邮箱上那种
+           `name@` 开头的**真实**地址以后就再也拦不住了。
+           （这条注释自己也被拦过一次：**注释里写完整的那个地址**同样算「树里有一个
+           地址」，所以这里只写局部名 —— 闸门看的是文本，不看它是不是被 `<!-- -->`
+           包着。） -->
+      <input id="ds-email" type="email" placeholder="student@cityu.edu.hk">
+      <label for="ds-host">私人邮箱服务商</label>
+      <select id="ds-host">
+        <option>QQ 邮箱</option><option>163 邮箱</option><option>Gmail</option>
+      </select>
+      <label for="ds-note">备注</label>
+      <textarea id="ds-note" rows="3" placeholder="输入测试内容"></textarea>
+      <button class="btn" type="button">保存预览</button>
+    </div>
+    <p class="note" style="margin:12px 0 0">表单只有三件事要说清：<b>标签在控件上方</b>
+    （不拿 placeholder 当标签——输入之后它就没了）、<b>输入框字号 16px</b>
+    （iOS 上小于 16px 会在聚焦时把整页放大）、聚焦描边用 <code>--accent</code> 加一层柔光
+    （<code>:focus-visible</code>，所以鼠标点击不会平白多一个框）。</p>
+  </div>
+
+  <h2>06 · 布局</h2>
+  <p class="note">整页只有三种骨架，尺寸都是量出来的：<b>单列正文</b>（<code>.wrap</code>
+  1250px、24px 边距）、<b>首屏两栏</b>（<code>1fr 1fr</code>，窄屏并成一栏）、
+  以及 <b>bento 六列</b>（跨列 <code>span-2/3/4</code>、跨行 <code>row-2</code>）。
+  窄屏那一档必须把 <code>grid-row</code> <b>一起</b> reset，否则一张跨行卡会空出一大块。</p>
+  <div class="ds-layout">
+    <div class="bar">悬浮玻璃导航 · 比正文略窄（1180px vs 1250px）· 胶囊圆角 <code>--r-pill</code></div>
+    <div>首屏左栏：标题 + 两条 CTA<br><code>1.06fr</code></div>
+    <div class="side">首屏右栏：收件箱演示卡<br><code>.94fr</code></div>
+  </div>
+  <div class="bento">
+    <div class="b-card row-2"><span class="idx">span-2 · row-2</span><b>跨两行</b>
+      <p class="note" style="margin:8px 0 0">旁边两张各占一行，bento 的错落感就是这么来的。</p>
+      <div class="stat"><b>22:00</b><span>日报默认时刻</span></div></div>
+    <div class="b-card"><span class="idx">span-2</span><b>两列</b>
+      <p class="note" style="margin:8px 0 0">默认宽度。</p></div>
+    <div class="b-card"><span class="idx">span-2</span><b>两列</b>
+      <p class="note" style="margin:8px 0 0">默认宽度。</p></div>
+    <div class="b-card span-4"><span class="idx">span-4</span><b>四列</b>
+      <p class="note" style="margin:8px 0 0">与上面那张 <code>row-2</code> 的第二行并排。</p></div>
+    <div class="b-card span-3 dark"><span class="idx">span-3 · dark</span><b>深色变体</b>
+      <p class="note" style="margin:8px 0 0">同一个材质、反过来的墨色。</p></div>
+    <div class="b-card span-3"><span class="idx">span-3</span><b>三列</b>
+      <p class="note" style="margin:8px 0 0">介绍页里给「宽卡」用的那一档。</p></div>
+  </div>
+
+  <h2>07 · 动效</h2>
+  <table>
+    <tr><th>用途</th><th>曲线</th></tr>
+    <tr><td>一般过渡（颜色、位移）</td><td><code>--ease: cubic-bezier(.32,.72,0,1)</code>（长尾）</td></tr>
+    <tr><td>回弹（按钮、卡片、抽屉）</td><td><code>--spring: cubic-bezier(.16,1.16,.3,1)</code></td></tr>
+    <tr><td>玻璃高光跟随</td><td>两个 <code>@property</code> 注册的属性，300ms 过渡（不注册就没法插值、会跳变）</td></tr>
+    <tr><td>滚动进入</td><td>纯 CSS 的 <code>animation-timeline: view()</code>；不支持就当静态页（<b>没有</b>把内容默认设成透明）</td></tr>
+    <tr><td>减少动效</td><td><code>prefers-reduced-motion</code> 下：光斑停漂移、高光不跟指针、跑马灯停</td></tr>
+  </table>
+
+  <h2>08 · 深色收尾</h2>
+  <div class="closing-demo">
+    <b style="font-size:20px">别再让学校邮件决定你的今天。</b>
+    <p>深色块用 <code>--ink-dark</code>，正文 <code>--ink-dark-fg</code>（16.32:1）。</p>
+  </div>
+
+  <footer>
+    <div class="wrap" style="padding:0;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between">
+      <span>CityU Mail Pilot · 设计系统（维护者文档）</span>
+      <nav><a href="/">首页</a> · <a href="/app">打开应用</a> ·
+        <a href="/privacy">隐私政策</a> · <a href="/terms">服务条款</a></nav>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

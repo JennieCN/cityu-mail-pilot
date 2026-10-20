@@ -1,0 +1,7 @@
+# Runtime dependencies.
+#
+# The web layer is Python standard library only: the previous FastAPI/uvicorn
+# stack pulled a Starlette branch with open advisories and no compatible fixed
+# release, so it was removed. cryptography is the single third-party runtime
+# dependency and covers AES-256-GCM secret storage.
+cryptography>=43,<51

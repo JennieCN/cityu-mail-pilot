@@ -1,0 +1,1741 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CityU Mail Pilot · 把学校邮件变成一份要做的事</title>
+<meta name="description" content="城市大学邮件助手：学校邮箱自动转发到你的私人邮箱，后台只读取信，把当天要办的事写成一条清单发回给你。只读、不删信、不训练。">
+<meta name="color-scheme" content="light">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!-- 「加到主屏幕之后是不是独立窗口」取决于**这一页自己**有没有这几样，不只是 manifest。
+     iOS 会把缺 `apple-mobile-web-app-capable` 的主屏图标当成**书签**，在浏览器里打开
+     —— 2026-09-24 用户报的「iOS 装下来还是浏览器的样子」就是这个。
+     状态栏用 `default` 而不是 `black-translucent`：我们的样式没有处理顶部安全区，
+     让内容钻到状态栏下面会被裁掉。
+     **老图标不会自己升级**：改完要「删掉图标 → 重新添加」。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mail Pilot">
+<meta property="og:title" content="CityU Mail Pilot">
+<meta property="og:description" content="把 CityU 的邮件变成一份要做的事。只读收信，摘要发回。">
+<meta property="og:type" content="website">
+<style>
+  :root{
+    /* —— 银灰画布 / 灰阶 / 单点红 —— */
+    --bg:#d2d2d2;
+    --fg:#303030;
+    --surface:#8f8f8f;
+    --accent:#da291c;
+    --accent-2:#03904a;
+    --mark:#fff200;
+    --link:#1eaedb;
+
+    --ink:var(--fg);
+    --ink-soft:rgba(48,48,48,.82);
+    --ink-faint:rgba(48,48,48,.76);
+    --core:rgba(255,255,255,.62);
+    --core-solid:rgba(255,255,255,.78);
+    --shell:rgba(255,255,255,.4);
+    --hair:rgba(48,48,48,.1);
+    --hair-strong:rgba(48,48,48,.16);
+    --inner-light:rgba(255,255,255,.7);
+
+    --sans:'FerrariSans','Plus Jakarta Sans','Cabinet Grotesk',system-ui,-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif;
+    --mono:'JetBrains Mono','Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+
+    --ease:cubic-bezier(.32,.72,0,1);
+    --spring:cubic-bezier(.16,1.16,.3,1);
+
+    --shell-r:2.5rem;                     /* 40px */
+    --core-r:calc(var(--shell-r) - .5rem);/* 32px 同心 */
+    --shell-r-sm:1.875rem;                /* 30px */
+    --core-r-sm:calc(var(--shell-r-sm) - .4375rem);
+    --bez:8px;                            /* 基准网格 */
+  }
+  /* 指针高光坐标：注册为可插值属性，高光才会平滑移动而不是跳变 */
+  @property --gx{syntax:'<percentage>';inherits:true;initial-value:18%}
+  @property --gy{syntax:'<percentage>';inherits:true;initial-value:-45%}
+  *{box-sizing:border-box}
+  /* 锚点跳转时给悬浮导航让出空间，否则章节标题会被玻璃胶囊盖住 */
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:112px}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font-family:var(--sans);font-size:16px;line-height:1.55;letter-spacing:-.005em;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  }
+  h1,h2,h3,h4{margin:0;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+  p{margin:0}
+  a{color:var(--fg)}
+  button{font-family:inherit}
+  ::selection{background:rgba(218,41,28,.22)}
+  :focus-visible{outline:2px solid var(--fg);outline-offset:3px;border-radius:4px}
+  .shell.dark :focus-visible,.closing :focus-visible{outline-color:rgba(255,255,255,.92)}
+
+  .wrap{max-width:1240px;margin:0 auto;padding:0 28px}
+
+  /* ============ 环境网格光斑 · 给玻璃可折射的细节 ============
+     模糊半径刻意收小到 26px：光斑要有可辨认的边缘，玻璃的 22px 磨砂
+     才有东西可以「吃掉」；如果背景本身已经被模糊成一片，玻璃就看不见了。 */
+  .mesh{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  .mesh i{position:absolute;display:block;border-radius:50%;filter:blur(30px);will-change:transform}
+  /* 光斑用 closest-side 让渐变正好贴合椭圆外形，色标收在 40% 附近留出可辨认的边缘 */
+  .mesh i:nth-child(1){ /* 红：克制的一抹，只在左上 */
+    width:640px;height:640px;top:-250px;left:-180px;opacity:.1;
+    background:radial-gradient(closest-side,var(--accent),rgba(218,41,28,.4) 44%,rgba(218,41,28,0));
+    animation:drift-a 28s var(--ease) infinite alternate;
+  }
+  .mesh i:nth-child(2){ /* 青：横在顶部，导航玻璃主要折射它 */
+    width:820px;height:540px;top:-200px;left:16%;opacity:.14;
+    background:radial-gradient(closest-side,var(--link),rgba(30,174,219,.42) 42%,rgba(30,174,219,0));
+    animation:drift-b 34s var(--ease) infinite alternate;
+  }
+  .mesh i:nth-child(3){ /* 灰：下三分之一，给页面纵深 */
+    width:560px;height:560px;bottom:-180px;left:30%;opacity:.22;
+    background:radial-gradient(closest-side,var(--surface),rgba(143,143,143,.35) 46%,rgba(143,143,143,0));
+    animation:drift-a 42s var(--ease) infinite alternate;
+  }
+  .mesh i:nth-child(4){ /* 青：挪到 Hero 预览卡背后，卡内才有可折射的颜色 */
+    width:680px;height:680px;top:330px;right:-170px;opacity:.22;
+    background:radial-gradient(closest-side,var(--link),rgba(30,174,219,.38) 44%,rgba(30,174,219,0));
+    animation:drift-b 40s var(--ease) infinite alternate;
+  }
+  @keyframes drift-a{from{transform:translate3d(0,0,0)}to{transform:translate3d(90px,64px,0)}}
+  @keyframes drift-b{from{transform:translate3d(0,0,0)}to{transform:translate3d(-70px,48px,0)}}
+  /* 细颗粒：玻璃把它磨平，玻璃之外保持颗粒感 —— 霜面最直接的证据 */
+  .mesh::after{
+    content:"";position:absolute;inset:0;opacity:.11;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  main,footer,.nav-shell{position:relative;z-index:1}
+  .topbar{z-index:60}
+  @media (prefers-reduced-motion:reduce){.mesh i{animation:none}}
+
+  /* ============ iPhone Liquid Glass 材质 · 两层结构（导航胶囊与预览卡共用）
+     ① .lg-body 玻璃体：把背后的环境真正磨砂掉
+     ② .lg-spec 镜面反光：一小团锐利高光 + 一片柔光，随指针移动
+     两层都画在内容之下；宿主自身只保留 1px 镜面边缘与外部投影。
+     原先的内缘折射环带（.lg-lens）已移除：那一圈提亮采样会形成肉眼可见的
+     不透明白色包边，压掉了玻璃的通透感。厚度改由外缘镜面线、底部折射暗带
+     与三层投影共同承担，不再用一圈实色描边。
+     玻璃要看得见，前提是背后有细节可吃：所以 .mesh 的模糊半径被收小，
+     并加了一层细颗粒，玻璃内外的质感差才是霜面的证据。            */
+  .lg{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:0}
+  .lg i{position:absolute;inset:0;display:block;border-radius:inherit}
+  .lg-body{
+    background:linear-gradient(180deg,
+      rgba(255,255,255,.2) 0%,rgba(255,255,255,.07) 40%,
+      rgba(255,255,255,.04) 70%,rgba(255,255,255,.16) 100%);
+    backdrop-filter:blur(24px) saturate(150%) brightness(1.02);
+    -webkit-backdrop-filter:blur(24px) saturate(150%) brightness(1.02);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.95),            /* 上缘镜面 */
+      inset 0 -1px 1px rgba(255,255,255,.55),         /* 下缘回弹 */
+      inset 0 30px 34px -28px rgba(255,255,255,.98),  /* 顶部内辉光 */
+      inset 0 -26px 34px -28px rgba(48,48,48,.24);    /* 底部折射暗带 */
+  }
+  .lg-spec{
+    background:
+      radial-gradient(24% 70% at var(--gx,22%) var(--gy,-52%),
+        rgba(255,255,255,.95) 0%,rgba(255,255,255,.4) 32%,rgba(255,255,255,0) 64%),
+      radial-gradient(76% 150% at var(--gx,22%) var(--gy,-52%),
+        rgba(255,255,255,.28) 0%,rgba(255,255,255,.07) 42%,rgba(255,255,255,0) 66%);
+  }
+  /* ============ 悬浮导航 · Liquid Glass ============ */
+  /* .topbar 只负责吸顶与居中；玻璃胶囊与移动端菜单面板都挂在它下面，
+     面板因此可以超出胶囊宽度而不被胶囊的 overflow 裁掉。 */
+  .topbar{
+    position:sticky;top:24px;z-index:60;
+    margin:24px auto 0;width:max-content;max-width:calc(100% - 40px);
+  }
+  /* 玻璃胶囊与移动端菜单面板共用同一层材质：
+     padding-box 是玻璃底色，border-box 是 1px 镜面边缘（顶部最亮 / 两侧最弱 / 底部回弹） */
+  .nav-shell,.nav-sheet{
+    border:1px solid transparent;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.06)) padding-box,
+      linear-gradient(180deg,
+        rgba(255,255,255,.98) 0%,rgba(255,255,255,.5) 12%,
+        rgba(255,255,255,.1) 36%,rgba(255,255,255,.04) 58%,
+        rgba(255,255,255,.24) 84%,rgba(255,255,255,.82) 100%) border-box;
+    box-shadow:
+      0 0 26px rgba(255,255,255,.5),                 /* 外缘光晕：玻璃浮起来 */
+      0 1px 1.5px rgba(48,48,48,.12),                /* 接触阴影 */
+      0 10px 22px -14px rgba(48,48,48,.36),          /* 中景投影 */
+      0 34px 68px -34px rgba(48,48,48,.48);          /* 环境投影 */
+    transition:--gx 300ms var(--ease),--gy 300ms var(--ease);
+  }
+  .nav-shell{
+    position:relative;width:max-content;max-width:100%;
+    padding:6px;border-radius:999px;overflow:hidden;
+  }
+  .nav{position:relative;z-index:1;display:flex;align-items:center;gap:14px;padding:5px 6px 5px 16px;border-radius:999px}
+  .brand{display:inline-flex;align-items:center;gap:9px;min-height:44px;font-weight:700;font-size:15.5px;letter-spacing:-.02em;text-decoration:none;flex:none}
+  .brand .mark{
+    width:24px;height:24px;border-radius:9px;background:var(--fg);color:rgba(255,255,255,.92);
+    display:inline-flex;align-items:center;justify-content:center;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.28);
+  }
+  .brand .mark svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6}
+
+  /* —— 桌面端章节链接：当前章节用一枚玻璃胶囊标出来 —— */
+  .nav-links{position:relative}
+  .nav-links ul{list-style:none;display:flex;gap:2px;margin:0;padding:0}
+  .nav-links a{
+    position:relative;display:inline-flex;align-items:center;padding:0 13px;min-height:44px;border-radius:999px;
+    font-size:13px;font-weight:500;color:var(--fg);text-decoration:none;white-space:nowrap;
+  }
+  .nav-links a .fg{
+    position:absolute;inset:0;z-index:0;border-radius:999px;
+    background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.62));
+    box-shadow:inset 0 .5px 0 rgba(255,255,255,.96),inset 0 0 0 1px rgba(48,48,48,.1),0 3px 8px -6px rgba(48,48,48,.5);
+    opacity:0;transform:scaleX(.86);
+    transition:opacity 300ms var(--ease),transform 440ms var(--ease),box-shadow 300ms var(--ease);
+  }
+  /* 悬停与「当前章节」都提亮背景、前景保持墨色，对比度只升不降 */
+  .nav-links a:hover .fg,.nav-links a[aria-current="true"] .fg{opacity:1;transform:scaleX(1)}
+  .nav-links a[aria-current="true"] .fg{box-shadow:inset 0 .5px 0 rgba(255,255,255,.98),inset 0 0 0 1px rgba(48,48,48,.2),0 5px 12px -8px rgba(48,48,48,.5)}
+  .nav-links a .lb{position:relative;z-index:1}
+  .nav-links a:active{transform:translateY(1px)}
+  .nav-links a:active .fg{transform:scaleX(.98)}
+
+  /* —— 滚动进度：胶囊下缘一道发丝，只用 scaleX 驱动 —— */
+  .nav-progress{
+    position:absolute;left:34px;right:34px;bottom:0;height:2px;border-radius:2px;overflow:hidden;
+    opacity:0;transition:opacity 400ms var(--ease);
+  }
+  .topbar.is-scrolled .nav-progress{opacity:1}
+  .nav-progress i{display:block;width:100%;height:100%;border-radius:2px;background:rgba(48,48,48,.42);transform:scaleX(0);transform-origin:0 50%}
+
+  /* —— 移动端菜单按钮：两笔在展开时合成叉 —— */
+  .menu-btn{
+    display:none;align-items:center;justify-content:center;flex:none;
+    width:44px;height:44px;padding:0;border:none;border-radius:999px;cursor:pointer;color:var(--fg);
+    background:linear-gradient(180deg,rgba(255,255,255,.82),rgba(255,255,255,.56));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 1px var(--hair-strong),0 4px 10px -8px rgba(48,48,48,.45);
+    transition:background 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .menu-btn:hover{background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.72));box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 1px rgba(48,48,48,.24),0 8px 18px -10px rgba(48,48,48,.44)}
+  .menu-btn:active{transform:scale(.96)}
+  .menu-btn .bars{position:relative;display:block;width:17px;height:12px}
+  .menu-btn .bars i{
+    position:absolute;left:0;width:17px;height:1.8px;border-radius:2px;background:currentColor;
+    transition:transform 460ms var(--ease),opacity 300ms var(--ease);
+  }
+  .menu-btn .bars i:first-child{top:1px}
+  .menu-btn .bars i:last-child{bottom:1px}
+  .menu-btn[aria-expanded="true"] .bars i:first-child{transform:translateY(4.1px) rotate(45deg)}
+  .menu-btn[aria-expanded="true"] .bars i:last-child{transform:translateY(-4.1px) rotate(-45deg)}
+
+  /* —— 移动端菜单面板：挂在胶囊正下方，比胶囊宽并居中 —— */
+  .nav-sheet{
+    position:absolute;top:calc(100% + 12px);left:50%;z-index:2;
+    width:min(344px,calc(100vw - 32px));
+    padding:10px;border-radius:28px;overflow:hidden;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transform:translateX(-50%) translateY(-10px) scale(.985);
+    transition:opacity 320ms var(--ease),transform 480ms var(--ease),visibility 320ms var(--ease),--gx 300ms var(--ease),--gy 300ms var(--ease);
+  }
+  .nav-sheet.is-open{opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%) translateY(0) scale(1)}
+  .sheet-inner{position:relative;z-index:1}
+  .sheet-label{display:block;padding:6px 14px 8px;font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint)}
+  .nav-sheet ul{list-style:none;margin:0;padding:0}
+  .nav-sheet li + li{margin-top:2px}
+  .nav-sheet a.row{
+    display:flex;align-items:center;gap:12px;min-height:48px;padding:0 14px;border-radius:18px;
+    font-size:15px;font-weight:600;color:var(--fg);text-decoration:none;
+    opacity:0;transform:translateY(10px);
+    transition:opacity 420ms var(--ease),transform 520ms var(--ease),background 300ms var(--ease),box-shadow 300ms var(--ease);
+  }
+  .nav-sheet.is-open a.row{opacity:1;transform:none;transition-delay:calc(var(--i) * 45ms + 60ms)}
+  .nav-sheet a.row:hover{background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.62));box-shadow:inset 0 .5px 0 rgba(255,255,255,.96),inset 0 0 0 1px rgba(48,48,48,.1)}
+  .nav-sheet a.row[aria-current="true"]{background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(255,255,255,.58));box-shadow:inset 0 .5px 0 rgba(255,255,255,.98),inset 0 0 0 1px rgba(48,48,48,.2)}
+  .nav-sheet a.row .idx{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;color:var(--ink-faint);min-width:20px}
+  .sheet-cta{margin-top:8px;padding-top:10px;border-top:1px solid var(--hair);display:flex}
+  .sheet-cta .pill-ghost{flex:1;justify-content:center}
+  .nav-scrim{
+    position:fixed;inset:0;z-index:-1;border:none;padding:0;background:rgba(48,48,48,.22);cursor:default;
+    opacity:0;visibility:hidden;transition:opacity 400ms var(--ease),visibility 400ms var(--ease);
+  }
+  .nav-scrim.is-open{opacity:1;visibility:visible}
+  body.menu-open{overflow:hidden}
+
+  /* 次级胶囊（玻璃质感，非实心主按钮） */
+  .pill-ghost{
+    display:inline-flex;align-items:center;gap:7px;padding:11px 17px;min-height:44px;border-radius:999px;
+    background:linear-gradient(180deg,rgba(255,255,255,.66),rgba(255,255,255,.42));color:var(--fg);border:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 0 0 1px var(--hair-strong),0 6px 14px -10px rgba(48,48,48,.4);
+    font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;
+    transition:background 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .pill-ghost:hover{background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.7));box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 1px rgba(48,48,48,.24),0 9px 20px -10px rgba(48,48,48,.44)}
+  .nav-cta[aria-current="true"]{background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.68));box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 1px rgba(48,48,48,.34),0 9px 20px -10px rgba(48,48,48,.44)}
+  .pill-ghost:active{transform:scale(.98)}
+
+  /* ============ 主 CTA：按钮中按钮 ============ */
+  .pill{
+    display:inline-flex;align-items:center;gap:10px;padding:7px 7px 7px 20px;min-height:44px;border:none;cursor:pointer;
+    border-radius:999px;background:var(--accent);color:rgba(255,255,255,.96);
+    font:700 14px/1 var(--sans);letter-spacing:-.01em;text-decoration:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 16px 34px -18px rgba(218,41,28,.62);
+    transition:transform 700ms var(--ease),box-shadow 700ms var(--ease),background 300ms var(--ease);
+  }
+  .pill .icon-wrap{
+    width:28px;height:28px;border-radius:999px;background:rgba(255,255,255,.18);
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:transform 700ms var(--spring),background 300ms var(--ease);
+  }
+  .pill svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .pill:hover .icon-wrap{transform:translate(2px,-2px) scale(1.07);background:rgba(255,255,255,.28)}
+  .pill:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 22px 42px -18px rgba(218,41,28,.66)}
+  .pill:active{transform:scale(.98)}
+  .pill.on-dark{background:rgba(255,255,255,.94);color:var(--fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 18px 40px -22px rgba(0,0,0,.6)}
+  .pill.on-dark .icon-wrap{background:rgba(48,48,48,.1)}
+  .pill.on-dark:hover .icon-wrap{background:rgba(48,48,48,.16)}
+
+  /* ============ 双边框结构 ============ */
+  .shell{
+    padding:8px;border-radius:var(--shell-r);background:var(--shell);
+    box-shadow:inset 0 1px 0 var(--inner-light),0 0 0 1px var(--hair),0 28px 56px -32px rgba(48,48,48,.42);
+    transition:transform 700ms var(--ease),box-shadow 700ms var(--ease);
+  }
+  .shell > .core{
+    border-radius:var(--core-r);background:var(--core);height:100%;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.85),inset 0 0 0 1px var(--hair);
+    padding:32px;overflow:hidden;
+  }
+  .shell.sm{border-radius:var(--shell-r-sm);padding:7px}
+  .shell.sm > .core{border-radius:var(--core-r-sm);padding:24px}
+  .shell.lift:hover{transform:translateY(-3px);box-shadow:inset 0 1px 0 var(--inner-light),0 0 0 1px var(--hair),0 34px 74px -30px rgba(48,48,48,.48)}
+  .shell.dark{background:rgba(48,48,48,.14)}
+  .shell.dark > .core{background:var(--fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.06);color:#d2d2d2}
+  .shell.dark .meta{color:rgba(210,210,210,.72)}
+  .shell.dark p{color:rgba(210,210,210,.82)}
+  .shell.dark h3{color:rgba(255,255,255,.96)}
+
+  /* ============ 眉标 ============ */
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;
+    background:rgba(255,255,255,.5);box-shadow:inset 0 0 0 1px var(--hair);
+    font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-soft);
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 0 4px rgba(3,144,74,.16)}
+  .meta{font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint)}
+
+  /* ============ Hero ============ */
+  .hero{
+    min-height:100dvh;padding:88px 0 104px;
+    display:grid;grid-template-columns:1.04fr .96fr;gap:48px;align-items:center;
+  }
+  .hero h1{
+    font-size:clamp(60px,6.4vw,86px);font-weight:800;line-height:.98;letter-spacing:-.038em;
+    margin:24px 0 26px;max-width:6.6em;   /* 紧贴首行，留出第二行的右下错位量 */
+  }
+  .hero h1 .soft{color:var(--fg);font-weight:500}
+  .hero h1 .red{color:var(--accent)}
+  /* 第二行：右下错位 */
+  .hero h1 .l1{display:block}
+  .hero h1 .l2{display:block;text-align:right}
+  /* 逐字轻微上滑入场：--i 为字序，依次落位 */
+  .hero h1 .ch{display:inline-block;will-change:transform,opacity}
+  @keyframes char-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+  .hero.is-in h1 .ch{animation:char-rise 720ms var(--ease) both;animation-delay:calc(var(--i,0) * 65ms + 80ms)}
+  /* 首次落位结束后交还静态状态 */
+  .hero h1.entered .ch{animation:none;will-change:auto}
+  .hero .lede{color:var(--ink-soft);font-size:17.5px;line-height:1.6;max-width:52ch;margin-bottom:32px}
+  .hero .actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  /* 左栏整体上移、右栏预览卡回到原位，两者错开，形成斜向阅读动线 */
+  .hero-copy{position:relative;top:-128px;transform:translate3d(0,var(--par,0px),0);will-change:transform}
+  /* 预览卡外包一层视差层，与卡片自身的 hover 位移互不干扰 */
+  .hero-visual{transform:translate3d(0,var(--par,0px),0);will-change:transform}
+  .hero .preview{top:0}
+
+  /* Hero 预览：Liquid Glass 玻璃屏 —— 与导航同一套材质，内嵌真实收件箱截图 */
+  .shell.preview{
+    position:relative;border:1px solid transparent;overflow:hidden;padding:18px;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.03)) padding-box,
+      linear-gradient(180deg,
+        rgba(255,255,255,.98) 0%,rgba(255,255,255,.5) 9%,
+        rgba(255,255,255,.1) 32%,rgba(255,255,255,.04) 60%,
+        rgba(255,255,255,.22) 86%,rgba(255,255,255,.8) 100%) border-box;
+    box-shadow:
+      0 0 34px rgba(255,255,255,.55),                 /* 外缘光晕 */
+      0 1px 2px rgba(48,48,48,.1),                    /* 接触阴影：贴地 */
+      0 18px 30px -20px rgba(48,48,48,.42),           /* 中景投影 */
+      0 52px 104px -50px rgba(48,48,48,.56);          /* 环境投影：厚度感 */
+    transition:transform 700ms var(--ease),box-shadow 700ms var(--ease),--gx 300ms var(--ease),--gy 300ms var(--ease);
+  }
+  /* 预览卡是「玻璃板 + 屏幕」：整圈留出连续玻璃，内芯不铺白，玻璃才有地方被看见 */
+  .shell.preview.lift:hover{
+    transform:translateY(-4px);
+    box-shadow:
+      0 0 42px rgba(255,255,255,.62),
+      0 2px 3px rgba(48,48,48,.1),
+      0 26px 44px -22px rgba(48,48,48,.44),
+      0 68px 132px -58px rgba(48,48,48,.6);
+  }
+  /* 内芯抬起一层，压在玻璃层之上 */
+  .shell.preview > .core{
+    position:relative;z-index:1;border-radius:21px;padding:10px;
+    background:none;
+  }
+  .preview .shot{
+    position:relative;line-height:0;border-radius:11px;overflow:hidden;
+    box-shadow:0 1px 0 rgba(255,255,255,.6),0 18px 34px -24px rgba(48,48,48,.62);
+  }
+  .preview .shot img{display:block;width:100%;height:auto}
+  /* 屏幕玻璃：内缘发丝 + 斜向反光带 + 随指针移动的眩光 */
+  .preview .shot::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(48,48,48,.14),inset 0 1px 0 rgba(255,255,255,.55);
+    background:
+      radial-gradient(34% 62% at var(--gx,30%) var(--gy,6%),rgba(255,255,255,.34),rgba(255,255,255,0) 62%),
+      linear-gradient(166deg,rgba(255,255,255,.24) 0%,rgba(255,255,255,.08) 13%,rgba(255,255,255,0) 26%,rgba(255,255,255,0) 80%,rgba(255,255,255,.07) 100%);
+  }
+
+  /* ============ 分区 & Bento ============ */
+  section.block{padding:104px 0}
+  .section-head{display:grid;grid-template-columns:1.1fr .9fr;gap:44px;align-items:end;margin-bottom:48px}
+  .section-head h2{font-size:clamp(34px,4.6vw,60px);font-weight:800;line-height:1.02;letter-spacing:-.035em;margin:0;max-width:16ch}
+  .section-head p{color:var(--ink-soft);font-size:16.5px;line-height:1.6;max-width:46ch}
+  /* 「它做什么」标题分作上下两行 */
+  .section-head h2 .l2b{display:block}
+  .section-head h2.xl{font-size:clamp(38px,5.2vw,68px)}
+  .section-head.only-title{grid-template-columns:1fr;margin-bottom:36px}
+
+  .bento{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  .b-card{grid-column:span 3}
+  .b-card h3{font-size:23px;font-weight:700;letter-spacing:-.028em;line-height:1.12;margin-bottom:10px}
+  .b-card p{font-size:14px;color:var(--ink-soft);line-height:1.6;max-width:38ch}
+  .b-card .core{display:flex;flex-direction:column}
+  .b-card .meta{margin-bottom:16px}
+  .span-3{grid-column:span 3}
+  .span-2{grid-column:span 2}
+  .span-4{grid-column:span 4}
+  .span-6{grid-column:span 6}
+  .row-2{grid-row:span 2}
+  /* 卡片逐张错位渐入：延迟由脚本按「同一批次进入」分配，动画结束即清除 */
+  .b-card{
+    opacity:0;transform:translate3d(0,26px,0);filter:blur(6px);
+    transition:opacity 780ms var(--ease),transform 780ms var(--ease),filter 780ms var(--ease),box-shadow 700ms var(--ease),background 300ms var(--ease);
+  }
+  .b-card.is-in{opacity:1;transform:none;filter:none}
+
+  .stat{display:flex;align-items:baseline;gap:10px;margin-top:22px}
+  .stat .big{font-size:52px;font-weight:800;letter-spacing:-.04em;line-height:1}
+  .stat .unit{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)}
+  .mini-list{list-style:none;margin:20px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+  .mini-list li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--ink-soft);line-height:1.5}
+  .mini-list svg{width:14px;height:14px;flex:none;margin-top:3px;stroke:var(--accent-2);fill:none;stroke-width:2}
+  /* —— 三级紧急程度图例 —— */
+  .levels{display:grid;grid-template-columns:1fr;gap:10px;margin-top:24px}
+  .level{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px 12px;padding:15px 16px;border-radius:18px;background:rgba(255,255,255,.42);box-shadow:inset 0 0 0 1px var(--hair)}
+  .level .lname{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:-.01em}
+  .level .lname i{width:9px;height:9px;border-radius:50%;flex:none}
+  .level.lv-hi .lname i{background:var(--accent)}
+  .level.lv-mid .lname i{background:var(--mark);box-shadow:inset 0 0 0 1px rgba(48,48,48,.28)}
+  .level.lv-low .lname i{background:var(--surface)}
+  .level p{grid-column:1/-1;font-size:12.5px;line-height:1.55;color:var(--ink-soft);max-width:none}
+
+  /* ============ 收件箱演示（z 轴级联）============ */
+  .split{display:grid;grid-template-columns:1fr 1.06fr;gap:22px;perspective:1600px}
+  .split .shell:nth-child(2){transform:translateZ(-38px) rotateY(-4deg) translateX(6px);transform-origin:left center}
+  .split .shell:nth-child(2):hover{transform:translateZ(0) rotateY(0) translateX(0)}
+  .app-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--hair);margin-bottom:16px}
+  .app-head h3{font-size:17px;font-weight:700;letter-spacing:-.02em}
+  .app-head .meta{font-size:9.5px}
+  .head-left{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+  /* —— 排序：紧急优先 / 按时间 —— */
+  .seg{display:inline-flex;gap:2px;padding:3px;border-radius:999px;background:rgba(255,255,255,.5);box-shadow:inset 0 0 0 1px var(--hair)}
+  .seg button{
+    border:none;background:transparent;cursor:pointer;border-radius:999px;padding:10px 15px;min-height:44px;
+    font-size:12.5px;font-weight:600;color:var(--ink-soft);
+    transition:background 300ms var(--ease),color 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .seg button:hover{background:rgba(255,255,255,.8);color:var(--fg)}
+  .seg button:active{transform:scale(.97)}
+  .seg button[aria-pressed="true"]{background:var(--fg);color:rgba(255,255,255,.94);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .chip{
+    padding:10px 16px;min-height:44px;border-radius:999px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:7px;
+    background:rgba(255,255,255,.5);box-shadow:inset 0 0 0 1px var(--hair);
+    font-size:12.5px;font-weight:600;color:var(--ink-soft);
+    transition:background 300ms var(--ease),color 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .chip:hover{background:rgba(255,255,255,.86);color:var(--fg);box-shadow:inset 0 0 0 1px var(--hair-strong)}
+  .chip:active{transform:scale(.97)}
+  .chip[aria-pressed="true"]{background:var(--fg);color:rgba(255,255,255,.94);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+  .chip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .chip .dot.hi{background:var(--accent)}
+  .chip .dot.mid{background:var(--mark);box-shadow:inset 0 0 0 1px rgba(48,48,48,.28)}
+  .chip .dot.low{background:var(--surface)}
+  .chip[aria-pressed="true"] .dot{background:rgba(255,255,255,.92);box-shadow:none}
+  .maillist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:432px;overflow-y:auto;padding-right:2px}
+  .mail{
+    width:100%;text-align:left;border:none;cursor:pointer;font-family:inherit;
+    padding:14px;border-radius:18px;background:rgba(255,255,255,.34);
+    box-shadow:inset 0 0 0 1px var(--hair);
+    display:grid;gap:8px;
+    transition:background 400ms var(--ease),box-shadow 400ms var(--ease),transform 400ms var(--ease);
+  }
+  .mail:hover{background:rgba(255,255,255,.72);transform:translateX(2px)}
+  .mail[aria-current="true"]{background:rgba(255,255,255,.88);box-shadow:inset 0 0 0 1px rgba(48,48,48,.34),0 14px 30px -22px rgba(48,48,48,.6)}
+  .mail .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .mail .from{display:flex;align-items:center;gap:9px;min-width:0}
+  .mono-badge{
+    width:26px;height:26px;border-radius:9px;flex:none;
+    background:rgba(48,48,48,.1);color:var(--fg);font-size:12px;font-weight:700;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .mail .sender{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mail .time{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--ink-faint);white-space:nowrap}
+  .mail .subject{font-size:13.5px;font-weight:600;line-height:1.4;color:var(--fg)}
+  .mail.seen .subject{font-weight:500;color:var(--ink-soft)}
+  .mail.done .subject{text-decoration:line-through;text-decoration-thickness:1px;color:var(--ink-faint)}
+  .mail .row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  /* —— 紧急程度：红=紧急 / 黄=较急 / 灰=常规；已完成一律绿色覆盖 ——
+     红色只承担「紧急」这一种语义，不做装饰性铺陈。 */
+  .mail .lv{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:3px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;color:var(--fg)}
+  .mail .lv i{width:6px;height:6px;border-radius:50%;flex:none}
+  .mail .lv-hi{background:rgba(218,41,28,.16);position:relative}
+  .mail .lv-hi i{background:var(--accent);animation:lv-dot 3s var(--ease) infinite}
+  /* 仅「紧急」带呼吸感：外圈光晕扩散 + 圆点轻搏动，只动 transform/opacity */
+  .mail .lv-hi::after{content:'';position:absolute;inset:0;border-radius:999px;box-shadow:0 0 0 1px rgba(218,41,28,.55);opacity:0;pointer-events:none;animation:lv-halo 3s var(--ease) infinite}
+  @keyframes lv-halo{0%{opacity:.5;transform:scale(1)}72%,100%{opacity:0;transform:scale(1.24)}}
+  @keyframes lv-dot{0%,100%{transform:scale(1)}50%{transform:scale(1.22)}}
+  .mail .lv-mid{background:rgba(255,242,0,.45)}
+  .mail .lv-mid i{background:var(--mark);box-shadow:inset 0 0 0 1px rgba(48,48,48,.24)}
+  .mail .lv-low{background:rgba(48,48,48,.08)}
+  .mail .lv-low i{background:var(--surface)}
+  .mail .lv.ok{background:rgba(3,144,74,.18)}
+  .mail .lv.ok i{background:var(--accent-2)}
+  .list-empty{font-size:13.5px;color:var(--ink-faint);padding:26px 4px;text-align:center}
+
+  .detail{display:flex;flex-direction:column;height:100%}
+  .detail h3{font-size:20px;font-weight:700;line-height:1.24;letter-spacing:-.026em;margin:12px 0 10px}
+  .detail .fromline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-soft)}
+  .detail .body{font-size:14px;line-height:1.68;color:var(--ink-soft);margin:18px 0 0;padding-top:18px;border-top:1px solid var(--hair)}
+  /* —— 详情页的紧急度面板：等级 + 三格量表 + 判定依据 —— */
+  .urg{display:grid;gap:12px;margin-top:16px;padding:15px 16px;border-radius:18px;background:rgba(255,255,255,.42);box-shadow:inset 0 0 0 1px var(--hair)}
+  .urg-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .urg-head strong{font-size:14px;font-weight:700;letter-spacing:-.01em}
+  .urg-head .meta{font-size:9.5px}
+  .meter{display:flex;gap:4px;align-items:center}
+  .meter i{display:block;width:22px;height:5px;border-radius:999px;background:rgba(48,48,48,.14)}
+  .urg.lv-hi .meter i.on{background:var(--accent)}
+  .urg.lv-mid .meter i.on{background:var(--mark);box-shadow:inset 0 0 0 1px rgba(48,48,48,.24)}
+  .urg.lv-low .meter i.on{background:var(--surface)}
+  .urg-why{display:grid;gap:8px;padding-top:13px;border-top:1px solid var(--hair)}
+  .urg-why ul{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+  .urg-why li{position:relative;padding-left:15px;font-size:12.5px;line-height:1.5;color:var(--ink-soft)}
+  .urg-why li::before{content:'';position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.55}
+  .steps{list-style:none;margin:20px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .steps li{display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:start;font-size:13.5px;line-height:1.5}
+  .steps .n{
+    width:20px;height:20px;border-radius:7px;font-family:var(--mono);font-size:10px;
+    display:inline-flex;align-items:center;justify-content:center;margin-top:1px;
+    background:rgba(48,48,48,.09);color:var(--ink-soft);
+  }
+  .detail-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:24px}
+  .btn-done{
+    display:inline-flex;align-items:center;gap:9px;padding:12px 20px;min-height:44px;border-radius:999px;border:none;cursor:pointer;
+    background:var(--accent);color:rgba(255,255,255,.96);font-size:14px;font-weight:700;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 16px 32px -20px rgba(218,41,28,.7);
+    transition:background 300ms var(--ease),color 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .btn-done:hover{transform:translateY(-1px)}
+  .btn-done:active{transform:scale(.98)}
+  .btn-done.is-done{
+    background:rgba(255,255,255,.5);color:var(--fg);
+    box-shadow:inset 0 0 0 1.5px rgba(3,144,74,.55);
+  }
+  .btn-done.is-done svg{stroke:var(--accent-2)}
+  .btn-done.is-done:hover{background:rgba(255,255,255,.8)}
+  .btn-done svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2}
+  .btn-soft{
+    padding:11px 17px;min-height:44px;border-radius:999px;cursor:pointer;border:none;font-size:13px;font-weight:600;display:inline-flex;align-items:center;
+    background:rgba(255,255,255,.45);color:var(--fg);box-shadow:inset 0 0 0 1px var(--hair);
+    transition:background 300ms var(--ease),box-shadow 300ms var(--ease),transform 300ms var(--ease);
+  }
+  .btn-soft:hover{background:rgba(255,255,255,.85);box-shadow:inset 0 0 0 1px var(--hair-strong)}
+  .btn-soft:active{transform:scale(.98)}
+
+  /* ============ 跑马灯 ============ */
+  .marquee{padding:48px 0;overflow:hidden;mask-image:linear-gradient(90deg,transparent,rgba(0,0,0,1) 12%,rgba(0,0,0,1) 88%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,rgba(0,0,0,1) 12%,rgba(0,0,0,1) 88%,transparent)}
+  .marquee-track{display:flex;gap:56px;width:max-content;animation:track 34s linear infinite;will-change:transform}
+  .marquee:hover .marquee-track{animation-play-state:paused}
+  @keyframes track{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .marquee-item{display:inline-flex;align-items:center;gap:56px;font-size:20px;font-weight:700;letter-spacing:-.02em;color:var(--fg);opacity:.6;white-space:nowrap}
+  .marquee-item b{font-weight:700}
+  .marquee-item i{font-style:normal;color:var(--accent-2)}
+
+  /* ============ 深色收尾 ============ */
+  .closing{
+    margin:40px 28px 28px;padding:104px 0;border-radius:40px;position:relative;overflow:hidden;
+    background:var(--fg);color:#d2d2d2;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 36px 80px -44px rgba(48,48,48,.7);
+  }
+  .closing::before{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(680px 340px at 28% 0%,rgba(218,41,28,.34),transparent 70%),
+               radial-gradient(520px 300px at 82% 100%,rgba(30,174,219,.2),transparent 72%);
+  }
+  .closing-inner{position:relative;max-width:960px;margin:0 auto;padding:0 32px;text-align:center}
+  .closing h2{font-size:clamp(36px,5vw,68px);font-weight:800;letter-spacing:-.036em;line-height:1.02;color:rgba(255,255,255,.98);margin:0 auto 18px;max-width:18ch}
+  .closing h2 .mark{color:var(--mark)}
+  .closing p{color:rgba(210,210,210,.8);font-size:16.5px;line-height:1.6;max-width:48ch;margin:0 auto 30px}
+  .closing .eyebrow{background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);color:rgba(210,210,210,.9);margin-bottom:22px}
+
+  /* ============ 页脚 ============ */
+  footer{padding:32px 28px 28px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint)}
+  footer .row{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;max-width:1240px;margin:0 auto;padding-top:22px;border-top:1px solid var(--hair-strong)}
+  footer a{color:var(--ink-faint);text-decoration:none;transition:color 300ms var(--ease)}
+  footer a:hover{color:var(--fg)}
+
+  /* ============ 入场动效 · 滚动时文字与标题依次渐入 ============ */
+  /* .reveal 只作观察触发器（标题逐字 / 跑马灯用），动效交给 .rv 与 .rv-soft */
+  .rv{opacity:0;transform:translate3d(0,22px,0);filter:blur(7px)}
+  .rv-soft{opacity:0;filter:blur(7px)}      /* 不带位移：用于自身已有 transform 的容器 */
+  .rv,.rv-soft{
+    transition:opacity 820ms var(--ease),transform 820ms var(--ease),filter 820ms var(--ease),box-shadow 700ms var(--ease),background 300ms var(--ease);
+    transition-delay:calc(var(--i,0) * 78ms);
+  }
+  .rv.is-in{opacity:1;transform:none;filter:none}
+  .rv-soft.is-in{opacity:1;filter:none}
+  /* 章节标题：滚动进度直接驱动，渐入并渐出（无 transition） */
+  .scrub{opacity:0;transform:translate3d(0,26px,0);filter:blur(6px);will-change:transform,opacity,filter}
+  @media (prefers-reduced-motion:reduce){
+    .rv,.rv-soft,.b-card,.scrub{opacity:1;filter:none;transition:none}
+    .rv,.b-card,.scrub{transform:none}
+    .marquee-track{animation:none}
+    .hero.is-in h1 .ch{animation:none}
+    .nav-sheet a.row{opacity:1;transform:none}
+    .nav-sheet,.nav-scrim{transition:none}
+    .mail .lv-hi i,.mail .lv-hi::after{animation:none}
+  }
+
+  /* ============ 响应式 ============ */
+  @media (max-width:1080px){
+    .hero{grid-template-columns:1fr;min-height:auto;padding:64px 0 80px;gap:40px}
+    .hero h1{max-width:6.6em}
+    .hero .lede{font-size:16px;line-height:1.58;margin-bottom:28px}
+    .hero-copy{top:auto}
+    .hero .preview{top:auto}
+    .section-head{grid-template-columns:1fr;gap:16px;align-items:start}
+    .split{grid-template-columns:1fr}
+    .split .shell:nth-child(2){transform:none}
+    .bento{grid-template-columns:repeat(4,1fr)}
+    .span-3,.span-4{grid-column:span 4}
+    .span-2{grid-column:span 2}
+    .row-2{grid-row:auto}
+  }
+  /* 平板端（769–1080px）：单列时标题与标语居中，取消右下错位 */
+  @media (min-width:769px) and (max-width:1080px){
+    .hero-copy{text-align:center}
+    .hero h1{margin-inline:auto}
+    .hero h1 .l1,.hero h1 .l2{text-align:center}
+    .hero .lede{margin-inline:auto}
+    .hero .actions{justify-content:center}
+  }
+  @media (max-width:768px){
+    html{scroll-padding-top:94px}
+    .wrap{padding:0 18px}
+    /* 桌面端章节链接换成菜单面板：胶囊收成「字标 + 菜单按钮」，功能不丢失 */
+    .nav-links{display:none}
+    .nav-cta{display:none}
+    .menu-btn{display:inline-flex}
+    .nav{gap:12px;padding:5px 6px 5px 14px}
+    .topbar{top:14px;margin-top:14px}
+    section.block{padding:72px 0}
+    .bento{grid-template-columns:1fr}
+    .span-2,.span-3,.span-4,.span-6{grid-column:span 1}
+    .shell,.shell.sm{border-radius:28px}
+    .shell > .core,.shell.sm > .core{border-radius:22px;padding:22px}
+    .shell.preview{padding:11px}
+    .shell.preview > .core{border-radius:16px;padding:8px}
+    .preview .shot{border-radius:8px}
+    .hero h1{font-size:clamp(54px,15.5vw,62px)}
+    .hero .lede{font-size:15px;line-height:1.55;margin-bottom:24px}
+    .closing{margin:24px 12px 12px;padding:72px 0;border-radius:28px}
+    .marquee-item{font-size:16px;gap:32px}
+    .marquee-track{gap:32px}
+    .split .shell:nth-child(2){transform:none}
+  }
+
+  @media (max-width:900px){
+    .device-row{grid-template-columns:1fr}
+    .task-merged{margin-bottom:0}
+    .wechat-core{grid-template-columns:1fr;gap:28px}
+    .wechat-core.is-expired{grid-template-columns:1fr}
+    .wechat-code{justify-self:center;width:min(100%,280px)}
+  }
+
+/* ============================================================================
+   我们这一侧补上的部分（设计原稿里没有的那些版块）
+
+   上面那 639 行是 `mail-pilot.html` 的设计原稿，**逐字保留**：画布灰、玻璃材质、
+   字号阶梯、六张 bento 卡、跑马灯、深色收尾、页脚，全部按原稿。
+
+   这一节只做两件事：
+   ① 把原稿里没有、而我们必须有的版块（创建账号 / 留言板 / 装到手机 / 公告栏 /
+      开源入口 / 语言切换器）用**同一套材质与同一批变量**接上去；
+   ② 给「没有 JS 也要看得到正文」补一条保险 —— 原稿把 `.rv`/`.scrub`/`.b-card`
+      的初始隐藏写成了无条件规则，关掉脚本整页就是空白。这里把它们收进
+      `html.js-motion`（那个类由 `landing.js` 跑到那里才加），
+      于是没有 JS 时页面是一张完整的静态页。
+
+   颜色一律走上面那批变量，不写死新色值 —— 主题（`data-theme`）与应用共用同一套。
+   ============================================================================ */
+
+:root{
+  /* 原稿没有、而我们这些版块用到的几个别名（值全部取自原稿那一批） */
+  --muted:var(--ink-faint);
+  --accent-ink:#fff;
+  --accent-strong:#9d1f13;              /* 小字用的红：对比度 ≥ 4.5:1 */
+  --accent-soft:rgba(218,41,28,.10);
+  --ok-ink:#0d5b41;--ok-bg:#e9f2ec;
+  --warn:#8a5a12;--warn-bg:#fbf3e2;--warn-line:#eddcc0;
+  --ink-dark:#141414;--ink-dark-fg:#f2f1ef;--ink-dark-muted:rgba(242,241,239,.72);
+  --r-shell:var(--shell-r);--r-core:var(--core-r);
+  --r-sm:var(--shell-r-sm);--r-xs:10px;--r-pill:999px;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,
+          "Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif;
+}
+
+/* 关掉脚本时不许有任何东西被藏起来（`tools/landing_check.js` 有一条禁 JS 的检查）
+   —— 原稿把这些初始隐藏写成了无条件规则，脚本一挂整页就是空白。
+   **`is-in` 那三条必须一起写**：`html.js-motion .rv`（0,2,1）比原稿的
+   `.rv.is-in`（0,2,0）权重高，只加前半截的话元素进了视口也还是看不见
+   （2026-09-23 首屏只剩一个标题，就是这么来的）。 */
+html.js-motion .rv{opacity:0;transform:translate3d(0,22px,0);filter:blur(7px)}
+html.js-motion .rv-soft{opacity:0;filter:blur(7px)}
+html.js-motion .b-card{opacity:0;transform:translate3d(0,26px,0);filter:blur(6px)}
+html.js-motion .rv.is-in,html.js-motion .rv-soft.is-in,
+html.js-motion .b-card.is-in{opacity:1;transform:none;filter:none}
+/* `.scrub` 由脚本逐帧写内联样式，内联永远赢，不需要这条 —— 留一行说明免得下一个人补。 */
+
+/* ---------------------------------------------------------------- 无障碍 */
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:24px;top:12px;z-index:99;background:var(--core-solid);
+  padding:10px 14px;border:1px solid var(--hair);border-radius:var(--r-sm)}
+
+code{font-family:var(--mono);font-size:.9em;background:rgba(48,48,48,.06);
+  padding:2px 6px;border-radius:6px;overflow-wrap:anywhere}
+
+/* ------------------------------------------------------------ 通用小件 */
+.rule{border:0;border-top:1px solid var(--hair);margin:52px 0}
+.kicker{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 10px;font-weight:600}
+.section-head .kicker{margin-bottom:10px}
+.note{font-size:14px;color:var(--muted);margin:0 0 12px}
+.note b{color:var(--fg)}
+.lead-col{max-width:66ch}
+.lead-col h3{font-size:19px;margin:22px 0 6px}
+.lead-col p{margin:0 0 10px;color:var(--ink-soft)}
+.sig{display:block;font-family:var(--serif);font-size:17px;color:var(--muted);margin-top:14px}
+ul.plain{list-style:none;padding:0;margin:0 0 16px}
+ul.plain li{padding:11px 2px;border-bottom:1px solid var(--hair);font-size:15.5px;
+  color:var(--ink-soft);display:flex;gap:10px}
+ul.plain li::before{content:"";flex:0 0 auto;width:6px;height:6px;margin-top:11px;
+  border-radius:50%;background:var(--accent)}
+
+/* 荧光笔那一句：只留左红棱（黄色荧光底 2026-09-24 随 PR #8 去掉），**不在首屏**，在「它来整理好」那一节末尾 */
+.pitch{border-left:3px solid var(--accent);
+  background:transparent;
+  padding:12px 18px;margin:26px 0 0;font-size:16.5px;
+  border-radius:0 var(--r-sm) var(--r-sm) 0}
+.pitch b{font-weight:650}
+.pitch a{color:var(--accent-strong);text-decoration:underline;
+  text-underline-offset:3px;white-space:nowrap}
+
+/* 披露框：谁出钱、正文去哪了。它必须显眼，所以用暖底 + 左边一道 */
+.disclosure{border-left:3px solid var(--warn);background:var(--warn-bg);
+  padding:18px 22px;font-size:15.5px;margin:28px 0;
+  border-radius:0 var(--r-sm) var(--r-sm) 0}
+.disclosure b{display:block;margin-bottom:6px;color:var(--warn);font-weight:700}
+
+/* 我们自己的按钮（创建账号 / 提交留言 / 源码那颗）：原稿的 `.pill` 是首屏那种
+   「按钮中按钮」，这里这一颗是列表与表单里用的实心红胶囊。 */
+.btn,.cta{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  min-height:46px;padding:10px 24px;border-radius:var(--r-pill);
+  font:inherit;font-size:15.5px;font-weight:650;cursor:pointer;text-decoration:none;
+  border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 14px 26px -18px rgba(198,42,28,.9);
+  transition:transform .22s var(--spring),background .18s var(--ease)}
+.btn:hover,.cta:hover{background:var(--accent-strong);transform:translateY(-1px)}
+.btn:active,.cta:active{transform:translateY(1px) scale(.995)}
+.repo{margin:22px 0 0}
+
+/* --------------------------------------------------------------- 导航 */
+/* 原稿的吸顶胶囊挂在 `.topbar` 上；我们那个 `<header>` 必须同时带 `top`
+   （`test_landing` 按 header 上那个 `top` 类切片、套件按 `header.top a.brand` 找站名），
+   所以把原稿那条吸顶规则照原样接到 `.top` 上。 */
+.top{position:sticky;top:24px;z-index:60;margin:24px auto 0;
+  width:max-content;max-width:calc(100% - 40px)}
+.top.is-scrolled .nav-progress{opacity:1}
+/* 「开源」「打开应用」这两条不在 `.nav-links` 的 ul 里（原稿那个胶囊里只放章节），
+   但仍然要长得像一条导航项。 */
+/* 「创建账号」在胶囊里但仍是一颗次级按钮 */
+.nav-links a.nav-cta{padding:0 16px;font-weight:650;
+  background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(255,255,255,.6))}
+.nav-links a.nav-cta:hover{background:#fff}
+/* 语言切换器要同时活在灰画布上：颜色只用 currentColor，不写死底色（不变量 6） */
+.lang-switch{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.lang-switch-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.lang-switch select{font:inherit;font-size:13px;padding:4px 6px;border-radius:8px;
+  border:1px solid currentColor;background:transparent;color:inherit;opacity:.9}
+.lang-switch button{font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;
+  border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
+
+/* ------------------------------------------------- 首屏：图在标题旁边 + 「看」「即」首尾对上 */
+/* 三条，都是用户 2026-09-23 点出来的（他的窗口约 1044px，正好落在原稿那一档里）：
+
+   ① **图必须在那 8 个字旁边**。原稿在 ≤1080px 把首屏收成一列，图就掉到标题下面去了 ——
+      第一屏上「告别漏看 即刻待办」旁边什么都没有。这里把两栏一直保持到 860px
+      （再窄就真的放不下并排的两栏，那一档仍是原稿的一列 + 居中）。
+   ② **「看」的尾巴要接上「即」的头**：即 的左边缘 = 看 的右边缘，
+      也就是第二行缩进**四个字宽**（`4em - 4×字距`，字距 -.038em 是原稿定的）。
+      两行于是首尾相接、连成一条斜向的阅读动线。
+      上一版我做成缩进三个字宽（即 压在 看 正下方）—— 那是「对齐左边缘」，不是首尾相接。
+   ③ 第二行缩进四个字宽之后，整行要 **7.7em** 宽（4 个字的缩进 + 4 个字），
+      比原稿的 6.6em 宽 —— 所以中文标题的字号**收一档**（`clamp(44px,5.3vw,76px)`，
+      原稿是 `clamp(60px,6.4vw,86px)`），让这条阶梯在左栏里放得下、不与右边的卡片相撞。
+      `max-width` 同时放宽到 8em，第二行 `nowrap`（不放宽/不 nowrap 会把它挤成两行）。
+
+   **只对中文这么做**：英文/日文/韩文的标题字数不同（en 是 `Say goodbye to missed email`
+   / `Instant to-dos`），四个字宽的缩进会让第二行顶出边界 —— 那几种语言仍走原稿的右对齐。 */
+html[lang="zh-Hans"] .hero h1,
+html[lang="zh-Hant"] .hero h1{max-width:8em;font-size:clamp(44px,5.3vw,76px)}
+html[lang="zh-Hans"] .hero h1 .l2,
+html[lang="zh-Hant"] .hero h1 .l2{
+  text-align:left;margin-left:calc(4em - 4 * .038em);white-space:nowrap}
+
+@media (min-width:860px) and (max-width:1080px){
+  /* 原稿在这一档把 `.hero` 收成一列，那条规则里的 `padding:64px 0 80px` 顺手把
+     `.wrap` 的左右内边距也覆盖成 0 了 —— 所以这里必须把它写回来（否则标题贴着屏幕边）。 */
+  .hero{grid-template-columns:1.04fr .96fr;gap:30px;align-items:center;
+        min-height:auto;padding:72px 28px 84px}
+  .hero-copy{top:-56px;text-align:left}
+  .hero h1{font-size:clamp(46px,6.1vw,74px);margin-inline:0}
+  .hero .lede{margin-inline:0;font-size:16px;max-width:46ch}
+  .hero .actions{justify-content:flex-start}
+  .hero .preview{top:0}
+  /* 原稿在 769–1080 这一档把**两行都居中**（`.hero h1 .l1,.hero h1 .l2{text-align:center}`）。
+     只覆盖 `.l2` 是不够的：第一行被推到中间之后，「看」的右边缘就不在 h1 左边 + 四个字宽
+     的位置上，阶梯照样断 —— 2026-09-23 在 1044px 的线上页面里量到 即 比 看 的右边缘
+     前移了 115px，就是这个原因。两行一起改成左对齐。 */
+  html[lang] .hero h1 .l1{text-align:left}
+  /* 中文在这一档同样按「阶梯放得下」定字号（放在后面，压过上面那条通用规则） */
+  html[lang="zh-Hans"] .hero h1,
+  html[lang="zh-Hant"] .hero h1{font-size:clamp(40px,5.3vw,68px)}
+}
+
+/* 更窄（手机与小平板）：回到原稿的一列 + 居中 —— 那个宽度放不下并排的两栏，
+   四个字宽的缩进也会顶出右边界（390px 上会多出约 130px 横向滚动）。 */
+@media (max-width:859px){
+  html[lang] .hero h1{max-width:6.6em;font-size:clamp(54px,15.5vw,62px)}
+  html[lang] .hero h1 .l2{text-align:center;margin-left:0;white-space:normal}
+}
+
+/* ----------------------------------------------------------- 首屏那张卡 */
+/* 稿子里这里是一张**截图**（`.shell.preview` + `.shot` + `img`），原稿那几条规则
+   已经在上面了，这里只需要说明一句：卡片底下那两行小字（演示数据 / 节奏）是我们加的，
+   它们不在卡片里，而在 `.hero-visual` 里、卡片下面。 */
+.demo-cap{margin:12px 2px 2px;font-size:12.5px;color:var(--muted)}
+.demo-cap a{color:var(--accent-strong)}
+
+/* --------------------------------------------------- 开源那一节（`#source`） */
+#source{margin-top:34px;font-size:14.5px}
+#source li{font-size:14.5px}
+#source h2{font-size:clamp(22px,2.6vw,28px);margin:0 0 10px}
+#source p{color:var(--ink-soft);max-width:70ch}
+#source .repo{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 4px}
+
+/* --------------------------------------------------- 创建账号那张卡 */
+.core-pad{padding:32px 32px 28px}
+.core-pad h2{font-size:clamp(26px,3.6vw,36px);margin:0 0 14px}
+.core-pad .kicker{margin-bottom:8px}
+#pilot-count{color:var(--fg);font-weight:600}
+
+/* --------------------------------------- 可点的那一节（原稿的收件箱演示） */
+.demo-core{padding:24px}
+#list-count b{font-weight:700;color:var(--fg)}
+.detail-page[hidden]{display:none}
+/* 详情那一半：原稿把这三颗按钮放在 `.detail` **里面**（它们随 innerHTML 一起重画）。
+   我们把详情做成静态的，按钮就留在外面一层 —— 所以这里补一点它自己需要的外边距。 */
+#detail + .detail-actions{margin-top:22px}
+
+/* --------------------------------------------------- 真机截图（不是效果图） */
+.device-row{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(270px,.85fr);
+  gap:22px;align-items:stretch;margin-top:34px}
+figure.device{margin:0;max-width:none}
+figure.device img{display:block;width:100%;height:auto;border:1px solid var(--hair-strong);
+  border-radius:var(--r-core);background:#fff;
+  box-shadow:0 24px 60px -34px rgba(48,48,48,.55)}
+figure.device figcaption{margin-top:10px;font-size:13px;color:var(--muted)}
+.task-merged{margin-bottom:30px}
+.task-merged .core{padding:28px}
+.task-merged h3{font-size:26px;line-height:1.12}
+.task-merged-list{display:grid;gap:18px;margin-top:22px}
+.task-merged-list section+section{padding-top:18px;border-top:1px solid var(--hair)}
+.task-merged-list h4{font-size:16px;line-height:1.3;margin:0}
+.task-merged-list p{font-size:13.5px;line-height:1.55;color:var(--ink-soft);margin:7px 0 0;max-width:none}
+
+/* --------------------------------------------------- 客服群那一节 */
+.wechat-core{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,300px);
+  gap:clamp(28px,6vw,76px);align-items:center;padding:clamp(28px,4.6vw,48px)}
+.wechat-core.is-expired{grid-template-columns:minmax(0,760px)}
+.wechat-copy{min-width:0}
+.wechat-copy h2{font-size:clamp(34px,4.6vw,60px);font-weight:800;line-height:1.02;
+  letter-spacing:0;margin:0;max-width:16ch}
+.wechat-copy .note{margin:18px 0 0;max-width:46ch;font-size:16px;line-height:1.65}
+.wechat-code{justify-self:end;width:min(100%,280px)}
+.group-qr{display:block;width:100%;max-width:280px;height:auto;margin:0;
+  border:1px solid var(--hair);border-radius:var(--r-core);background:#fff}
+
+/* --------------------------------------------------------- 留言板 */
+.signup{margin:0}
+.signup label{display:block;font-size:14.5px;font-weight:650;margin-bottom:7px}
+.signup input,.signup textarea{width:100%;padding:12px 14px;font:inherit;font-size:16px;
+  color:var(--fg);background:var(--core-solid);border:1px solid var(--hair-strong);
+  border-radius:var(--r-sm);
+  transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.signup input:focus-visible,.signup textarea:focus-visible{outline:none;
+  border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.signup textarea{min-height:104px;resize:vertical}
+.signup .field{margin-bottom:16px}
+.signup .btn,.signup .cta{margin-top:4px}
+#guestbook-status.on{margin:0 0 14px;padding:11px 14px;border-radius:var(--r-sm);
+  font-size:14.5px}
+#guestbook-status.on.ok{background:var(--ok-bg);color:var(--ok-ink)}
+#guestbook-status.on.bad{background:#fbeeeb;color:#a8321f}
+.hint{font-size:13px;color:var(--muted);margin-top:10px}
+.opt{font-weight:400;color:var(--muted)}
+.hp{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;
+  clip:rect(0 0 0 0)}
+.guestlist{list-style:none;padding:0;margin:16px 0 0;display:grid;gap:12px}
+.guest-item{border-left:3px solid var(--accent);padding:2px 0 2px 16px}
+.guest-body{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-soft)}
+.guest-meta{margin:6px 0 0;font-size:13px;color:var(--muted)}
+.guest-empty{margin:0;color:var(--muted);font-size:14.5px}
+
+/* --------------------------------------------------- 装到手机（最长的一节） */
+#download .kicker{margin-bottom:8px}
+#download h3{margin:32px 0 8px}
+#download p{max-width:74ch;color:var(--ink-soft)}
+.need-invite{border-left:3px solid var(--warn);background:var(--warn-bg);
+  padding:16px 20px;margin:18px 0 26px;border-radius:0 var(--r-sm) var(--r-sm) 0}
+.need-invite p{margin:0 0 14px;font-size:15.5px;color:var(--fg)}
+ol.steps{margin:0 0 24px;padding-left:0;list-style:none;counter-reset:step}
+ol.steps li{display:block;position:relative;padding:7px 0 7px 34px;font-size:15.5px;
+  color:var(--ink-soft);counter-increment:step;max-width:74ch}
+ol.steps li::before{content:counter(step);position:absolute;left:0;top:11px;
+  width:22px;height:22px;border-radius:50%;background:var(--accent);
+  color:var(--accent-ink);font-size:12.5px;font-weight:700;line-height:22px;
+  text-align:center;box-shadow:0 6px 12px -8px rgba(198,42,28,.95)}
+ol.steps li b{color:var(--fg)}
+.tag{display:inline-block;font-size:12px;font-weight:650;color:var(--accent-strong);
+  background:var(--accent-soft);border-radius:var(--r-pill);padding:3px 10px;
+  vertical-align:middle;margin-left:8px;letter-spacing:0}
+figure.shot{margin:14px 0 10px;max-width:520px}
+figure.shot img{display:block;width:100%;height:auto;border:1px solid var(--hair);
+  border-radius:var(--r-sm);background:#fff}
+figure.shot figcaption{font-size:13px;color:var(--muted);margin-top:8px}
+
+/* --------------------------------------------------- 窄屏：导航只留两条 */
+@media (max-width:1080px){
+  /* 原稿在窄屏把整条章节链接收进抽屉。我们要多留两条：**「创建账号」和
+     「装到手机」必须点得到** —— `tools/landing_check.js` 在 390×844 上要真的点到
+     `header nav a[href="#download"]`（那是「入口顺序」那条契约的一半）。 */
+  .nav-links{display:block}
+  .nav-links ul li:not(.keep){display:none}
+  .nav-links a.nav-cta{display:inline-flex}
+  /* 窄屏那一列必须是 `minmax(0,1fr)` 而不是 `1fr`：`fr` 的下限是内容 min-content，
+     于是收件箱卡里那些不折行的长串（英文的 `Library return reminder`、计数行）
+     会把整列撑到 317px —— 320px 的机器上整页多出 15px 横向滚动。
+     一样的修法在 app 外壳那边也用过（grid 的标准修法：下限给 0）。
+     英文页比中文页先红，因为中文串更短。 */
+  .split{grid-template-columns:minmax(0,1fr)}
+  .split > .shell,.split .core,.demo-core{min-width:0}
+  .mail .sender,.mail .subject,.app-head .meta{overflow-wrap:anywhere}
+}
+@media (max-width:768px){
+  .top{top:14px;margin-top:14px}
+}
+@media (max-width:600px){
+  /* 手机上要**真的点得到**：正文里的行内链接、页脚那几条、演示卡里那颗「处理好了」、
+     语言切换器。纵向 padding 不动行高，只把可点区域撑到 44px ——
+     `tools/browser_check.js` 按 390×844 量这个（苹果与谷歌都把 44px 当下限），
+     而设计稿里这些都是小号字（13px 的胶囊只有 28px 高）。 */
+  p a, li a, td a, dd a, .help a, label a, .check a, summary a, figcaption a{
+    display:inline-block;padding:13px 2px}
+  footer .row a{display:inline-block;padding:12px 2px;min-height:44px;line-height:20px}
+  .mails .done{font-size:12.5px;padding:10px 12px;min-height:44px;
+    display:inline-flex;align-items:center}
+  /* `height` 与 `min-height` **两个都写**：Safari 不给 `<select>` 认 `min-height`，
+     只写 min-height 的话它在 iPhone 上仍是 23px 高（2026-09-23 跑 WebKit 量到的）。 */
+  .lang-switch select{font-size:16px;padding:10px 10px;min-height:44px;height:44px}
+  .lang-switch button{font-size:16px;min-height:44px;height:44px}
+  .core-pad{padding:24px 20px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  /* 窄屏那条胶囊要**允许折行**，并且把子标题收起来。
+     英文原文比中文长得多（`Create account` / `Install on your phone`），
+     320px 上这一行原本 284px 宽、把整页顶出 15px 横向滚动 ——
+     中文页当时是绿的，所以这条只在英文页上看得见（套件两个语言都量）。 */
+  .nav{flex-wrap:wrap;row-gap:4px;justify-content:center}
+  .brand small{display:none}
+  .nav-links a{padding:0 10px;font-size:12.5px}
+  .nav-links a.nav-cta{padding:0 13px}
+  .lang-switch{font-size:12px}
+}
+
+</style>
+{{HREFLANG}}
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+
+<!-- 环境光斑 + 颗粒（`.mesh`）：玻璃要有可折射的东西才存在。纯装饰，读屏器忽略。 -->
+<div class="mesh" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+<!-- `id="top"` 是应用里「官网」那个链接的落点，也是 `/#top` 这种地址的容身处。
+     `landing.js` 另有用处：地址里有 fragment 说明这是一次**有意**的导航，
+     所以装在手机上的应用被叫回官网时，允许它看这一页，而不是立刻转回 /app。 -->
+<header class="top" id="top">
+  <div class="nav-shell">
+    <span class="lg" aria-hidden="true"><i class="lg-body"></i><i class="lg-spec"></i></span>
+    <div class="nav">
+      <!-- 站名是回首页的链接，指向 `/` 而不是 `#top`：顺手把地址栏里的 `#how`/`#faq` 丢掉。
+           这一页在手机上很长，从某一节进来的访客（书签、别人分享的链接）需要一条出路。 -->
+      <a class="brand" href="/"><span class="mark" aria-hidden="true"><svg viewBox="0 0 14 14"><path d="M1.5 3.5h11v7h-11z"></path><path d="M1.5 3.5 7 8l5.5-4.5"></path></svg></span>CityU Mail<small>城市大学邮件助手</small></a>
+      <!-- 「创建账号」排在「装到手机」**前面**：入口的顺序就是这条路的顺序（先有账号，再去装）。
+           套件按 DOM 顺序量这一条，不按坐标 —— 免得这件事由字数决定。 -->
+      <nav class="nav-links" aria-label="页面章节">
+        <ul>
+          <li><a href="#how" data-nav="how"><i class="fg" aria-hidden="true"></i><span class="lb">它做什么</span></a></li>
+          <li><a href="#inbox" data-nav="inbox"><i class="fg" aria-hidden="true"></i><span class="lb">收件箱演示</span></a></li>
+          <li><a href="#privacy" data-nav="privacy"><i class="fg" aria-hidden="true"></i><span class="lb">隐私说明</span></a></li>
+          <li><a href="#faq" data-nav="faq"><i class="fg" aria-hidden="true"></i><span class="lb">常见问题</span></a></li>
+          <li class="keep"><a class="pill-ghost nav-cta" href="#apply" data-nav="apply">创建账号</a></li>
+          <!-- 「打开应用」必须在**手机上**也看得见（2026-09-25 用户截图问：
+               「能不能在这加一个打开应用的按钮，要不然很不方便」）。它原来挂在
+               `wide-only` 上——手机上被 CSS 藏掉，只能展开右上角抽屉才点得到，
+               而**回访的人要的正是这一个入口**。所以给它 `keep`（窄屏保留），
+               位置紧挨「创建账号」：新访客点左边、老用户点右边。
+               **不加 `data-nav`**：那个属性是给 scroll-spy 找同名小节的，
+               `/app` 不是本页的章节，加了会让高亮逻辑去找一个不存在的小节。
+               「创建账号」排在「装到手机」前面这条契约没动（单测与
+               `tools/landing_check.js` 都在量它）。 -->
+          <li class="keep"><a href="/app">打开应用</a></li>
+          <li class="keep"><a href="#download" data-nav="download"><i class="fg" aria-hidden="true"></i><span class="lb">装到手机</span></a></li>
+          <!-- 配置了仓库才会有这一条（自建的人不该被指向别人的源码）。 -->
+          <li class="wide-only">{{SOURCE_NAV}}</li>
+        </ul>
+      </nav>
+      <!-- 语言切换器在导航这一行**里面**：挂在外面的那次，顶栏被它顶成了两行，
+           而设计稿里这是一枚单行胶囊。 -->
+      {{LANG_SWITCH}}
+      <button class="menu-btn" type="button" id="menu-btn" aria-expanded="false"
+              aria-controls="nav-sheet" aria-label="打开章节菜单">
+        <span class="bars" aria-hidden="true"><i></i><i></i></span>
+      </button>
+    </div>
+    <div class="nav-progress" aria-hidden="true"><i id="nav-progress-bar"></i></div>
+  </div>
+
+  <!-- 窄屏抽屉。**不在 `<header>` 的 `<nav>` 里**：套件按 `header nav a` 量
+       「创建账号」在「装到手机」之前、且只允许一份，所以这里不能再放第二个 <nav>。 -->
+  <div class="nav-sheet" id="nav-sheet" role="dialog" aria-modal="true" aria-label="章节菜单">
+    <span class="lg" aria-hidden="true"><i class="lg-body"></i><i class="lg-spec"></i></span>
+    <div class="sheet-inner">
+      <span class="sheet-label" id="nav-sheet-label">页面章节</span>
+      <ul aria-labelledby="nav-sheet-label">
+        <li><a class="row" href="#how" data-nav="how" style="--i:0"><span class="idx">01</span>它做什么</a></li>
+        <li><a class="row" href="#inbox" data-nav="inbox" style="--i:1"><span class="idx">02</span>收件箱演示</a></li>
+        <li><a class="row" href="#privacy" data-nav="privacy" style="--i:2"><span class="idx">03</span>隐私说明</a></li>
+        <li><a class="row" href="#faq" data-nav="faq" style="--i:3"><span class="idx">04</span>常见问题</a></li>
+        <li><a class="row" href="#apply" data-nav="apply" style="--i:4"><span class="idx">05</span>创建账号</a></li>
+        <li><a class="row" href="#download" data-nav="download" style="--i:5"><span class="idx">06</span>装到手机</a></li>
+      </ul>
+      <div class="sheet-cta">
+        <a class="pill-ghost" href="/app">打开应用</a>
+      </div>
+    </div>
+  </div>
+  <button class="nav-scrim" type="button" id="nav-scrim" tabindex="-1" aria-hidden="true"
+          aria-label="关闭章节菜单"></button>
+</header>
+
+<main id="main">
+
+  <!-- ================= 首屏 ================= -->
+  <section class="wrap hero reveal">
+    <!-- `lead` 这个类名是**契约**：`tools/landing_check.js` 用
+         `.lead .actions a[href="#apply"]` 量首屏那个创建账号按钮的坐标
+         （390×844 的第一屏里必须看得见）。 -->
+    <div class="lead hero-copy">
+      <h1><span class="l1">告别漏看</span><span class="red l2">即刻待办</span></h1>
+      <!-- 这句先说分得清哪几类，再说节奏。节奏那一半必须是**我们的实情**：
+           来信几分钟内先发一封 ＋ 每天一封汇总（时间用户自设，默认 22:00）。
+           设计稿写的是「每天早晚各发回一封摘要」——那是它的版本，不是我们的行为。 -->
+      <p class="lede standfirst" style="--i:1">只读你的 CityU 学校邮件，分清课程通知、行政通知、社团与校招；来信几分钟内先发一封，晚上再发当天汇总——写明要办什么、什么时候截止。</p>
+      <div class="actions" style="--i:2">
+        <a class="pill" href="#apply">免费开始使用<span class="icon-wrap" aria-hidden="true"><svg viewBox="0 0 13 13"><path d="M2.5 6.5h8M6.8 2.8l3.7 3.7-3.7 3.7"></path></svg></span></a>
+        <a class="pill-ghost" href="/demo">看看它怎么工作（免登录）</a>
+      </div>
+    </div>
+
+    <!-- 首屏右侧那张卡：**设计稿里就是一张截图**（`hero-preview.png`，834×622，
+         从他 `mail-pilot.html` 内嵌的 base64 原样取出来）。上一轮我们把它换成了
+         "活的行"，用户 2026-09-23 问「右边那个图呢」—— 照稿子放图，卡片底下照旧
+         写明这是演示数据。 -->
+    <div class="hero-visual rv-soft" style="--i:3">
+      <aside class="shell lift preview">
+        <span class="lg" aria-hidden="true"><i class="lg-body"></i><i class="lg-spec"></i></span>
+        <div class="core">
+          <div class="shot">
+            <img src="/hero-preview.png" width="834" height="622" decoding="async"
+                 alt="CityU Mail Pilot 收件箱界面截图：课程与作业通知、社团活动邀请、校务邮件按紧要程度排列，并标出各自的截止时间">
+          </div>
+        </div>
+      </aside>
+      <p class="demo-cap">演示数据，不是你的邮箱。真界面免登录看：<a href="/demo">/demo</a></p>
+      <p class="demo-cap">节奏：来信几分钟内先发一封；晚上（<b>默认 22:00，可自己改</b>）再发当天汇总。</p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ================= 它来整理好，然后你去做（三项核心用途） ================= -->
+  <section class="block reveal" id="how">
+    <div class="wrap">
+      <div class="section-head only-title">
+        <div>
+          <h2 class="scrub xl">它来整理好，<span class="l2b">然后你去做</span></h2>
+        </div>
+      </div>
+
+      <div class="bento core-steps">
+        <article class="shell lift b-card span-4 row-2 core-step core-step-todo">
+          <div class="core">
+            <div class="meta">01 · 待办事项</div>
+            <h3>生成不同紧急程度的待办事项</h3>
+            <p>邮件自己会说明它有多急。Mail Pilot 把这个信号原样带进清单，并写清判定的依据：谁发的、还剩多少时间、错过了会有什么后果。列表默认按重要程度排列。</p>
+            <div class="levels">
+              <div class="level lv-hi">
+                <div class="lname"><i aria-hidden="true"></i>重要</div>
+                <div class="meter" role="img" aria-label="重要，三级中的最高级"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+                <p>带明确的截止时刻，或者错过会影响选课、缴费、报名资格与固定日程。</p>
+              </div>
+              <div class="level lv-mid">
+                <div class="lname"><i aria-hidden="true"></i>一般</div>
+                <div class="meter" role="img" aria-label="一般，三级中的第二级"><i class="on"></i><i class="on"></i><i></i></div>
+                <p>有明确时限但可以补救：能续借、能改约、还能补交，拖延的代价有限。</p>
+              </div>
+              <div class="level lv-low">
+                <div class="lname"><i aria-hidden="true"></i>低</div>
+                <div class="meter" role="img" aria-label="低，三级中的最低级"><i class="on"></i><i></i><i></i></div>
+                <p>时限还远，或者只是通知类的内容。它照旧进清单，但不占你的注意力。</p>
+              </div>
+            </div>
+            <ul class="mini-list">
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>把「本周内」「尽快」这类模糊说法，换成日历上的具体日期与时刻。</span></li>
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>勾好要办的条目，导出一份 <code>.ics</code>，截止时刻跟着条目一起进手机日历。</span></li>
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>不想再用时，关掉城大邮箱里的转发规则即可停止。</span></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="shell lift b-card span-2 core-step core-step-original">
+          <div class="core">
+            <div class="meta">02 · 看原信</div>
+            <h3>查看原件，AI 翻译，AI 总结</h3>
+            <p>接入的是学校邮箱的只读权限：不删信、不回信、不改标签。你随时在校园邮箱后台撤销授权，摘要会立刻停止。</p>
+            <ul class="mini-list">
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>需要核对时，从待办点回原始邮件。</span></li>
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>AI 负责翻译和总结，原文一个字不改。</span></li>
+              <li><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg><span>邮件正文不留存，摘要生成后即弃。</span></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="shell lift b-card span-2 dark core-step core-step-brief">
+          <div class="core">
+            <div class="meta">03 · 简报</div>
+            <h3>生成简报</h3>
+            <p>来信几分钟内先发一封；当天汇总默认在晚上 22:00 发出，在设置里改成你习惯的时刻就行。</p>
+            <div class="stat"><span class="big">22:00</span><span class="unit">日报默认时刻 · 可自己改</span></div>
+          </div>
+        </article>
+      </div>
+
+      <!-- 真机截图：这一张是**真的运行界面**，不是效果图。右侧把原稿
+           04 / 05 / 06 三块合成一个「待办事项」框，视觉上与截图并排。 -->
+      <div class="device-row">
+        <figure class="device">
+          <img src="/app-tasks.png" loading="lazy"
+               alt="应用界面：列出今天的每件事、重要程度和截止时间，每行都有「处理好了」按钮">
+          <figcaption>软件每日推送消息真实运行界面（非效果图）</figcaption>
+        </figure>
+
+        <aside class="shell lift task-merged">
+          <div class="core">
+            <h3>待办事项</h3>
+            <div class="task-merged-list">
+              <section>
+                <h4>标出真正的截止时间。</h4>
+                <p>把「本周内」「尽快」这类模糊说法，换成日历上的具体日期与时刻。</p>
+              </section>
+              <section>
+                <h4>清单可以一次导出到手机日历。</h4>
+                <p>勾好要办的条目，导出一份 <code>.ics</code>，截止时刻跟着条目一起进手机日历。</p>
+              </section>
+              <section>
+                <h4>一封邮件就能停掉。</h4>
+                <p>关掉城大邮箱里的转发规则就行；也可以停用邮箱或删除账号。数据可以随时导出。</p>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {{SOURCE_SECTION}}
+
+      <!-- 「手机上可以装成一个应用」那句：**不在首屏**，在这一节的末尾。
+           契约（`tools/landing_check.js`）：只有一份、可见、加粗、带一条通往
+           `#download` 的链接，而且位置必须在这一节里面。 -->
+      <p class="pitch"><b>手机上可以装成一个应用，打开就是同一个清单，课间看一眼就够。</b>
+      <a href="#download">看怎么装 →</a></p>
+    </div>
+  </section>
+
+    <hr class="rule">
+
+    <!-- ================= 点一封邮件，看它被怎么处理 ================= -->
+    <!-- 原稿这一节是**脚本渲染**的（一个 MAILS 数组 + innerHTML）。我们改成
+         **服务端渲染 + 脚本增强**：邮件行与详情都在 HTML 里（所以词典翻得到、
+         关掉脚本也读得到），脚本只负责筛选、排序、切换与「已办」这三件事。
+         数据取自 `/demo` 的冻结夹具（真实产品输出），卡片上写明它是演示数据。 -->
+    <section class="block reveal" id="inbox">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 class="scrub">点一封邮件，看它被怎么处理。</h2>
+          </div>
+        </div>
+
+        <div class="split rv-soft" style="--i:2">
+          <div class="shell">
+            <div class="core demo-core">
+              <div class="app-head">
+                <div class="head-left">
+                  <h3>收件箱</h3>
+                  <span class="meta" id="list-count"><b id="count-shown">4</b> 封 · 待办 <b id="count-pending">4</b> · 重要 <b id="count-hot">2</b></span>
+                </div>
+                <div class="seg" role="group" aria-label="排序方式">
+                  <button type="button" data-sort="priority" aria-pressed="true">重要优先</button>
+                  <button type="button" data-sort="recent" aria-pressed="false">按时间</button>
+                </div>
+              </div>
+              <div class="chips" role="group" aria-label="按重要程度筛选">
+                <button class="chip" data-level="all" aria-pressed="true">全部</button>
+                <button class="chip" data-level="3" aria-pressed="false"><i class="dot hi" aria-hidden="true"></i>重要</button>
+                <button class="chip" data-level="2" aria-pressed="false"><i class="dot mid" aria-hidden="true"></i>一般</button>
+                <button class="chip" data-level="1" aria-pressed="false"><i class="dot low" aria-hidden="true"></i>低</button>
+                <button class="chip" data-level="0" aria-pressed="false"><i class="dot skip" aria-hidden="true"></i>已跳过</button>
+              </div>
+              <ul class="maillist" id="maillist">
+                <li><button type="button" class="mail" data-mail-id="m1" data-level="3" data-order="1" aria-current="true">
+                  <span class="top"><span class="from"><span class="mono-badge" aria-hidden="true">教</span><span class="sender">教务处</span></span><span class="time">今天 09:25</span></span>
+                  <span class="subject">作业截止提醒</span>
+                  <span class="row2"><span class="lv lv-hi"><i aria-hidden="true"></i>重要</span><span class="time">截止 2026/9/24 23:59</span></span>
+                </button></li>
+                <li><button type="button" class="mail" data-mail-id="m2" data-level="3" data-order="2" aria-current="false">
+                  <span class="top"><span class="from"><span class="mono-badge" aria-hidden="true">图</span><span class="sender">图书馆</span></span><span class="time">今天 08:10</span></span>
+                  <span class="subject">图书馆逾期通知</span>
+                  <span class="row2"><span class="lv lv-hi"><i aria-hidden="true"></i>重要</span><span class="time">截止 2026/9/26 18:00</span></span>
+                </button></li>
+                <li><button type="button" class="mail" data-mail-id="m3" data-level="2" data-order="3" aria-current="false">
+                  <span class="top"><span class="from"><span class="mono-badge" aria-hidden="true">课</span><span class="sender">课程组</span></span><span class="time">昨天</span></span>
+                  <span class="subject">课程通知 6</span>
+                  <span class="row2"><span class="lv lv-mid"><i aria-hidden="true"></i>一般</span><span class="time">截止 2026/10/12 23:59</span></span>
+                </button></li>
+                <li><button type="button" class="mail" data-mail-id="m4" data-level="0" data-order="4" aria-current="false">
+                  <span class="top"><span class="from"><span class="mono-badge" aria-hidden="true">商</span><span class="sender">校外来信</span></span><span class="time">周日</span></span>
+                  <span class="subject">校外商家促销</span>
+                  <span class="row2"><span class="lv lv-skip"><i aria-hidden="true"></i>已跳过</span><span class="time">不进待办</span></span>
+                </button></li>
+              </ul>
+              <p class="list-empty" id="list-empty" hidden>这个重要程度暂时没有邮件。</p>
+            </div>
+          </div>
+
+          <div class="shell">
+            <div class="core demo-core">
+              <div class="detail" id="detail">
+                <div class="detail-page" data-mail="m1">
+                  <h3>作业截止提醒</h3>
+                  <div class="fromline"><span class="mono-badge" aria-hidden="true">教</span><span>教务处</span><span class="time">今天 09:25</span></div>
+                  <div class="urg lv-hi">
+                    <div class="urg-head">
+                      <strong>重要</strong>
+                      <span class="meter" role="img" aria-label="重要程度：重要，三级中的最高级"><i class="on"></i><i class="on"></i><i class="on"></i></span>
+                      <span class="meta">先看这些</span>
+                    </div>
+                    <div class="urg-why">
+                      <span class="meta">判定依据</span>
+                      <ul>
+                        <li>发件人在 <code>cityu.edu.hk</code></li>
+                        <li>信里给了明确截止时刻：2026/9/24 23:59</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <p class="body">本周五 23:59 前必须提交作业。这是演示数据，写法和真报告一样：先说要办什么，再说什么时候截止。</p>
+                  <div class="meta">要办的事 · 2 步</div>
+                  <ul class="steps">
+                    <li><span class="n" aria-hidden="true">1</span><span>打开作业说明，确认提交入口</span></li>
+                    <li><span class="n" aria-hidden="true">2</span><span>交完之后把这一条标成已办</span></li>
+                  </ul>
+                </div>
+                <div class="detail-page" data-mail="m2" hidden>
+                  <h3>图书馆逾期通知</h3>
+                  <div class="fromline"><span class="mono-badge" aria-hidden="true">图</span><span>图书馆</span><span class="time">今天 08:10</span></div>
+                  <div class="urg lv-hi">
+                    <div class="urg-head">
+                      <strong>重要</strong>
+                      <span class="meter" role="img" aria-label="重要程度：重要，三级中的最高级"><i class="on"></i><i class="on"></i><i class="on"></i></span>
+                      <span class="meta">先看这些</span>
+                    </div>
+                    <div class="urg-why">
+                      <span class="meta">判定依据</span>
+                      <ul>
+                        <li>图书馆系统来信</li>
+                        <li>带归还时刻与逾期罚则</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <p class="body">有两本书即将到期，归还期限是 2026/9/26 18:00。可以线上续借一次。</p>
+                  <div class="meta">要办的事 · 2 步</div>
+                  <ul class="steps">
+                    <li><span class="n" aria-hidden="true">1</span><span>在线续借，或者把书还到自助还书机</span></li>
+                    <li><span class="n" aria-hidden="true">2</span><span>续借前确认没有别人预约</span></li>
+                  </ul>
+                </div>
+                <div class="detail-page" data-mail="m3" hidden>
+                  <h3>课程通知 6</h3>
+                  <div class="fromline"><span class="mono-badge" aria-hidden="true">课</span><span>课程组</span><span class="time">昨天</span></div>
+                  <div class="urg lv-mid">
+                    <div class="urg-head">
+                      <strong>一般</strong>
+                      <span class="meter" role="img" aria-label="重要程度：一般，三级中的第二级"><i class="on"></i><i class="on"></i><i></i></span>
+                      <span class="meta">今天顺手办</span>
+                    </div>
+                    <div class="urg-why">
+                      <span class="meta">判定依据</span>
+                      <ul>
+                        <li>发件人是课程组</li>
+                        <li>时限在两周以上，晚一点处理的代价有限</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <p class="body">这是第 6 份用于演示的课程通知，截止 2026/10/12 23:59。</p>
+                  <div class="meta">要办的事 · 1 步</div>
+                  <ul class="steps">
+                    <li><span class="n" aria-hidden="true">1</span><span>看一眼通知里有没有要交的东西</span></li>
+                  </ul>
+                </div>
+                <div class="detail-page" data-mail="m4" hidden>
+                  <h3>校外商家促销</h3>
+                  <div class="fromline"><span class="mono-badge" aria-hidden="true">商</span><span>校外来信</span><span class="time">周日</span></div>
+                  <div class="urg lv-skip">
+                    <div class="urg-head">
+                      <strong>已跳过</strong>
+                      <span class="meter" role="img" aria-label="不在允许的发件人范围里"><i class="on"></i><i></i><i></i></span>
+                      <span class="meta">不进待办，也不悄悄丢弃</span>
+                    </div>
+                    <div class="urg-why">
+                      <span class="meta">判定依据</span>
+                      <ul>
+                        <li>发件人不是本校邮箱（<code>cityu.edu.hk</code>）</li>
+                        <li><b>正文根本没入库</b>：发件人判断在加密之前就做完了</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <p class="body">这一封<b>不会</b>变成待办，但也<b>不会悄悄消失</b>：它只留下发件人与主题，出现在日报的「已跳过」里。</p>
+                  <div class="meta">留下了什么</div>
+                  <ul class="steps">
+                    <li><span class="n" aria-hidden="true">·</span><span>发件人与主题（日报里那一行「已跳过」）</span></li>
+                    <li><span class="n" aria-hidden="true">·</span><span><b>没有正文</b>——它在加密之前就被丢掉了，服务器上没有</span></li>
+                  </ul>
+                </div>
+              </div>
+              <div class="detail-actions">
+                <button type="button" class="btn-done" id="toggle-done">
+                  <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 7.4 5.6 10.5 11.5 4"></path></svg>
+                  <span>标记为已办</span>
+                </button>
+                <a class="btn-soft" href="/demo">看完整界面</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 跑马灯（纯装饰，读屏器忽略） ================= -->
+    <section class="marquee reveal" aria-hidden="true">
+      <div class="marquee-track rv-soft" style="--i:0">
+        <span class="marquee-item">
+          <b>选课确认</b><i>·</i><b>成绩公布</b><i>·</i><b>图书馆催还</b><i>·</i><b>奖学金申请</b><i>·</i><b>实习宣讲会</b><i>·</i><b>宿舍报修</b><i>·</i><b>社团招新</b><i>·</i><b>交换生报名</b><i>·</i><b>学费缴费</b><i>·</i><b>考试安排</b><i>·</i>
+        </span>
+        <span class="marquee-item">
+          <b>选课确认</b><i>·</i><b>成绩公布</b><i>·</i><b>图书馆催还</b><i>·</i><b>奖学金申请</b><i>·</i><b>实习宣讲会</b><i>·</i><b>宿舍报修</b><i>·</i><b>社团招新</b><i>·</i><b>交换生报名</b><i>·</i><b>学费缴费</b><i>·</i><b>考试安排</b><i>·</i>
+        </span>
+      </div>
+    </section>
+
+    <!-- ================= 把「我记得要回」变成「已完成」 ================= -->
+    <section class="block reveal" id="promise">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 class="scrub">把「我记得要回」变成<span class="soft">「已完成」</span></h2>
+          </div>
+          <p class="rv" style="--i:1">我们只做一件事：读信、写摘要、发回给你。不帮你回信，不把数据给第三方，不用你的邮件训练模型。</p>
+        </div>
+        <div class="bento">
+          <article class="shell lift b-card span-2">
+            <div class="core">
+              <div class="meta">授权 · 只读</div>
+              <h3>只读令牌</h3>
+              <p>用的是邮箱的<b>授权码</b>（不是登录密码），全程只读：不标记已读、不移动、不删除。
+              你可以随时在邮箱后台撤销它，撤销后我们立刻读不到。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-2">
+            <div class="core">
+              <div class="meta">留存 · 正文</div>
+              <h3>正文不留存</h3>
+              <p>报告发出后，我们这边不留邮件正文；跳过邮件的正文<b>根本不入库</b>。
+              留下来的只有元数据与你自己标记的待办状态。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-2">
+            <div class="core">
+              <div class="meta">训练 · 零</div>
+              <h3>不用于训练</h3>
+              <p>不用你的邮件训练任何模型，不卖、不共享给广告方，也没有任何遥测。
+              生成报告时正文会发给模型服务商——这一条写在下面那张披露框里，不藏着。</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 隐私说明（我们原有的那一节） ================= -->
+    <section class="block reveal" id="privacy">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <p class="kicker">隐私说明</p>
+            <h2 class="scrub">我们对你的邮箱做什么</h2>
+          </div>
+          <p class="rv note" style="--i:1">下面写的是程序的实际行为，不是法律措辞。</p>
+        </div>
+        <ul class="plain">
+          <li>只读收信，不标记已读、不移动、不删除</li>
+          <li>只处理本校邮箱发来的邮件，其余只记一行「已跳过」和发件人</li>
+          <li>报告发出后，我们这边不留邮件正文</li>
+          <li>邮箱授权码和 API key 加密保存；改密码后，其它设备上的登录会立刻失效</li>
+          <li>不统计你的使用行为，也没有任何遥测</li>
+          <li>不用你的邮件训练模型，不卖也不共享给广告方</li>
+          <li>跳过的邮件不会悄悄消失，每一封都会写在日报里</li>
+        </ul>
+
+        <div class="disclosure">
+          <b>你需要知道的一件事</b>
+          生成报告时，邮件正文会通过加密连接发送给大模型服务商（如 DeepSeek、OpenAI、火山方舟）。
+          在另行通知前默认用管理员的 API key，所以这些调用记录会落在管理员的模型账号里；
+          换成你自己的 key 之后，记录就只在你自己名下。开启联网核实时还会从邮件主题提取检索词发给搜索服务商（豆包），
+          用管理员的搜索 key 时这些查询记录同样落在管理员账号下。服务商受它自己的隐私政策约束，
+          我们无法替你保证它不用于训练。请不要用它处理你无法接受外传的内容。
+        </div>
+
+        <div class="lead-col">
+          <h3>报告由模型生成，会出错</h3>
+          <p>它可能漏掉、误解或凭空写出内容。报告不是学校的官方通知。涉及选课、缴费、报名、签证、毕业
+          这些有后果的事，请自己打开原始邮件核对，一切以原邮件为准。</p>
+
+          <h3>也可以自己部署</h3>
+          <p>不想把邮件交给别人的机器，就自己装一份，那样邮件只经过你自己的服务器
+          （仓库和许可证见上面那节）。不想自己弄就在下面注册一个账号。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 常见问题（他的第六节，答案全是我们的） ================= -->
+    <section class="block reveal" id="faq">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 class="scrub">开始之前，你可能想问这些。</h2>
+          </div>
+          <!-- 这一句说的是**两头**的邮箱：转发来源（学校邮箱）必须是城大域名，
+               转发目的地（私人邮箱）用哪家都行。只说一头，读者会读成矛盾。 -->
+          <p class="rv" style="--i:1">目前只支持从 CityU 校园邮箱转发过来；你要转发到的私人邮箱用哪家都行，见下面 Q5。</p>
+        </div>
+        <div class="bento">
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q1</div>
+              <h3>会读到我和老师的私人往来吗？</h3>
+              <p>只会读到<b>你从城大邮箱转发过来的信</b>——转发规则是你自己设的，可以随时关掉。
+              不是本校邮箱（<code>cityu.edu.hk</code>）发来的邮件只记一行「已跳过」和发件人，
+              <b>正文根本不进数据库</b>；运营者也看不到任何正文。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q2</div>
+              <h3>摘要是中文还是英文？</h3>
+              <p><b>你在这里选的那一种。</b>报告用它写（来信本身是什么语言都不影响），
+              最后再附一句<b>另一种语言</b>的简短小结。原文一个字不改，
+              想核对原信可以点任务上的「<b>看原信</b>」当场从你邮箱里读回来。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q3</div>
+              <h3>会用我的邮件训练模型吗？</h3>
+              <p>不会。不训练、不人工逐封阅读、不卖给第三方，也没有遥测。
+              但要说清一件事：生成报告时<b>正文会发给模型服务商</b>（谁、发什么，见上面的披露框）。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q4</div>
+              <h3>要收费吗？</h3>
+              <p>目前免费，默认用管理员提供的模型 key，你不花钱；也可以换成自己的 key，
+              费用与调用记录就都在你自己的服务商账号下。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q5</div>
+              <h3>我的邮箱能用吗？</h3>
+              <p>QQ / 163 / 126 / Gmail / iCloud / Yahoo 这些都可以（要在邮箱设置里开启「收发邮件服务」并生成授权码）。
+              <b>微软系（Outlook / Hotmail / Live）用不了</b>——微软已停用授权码登录，这不是我们能改的。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q6</div>
+              <h3>报告会不会出错？</h3>
+              <p>会。它由模型生成，可能漏掉、误解或凭空写出内容，报告不是学校的官方通知。
+              涉及选课、缴费、报名、签证、毕业的事，请以原邮件为准。</p>
+            </div>
+          </article>
+          <article class="shell lift b-card span-3">
+            <div class="core">
+              <div class="meta">Q7</div>
+              <h3>不想用了怎么办？</h3>
+              <p>在「邮箱设置」里停用邮箱，或者删除账号；删除后邮件正文与报告一并清掉。
+              也可以只把城大邮箱里那条转发规则关掉——我们这边就再也收不到信了。</p>
+              <p><b>数据随时可以导出</b>（「报告与账户」→ 导出我的数据，一份 JSON）；删除之后，
+              它会随备份那个 <b>7 天</b>的滚动窗口自然消失。</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <hr class="rule">
+
+    <!-- ================= 创建账号 ================= -->
+    <!-- 2026-09-24：页面原来在正文和页尾各有一个创建账号入口。现在只保留页尾那版
+         深色 CTA，并把它放在原来的 `#apply` 位置；原来的浅色说明卡整块删除。
+         顺序契约不变：`#apply` 仍在 `#download` 之前。 -->
+    <section class="closing reveal" id="apply" aria-labelledby="apply-title">
+      <div class="closing-inner">
+        <span class="eyebrow rv" style="--i:0"><span class="dot"></span>开放注册 · 填一个邮箱就能建号</span>
+        <h2 class="scrub" id="apply-title">别再让学校邮件决定你的<span class="mark">今天</span>。</h2>
+        <p class="rv" style="--i:2">注册只要一个邮箱和一个密码；配好转发邮箱的当天，第一封清单就会到。</p>
+        <a class="pill on-dark rv-soft" style="--i:3" href="/app">创建账号
+          <span class="icon-wrap" aria-hidden="true"><svg viewBox="0 0 13 13"><path d="M2.5 6.5h8M6.8 2.8l3.7 3.7-3.7 3.7"></path></svg></span></a>
+      </div>
+    </section>
+
+    {{WECHAT_GROUP}}
+
+    <hr class="rule">
+
+    <!-- ================= 留言板 ================= -->
+    <!-- 没注册的人也能写，默认只有运营者看得到，要刊登必须有人点过。 -->
+    <section class="block reveal" id="guestbook" aria-labelledby="guestbook-title">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2 class="scrub" id="guestbook-title">留言</h2>
+          </div>
+          <p class="rv" style="--i:1">不用注册也能留言。提交后先只有运营者看到；是否刊登、以什么昵称刊登，由运营者决定。</p>
+        </div>
+        <ul class="plain">
+          <li>刊登时一律匿名，不会出现任何人的邮箱</li>
+          <li>最多 2 个链接，留言一直保存到你或运营者删掉为止</li>
+        </ul>
+        <div class="shell lift">
+          <div class="core core-pad">
+            <form class="signup" id="guestbook-form" method="post" action="/api/guestbook">
+              <div id="guestbook-status"></div>
+              <div class="field">
+                <label for="guestbook-body">留言 <span class="opt">（必填，最多 800 字）</span></label>
+                <textarea id="guestbook-body" name="body" maxlength="800" required
+                          placeholder="例如：哪一步卡住了、哪个功能不符合预期、希望增加什么。"></textarea>
+              </div>
+              <div class="field">
+                <label for="guestbook-nickname">昵称 <span class="opt">（可选，刊登时用它；不填就写「一位同学」）</span></label>
+                <input id="guestbook-nickname" name="nickname" maxlength="40" autocomplete="nickname"
+                       placeholder="比如：大二在读">
+              </div>
+              <div class="field">
+                <label for="guestbook-email">邮箱 <span class="opt">（可选，只给运营者看，永不刊登）</span></label>
+                <input id="guestbook-email" name="email" type="email" autocomplete="email" inputmode="email"
+                       placeholder="留了才能回复你">
+              </div>
+              <div class="hp" aria-hidden="true">
+                <label for="guestbook-website">网站</label>
+                <input id="guestbook-website" name="website" type="text" tabindex="-1" autocomplete="off">
+              </div>
+              <button class="btn" type="submit" id="guestbook-submit">提交留言</button>
+              <p class="hint">
+                留言一直保存到你或运营者删掉为止，见<a href="/privacy">《隐私政策》</a>。
+              </p>
+            </form>
+          </div>
+        </div>
+        <h3 id="guestbook-published">已经刊登的留言</h3>
+        {{GUESTBOOK}}
+      </div>
+    </section>
+
+    <hr class="rule">
+
+    <!-- ================= 装到手机上（最长的一节） ================= -->
+    <section class="block reveal" id="download">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <p class="kicker">注册之后 · 全部安装方式都在这一节</p>
+            <h2 class="scrub">装到手机上</h2>
+          </div>
+        </div>
+        <div class="need-invite">
+          <p><b>还没有账号？</b>装好之后要用它登录，光装上还进不去。</p>
+          <a class="btn" href="#apply">先创建账号</a>
+        </div>
+        <p>它本身是一个网页，所以「安装」跟装普通 App 不一样。
+        <b>安卓可以下载安装包，也可以直接让浏览器装；iPhone 只能用 Safari 装到主屏幕。</b>
+        iOS 不允许安装 App Store 以外的应用，这是苹果的限制，不是我们没做。</p>
+        <p class="note">下面的图是<b>示意图</b>：颜色和位置可能跟你的手机略有差别，
+        作用是标出<b>该点哪一个按钮</b>。找不到时对着文字描述看。</p>
+
+        <h3>安卓 · 方法一：下载安装包 <span class="tag">功能最全</span></h3>
+        {{APK_BUTTON}}
+        <ol class="steps">
+          <li><b>下载</b>：用手机上的浏览器打开这一页，点上面的下载按钮。文件会存进「下载」文件夹。
+              <figure class="shot">
+                <a href="/install-android-apk.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-android-apk.png" loading="lazy" alt="第 1 步：点这个绿色的下载按钮"></a>
+                <figcaption>第 1 步：点这个绿色的下载按钮（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>允许安装</b>：点开刚下载的文件。系统会先拦一下，说不能安装未知来源的应用——
+              点「设置」，找到<b>你刚才用的那个浏览器</b>，打开它的「允许安装未知应用」，
+              然后返回再点一次。
+              <figure class="shot">
+                <a href="/install-android-unknown.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-android-unknown.png" loading="lazy" alt="第 2 步：在设置里给浏览器打开这个开关"></a>
+                <figcaption>第 2 步：在设置里给浏览器打开这个开关（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>仍然安装</b>：装的时候可能还会提示「Play 保护机制」或「未经检测的应用」。
+              这个安装包没有上架 Google Play，所以这类提示是正常的，选「仍然安装」就行。
+              <figure class="shot">
+                <a href="/install-android-install-anyway.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-android-install-anyway.png" loading="lazy" alt="第 3 步：这类提示是正常的，选「仍然安装」"></a>
+                <figcaption>第 3 步：这类提示是正常的，选「仍然安装」（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>以后更新</b>：装好后桌面上会出现图标。以后有新版本，回到这一页重新下载、直接覆盖安装即可，
+              账号和数据都不会丢。</li>
+        </ol>
+
+        <h3>安卓 · 方法二：用浏览器直接装 <span class="tag">最省事</span></h3>
+        <p class="note">不下载任何文件，也看不到「未知来源」的提示。</p>
+        <ol class="steps">
+          <li><b>打开</b>：用 <b>Chrome</b> 打开这一页。</li>
+          <li><b>安装</b>：点右上角「⋮」，选「安装应用」；没有这一项就选「添加到主屏幕」。
+              <figure class="shot">
+                <a href="/install-android-chrome.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-android-chrome.png" loading="lazy" alt="第 2 步：Chrome 菜单里的「安装应用」"></a>
+                <figcaption>第 2 步：Chrome 菜单里的「安装应用」（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>确认</b>：确认之后，桌面上就有图标了。</li>
+        </ol>
+
+        <h3>iPhone / iPad</h3>
+        <p class="note">iOS 装不了安装包，只能「添加到主屏幕」。加完之后是一个独立图标，
+        打开看不到地址栏，用起来和下载的 App 一样。</p>
+        <ol class="steps">
+          <li><b>换到 Safari</b>：<b>必须用 Safari。</b>在微信、QQ、Chrome 里都加不了。
+              先把这一页的网址复制下来，粘到 Safari 的地址栏里打开。</li>
+          <li><b>点分享</b>：点屏幕<b>最底下</b>中间那个「分享」按钮——一个方框、里面一个向上的箭头。
+              如果在最底下找不到，就在页面顶部找。
+              <figure class="shot">
+                <a href="/install-ios-share.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-ios-share.png" loading="lazy" alt="第 2 步：Safari 底部这个「分享」按钮"></a>
+                <figcaption>第 2 步：Safari 底部这个「分享」按钮（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>添加到主屏幕</b>：在弹出的菜单里往上滑，找到「添加到主屏幕」，点它。
+              <figure class="shot">
+                <a href="/install-ios-add.png" target="_blank" rel="noopener noreferrer">
+                  <img src="/install-ios-add.png" loading="lazy" alt="第 3 步：菜单里的「添加到主屏幕」（可能要往上滑）"></a>
+                <figcaption>第 3 步：菜单里的「添加到主屏幕」，可能要往上滑（示意图）</figcaption>
+              </figure>
+            </li>
+          <li><b>添加</b>：先看那张卡片上名称下面的开关 —— <b>iOS 26 上要把「作为 Web 应用打开」打开</b>（开着，从图标打开才是独立窗口；关着就只是 Safari 的书签，地址栏还在）。再点右上角「添加」，回到桌面就能看到新图标了。</li>
+        </ol>
+
+        <h3>怎么确认是真的装好了</h3>
+        <p>从桌面图标打开时，<b>看不到浏览器的地址栏</b>，那才算装好了。
+        如果顶上还压着一条地址栏，说明打开的仍然是个网页，回到上面重做一次。</p>
+        <figure class="shot">
+          <a href="/install-standalone.png" target="_blank" rel="noopener noreferrer">
+            <img src="/install-standalone.png" loading="lazy"
+                 alt="对比示意图：左边是装好的样子（没有地址栏），右边是没装好的样子（顶上压着地址栏）"></a>
+          <figcaption>左边是装好的样子，右边还只是个网页（示意图）</figcaption>
+        </figure>
+      </div>
+    </section>
+
+</main>
+
+<footer>
+  <div class="row">
+    <span>CityU Mail Pilot · 版权人 余剑篪 · AGPL-3.0</span>
+    <span>{{SOURCE_LINK}}<a href="/privacy">隐私政策</a> ·
+    <a href="/terms">服务条款</a> ·
+    <a href="/design-system">设计系统</a> ·
+    <a href="/app">打开应用</a></span>
+  </div>
+</footer>
+
+<script src="/i18n.js" defer></script>
+<script src="/landing.js" defer></script>
+</body>
+</html>

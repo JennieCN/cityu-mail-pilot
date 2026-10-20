@@ -1,0 +1,1081 @@
+[
+  {
+    "id": "next-zh01",
+    "language": "zh",
+    "query": "全日制本科生一个学期最少要修多少学分、最多能修多少？兼读制又怎样？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "只讲本科生（UG）的学分上下限；页面版本自 Semester A 2025/26 起生效，个人实际注册仍受学系安排约束。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "In each semester, full-time students must register for courses summing to a total of at least 12 credit units"
+      },
+      {
+        "source": "regulations",
+        "quote": "and for not more than 18 credit units"
+      },
+      {
+        "source": "regulations",
+        "quote": "part-time students must register for courses summing to a total of no more than 11 credit units."
+      }
+    ]
+  },
+  {
+    "id": "next-zh02",
+    "language": "zh",
+    "query": "夏季学期（Summer Term）最多可以修几个学分？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "只适用于本科生；暑期修课仍要先注册，不是自动获得名额。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "In the Summer Term, students may register for courses but the total load must not exceed seven credit units."
+      }
+    ]
+  },
+  {
+    "id": "next-zh03",
+    "language": "zh",
+    "query": "副修（minor）要修够多少学分？副修的课能不能同时算进主修？",
+    "expected": [
+      "faq",
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "两页都只讲通则；个别副修课程的学分要求以 Minor Catalogue 为准。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "A minor requires 15 to 18 credit units."
+      },
+      {
+        "source": "regulations",
+        "quote": "cannot be used toward meeting the requirement for a major and/or other minor(s) taken by the student."
+      },
+      {
+        "source": "faq",
+        "quote": "No. Double counting of courses is permissible between minor and college/school requirements"
+      }
+    ]
+  },
+  {
+    "id": "next-zh04",
+    "language": "zh",
+    "query": "我想申请双主修（double major），CGPA 门槛是多少？什么时候可以申请？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "CGPA 3.00 是申请门槛，不等于一定获批——还要两个学系系主任批准。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "within their second and third years of study in accordance with the procedures announced by the University."
+      },
+      {
+        "source": "regulations",
+        "quote": "the attainment of a minimum CGPA of 3.00 at the end of the semester when the declaration is submitted"
+      }
+    ]
+  },
+  {
+    "id": "next-zh05",
+    "language": "zh",
+    "query": "双学位（double degree）最低要修多少学分？CGPA 要求又是多少？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "150 学分是最低要求；双学位通常还要多读一年，超出部分按自费处理。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Attainment of a double degree requires a minimum of 150 credit units."
+      },
+      {
+        "source": "regulations",
+        "quote": "at least 30 credit units in new courses are completed for the second degree."
+      },
+      {
+        "source": "regulations",
+        "quote": "students should attain a minimum CGPA of 3.30 at the end of the semester when the declaration is submitted"
+      }
+    ]
+  },
+  {
+    "id": "next-zh06",
+    "language": "zh",
+    "query": "转学分（credit transfer）最多可以转多少？对修课年份有没有限制？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "八年规则是上限而非保证；个别学系可以定得更严，且转学分不计入 GPA。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Transfer credits must have been earned no earlier than eight years before the date of enrolment at the University."
+      },
+      {
+        "source": "regulations",
+        "quote": "The maximum number of transfer credits that students can obtain throughout their studies"
+      }
+    ]
+  },
+  {
+    "id": "next-zh07",
+    "language": "zh",
+    "query": "成绩要到什么等级才算及格、不用重修？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "D 是及格线；但部分课程或学系可以另设更高的最低等级。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "the minimum grade to progress without repeating the course is D."
+      },
+      {
+        "source": "regulations",
+        "quote": "Failure to achieve the minimum grade is regarded as failing the course."
+      }
+    ]
+  },
+  {
+    "id": "next-zh08",
+    "language": "zh",
+    "query": "同一门课我可以重修几次来提高成绩？成绩单上会怎么显示？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "最多两次重考机会，而且仍要看该科有没有再开、有没有名额。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Only two repeat attempts may be permitted."
+      },
+      {
+        "source": "regulations",
+        "quote": "only the final grade earned will be included in the calculation of the student’s CGPA."
+      }
+    ]
+  },
+  {
+    "id": "next-zh09",
+    "language": "zh",
+    "query": "在什么情况下会被终止学业（termination of study）？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "这两条只适用于 2020/21 及之后入学的学生；院长仍可按其他准则终止学籍。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "The student’s SGPA is below 1.70 for any three enrolled semesters"
+      },
+      {
+        "source": "regulations",
+        "quote": "will be terminated if they fail to pass a required course, or its equivalent/substitute course, after three attempts."
+      }
+    ]
+  },
+  {
+    "id": "next-zh10",
+    "language": "zh",
+    "query": "最长修业期是几年？读不完可以申请延期吗？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "四年制正常修业期为八年；延期一律不批，休学与停学期数都算在内。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "irrespective of their mode of study, complete all the degree requirements within the stipulated maximum period of study"
+      },
+      {
+        "source": "regulations",
+        "quote": "Requests for extension of study beyond the maximum study period will not be granted."
+      }
+    ]
+  },
+  {
+    "id": "next-zh11",
+    "language": "zh",
+    "query": "休学（leave of absence）一次最少要休多久？整个学位最多能休几个学期？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "休学期间仍算在最长修业期内，且每个学期要缴延续费。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Periods of approved leave of absence may not be less than one full semester"
+      },
+      {
+        "source": "regulations",
+        "quote": "may not accumulate to more than four semesters."
+      }
+    ]
+  },
+  {
+    "id": "next-zh12",
+    "language": "zh",
+    "query": "我现在的 CGPA 是多少？我还差多少学分才能毕业？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "CGPA 与已修学分是个人学业记录，只存在于 AIMS 与正式成绩单里；这五个公开页面只有规则条文，没有任何个人数据，也没有查询入口。",
+    "caveat": "个人成绩必须自己在 AIMS 或成绩单查看，公开页面无法代查。"
+  },
+  {
+    "id": "next-zh13",
+    "language": "zh",
+    "query": "你能不能保证我一定能选上我想读的课、并且四年之内一定毕业？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "公开页面只能列规则，不能对个人作任何保证；选课要看开课资源与余位，毕业要看个人成绩与修业期，都不是页面能承诺的事。",
+    "caveat": "「保证」这类诉求只能由教务处或学系按个别情况答复。"
+  },
+  {
+    "id": "next-zh14",
+    "language": "zh",
+    "query": "2026/27 入学的新生，学位荣誉分级还是用 cum laude（top 2% / 7% / 15%）那一套吗？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "页面把 cum laude 那一套明确限定在 2020/21 至 2023/24 入学的学生；对 2026/27 入学的人，页面既没有条文也没有说取代它的是什么，因此页面版本不能证明现时有效。",
+    "caveat": "问的是未来学年的荣誉分级，页面的适用范围只写到 2023/24 入学。",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "Degrees with Distinction are awarded based on the CGPA ranking for students in the respective departments/schools"
+      },
+      {
+        "source": "regulations",
+        "quote": "For Students on Programmes of a Normal Study Duration of 4 Years or More (Admitted from 2020/21 to 2023/24)"
+      }
+    ]
+  },
+  {
+    "id": "next-zh15",
+    "language": "zh",
+    "query": "2026/27 学年 Semester A 的加退选（add/drop）截止日期是几月几日？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "registration 页的「Key Dates」只有事件标签，没有任何日期数字（日期由网页脚本从另一份试算表取），所以这五个页面里查不到该确切日期。",
+    "caveat": "确切日期要查 ARRO 的选课关键日期表或 AIMS 公告。",
+    "counter_evidence": [
+      {
+        "source": "registration",
+        "quote": "Key Dates\n\nWeb Add/Drop\n\nTime-Ticket |\nWaitlist |\nGE Course Quota Control |\nRegistration Restriction"
+      }
+    ]
+  },
+  {
+    "id": "next-zht01",
+    "language": "zht",
+    "query": "大學的課堂時間是怎樣安排的？是否每節課都在整點開始？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "這是全校通用作息，個別課程仍可在課程大綱另作安排。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "All classes start on the hour and finish at 10 minutes to the hour."
+      },
+      {
+        "source": "schedule",
+        "quote": "Evening classes normally start at 7:00pm."
+      },
+      {
+        "source": "schedule",
+        "quote": "Classes with a duration of more than 3 hours can start earlier at 6:30 pm or extend to 10:50 pm if applicable)"
+      }
+    ]
+  },
+  {
+    "id": "next-zht02",
+    "language": "zht",
+    "query": "Master Class Schedule 裡面的 CRN 是甚麼？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "CRN 識別的是「某一科某一個 section」，不是課程編號本身。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "A unique number assigned to a particular section of a class for a specific course for identification purposes"
+      }
+    ]
+  },
+  {
+    "id": "next-zht03",
+    "language": "zht",
+    "query": "Section 一欄那個像 C01 的三字碼代表甚麼？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "同一門課可以有多個 section，各自有獨立 CRN 與名額。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "A 3-character code (e.g. C01) to denote different sections of the same course (see Courses and Sections)."
+      }
+    ]
+  },
+  {
+    "id": "next-zht04",
+    "language": "zht",
+    "query": "課程表上 WEB 一欄寫 Y 和寫 N 有甚麼分別？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "WEB=N 的科目不能自助加退，要走電子表格並取得開課單位批准。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "they are web-enabled and students can add/drop such courses via the Web Add/Drop form."
+      },
+      {
+        "source": "schedule",
+        "quote": "Students can obtain the course-offering unit’s approval via the electronic form to add/drop such courses."
+      }
+    ]
+  },
+  {
+    "id": "next-zht05",
+    "language": "zht",
+    "query": "Cap 和 Avail 兩個欄位分別代表甚麼？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "Avail 是實時浮動數字，頁面本身不會顯示某科當前的餘額。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Capacity. Maximum quota for the course or course section."
+      },
+      {
+        "source": "schedule",
+        "quote": "Available Places. The number of seats remaining."
+      }
+    ]
+  },
+  {
+    "id": "next-zht06",
+    "language": "zht",
+    "query": "如果一科有 registration restriction 而我不符合資格，應該怎樣做？",
+    "expected": [
+      "restrictions"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "要在最後一個 time-ticket 內用非 web-enabled 科目的電子表格申請，批不批由開課單位決定。",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "seek approval from the course-offering units via the electronic form for add/drop of non-web-enabled courses"
+      }
+    ]
+  },
+  {
+    "id": "next-zht07",
+    "language": "zht",
+    "query": "課程註明「only for College: CB」和「not for Major AC」，實際上即是誰可以讀？",
+    "expected": [
+      "restrictions"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "這兩個標記同時出現時，商學院學生可以讀，但會計（AC）主修生不可以。",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "it means the course section is restricted for students in College of Business to register."
+      },
+      {
+        "source": "restrictions",
+        "quote": "the course can be taken by students in College of Business but except for those from AC (Accountancy) Major."
+      }
+    ]
+  },
+  {
+    "id": "next-zht08",
+    "language": "zht",
+    "query": "我今日剛剛加/退了一科，為何 DegreeWorks 還未更新？幾時會更新？",
+    "expected": [
+      "faq"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "每日午夜同步一次，所以當日改動通常要翌日才看到。",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "Your course registration record will be transferred to the DegreeWorks system daily at midnight."
+      },
+      {
+        "source": "faq",
+        "quote": "will normally be seen on your advising worksheet tomorrow."
+      }
+    ]
+  },
+  {
+    "id": "next-zht09",
+    "language": "zht",
+    "query": "如果我在這個學期不打算註冊任何科目，應該辦甚麼手續？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "要在加退選期結束前申請休學，否則會喪失在學身份；獲批後每學期仍須繳延續費。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Students intending not to register in any courses in a semester but who will subsequently continue their study"
+      },
+      {
+        "source": "regulations",
+        "quote": "should apply for a leave of absence no later than the end of the course add/drop period."
+      }
+    ]
+  },
+  {
+    "id": "next-zht10",
+    "language": "zht",
+    "query": "我的 time-ticket 是哪一天幾點？我幾時可以開始搶科？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "time-ticket 是按每個學生個人編配的時段，只在自己的 AIMS 帳戶裡顯示；這五個頁面只解釋 time-ticket 是甚麼，沒有任何個人時段資料。",
+    "caveat": "個人時段只能在 AIMS 查看，公開頁面無法代查。"
+  },
+  {
+    "id": "next-zht11",
+    "language": "zht",
+    "query": "我是否可以獲得保證，一定能選上我學習計劃（study plan）裡面的科目？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "頁面本身就明確回答「不保證」：開課要視乎師資與資源，把科目放進計劃不等於有位。因此「保證選上」這個訴求在公開頁面上不可滿足。",
+    "caveat": "學習計劃只是需求參考，不構成任何選課保證。",
+    "counter_evidence": [
+      {
+        "source": "faq",
+        "quote": "Listing a course in your plan does not guarantee that the course will have available places for your registration"
+      }
+    ]
+  },
+  {
+    "id": "next-zht12",
+    "language": "zht",
+    "query": "2026/27 年度上學期的加退選截止日期是哪一天？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "註冊頁的「Key Dates」區塊在正文抽取後只剩事件標題，日期數字由網頁腳本另行載入，因此這五個頁面證明不了該確切日期。",
+    "caveat": "實際截止日要看 ARRO 公佈的選課關鍵日期。",
+    "counter_evidence": [
+      {
+        "source": "registration",
+        "quote": "Key Dates\n\nWeb Add/Drop\n\nTime-Ticket |\nWaitlist |\nGE Course Quota Control |\nRegistration Restriction"
+      }
+    ]
+  },
+  {
+    "id": "next-zht13",
+    "language": "zht",
+    "query": "這份 Academic Regulations 在 2026/27 學年是否仍然有效？會不會已經改版？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "頁面只聲明自己自 Semester A 2025/26 起生效；它沒有任何條文可以證明自己在 2026/27 仍然有效或未被修訂，所以頁面版本不能證明現時有效。",
+    "caveat": "條例只由教務會（Senate）修訂，是否仍有效要查最新版本。",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "(Effective from Semester A 2025/26)"
+      }
+    ]
+  },
+  {
+    "id": "next-zht14",
+    "language": "zht",
+    "query": "我下個學期的上課時間表是怎樣的？哪一天幾點上哪一科？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "個人時間表是按每個人實際註冊結果生成的個人資料，只在 Portal 或 AIMS 裡看到；這五個頁面只教你如何進入那個頁面，本身沒有任何個人課表。",
+    "caveat": "個人課表只能在 Portal / AIMS 查看。"
+  },
+  {
+    "id": "next-zht15",
+    "language": "zht",
+    "query": "下學期的考試時間表幾時公佈？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "這五個頁面完全沒有考試時間表或考試編排的題材（只有條例中提到考試的規則），因此沒有資料可以回答公佈日期。",
+    "caveat": "考試編排由 ARRO 另行公佈，不在這五頁範圍內。"
+  },
+  {
+    "id": "next-mx01",
+    "language": "mixed",
+    "query": "Semester A 2026/27 嘅 add/drop deadline 係邊日？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "registration 頁嘅 Key Dates 只剩低事件標籤，冇任何日期；日期係由網頁 script 另外攞，所以呢五頁證明唔到確實嘅截止日。",
+    "caveat": "要知確實日期，要睇 ARRO 出嘅選課關鍵日期。",
+    "counter_evidence": [
+      {
+        "source": "registration",
+        "quote": "Key Dates\n\nWeb Add/Drop\n\nTime-Ticket |\nWaitlist |\nGE Course Quota Control |\nRegistration Restriction"
+      }
+    ]
+  },
+  {
+    "id": "next-mx02",
+    "language": "mixed",
+    "query": "我 Year 2 想 declare double major，CGPA 要幾多先夠？",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "3.00 只係申請門檻；仲要兩個學系系主任批，而且只可以在第二、第三學年申請。",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "the attainment of a minimum CGPA of 3.00 at the end of the semester when the declaration is submitted"
+      }
+    ]
+  },
+  {
+    "id": "next-mx03",
+    "language": "mixed",
+    "query": "有科寫住 WEB = N，我想 add 可以點做？",
+    "expected": [
+      "restrictions",
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "WEB=N 即係非 web-enabled，一定要用電子表格向開課單位申請批准。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Students can obtain the course-offering unit’s approval via the electronic form to add/drop such courses."
+      },
+      {
+        "source": "restrictions",
+        "quote": "seek approval from the course-offering units via the electronic form for add/drop of non-web-enabled courses"
+      }
+    ]
+  },
+  {
+    "id": "next-mx04",
+    "language": "mixed",
+    "query": "Waitlist Avail 嗰欄顯示 Full 係咩意思？仲可以排隊嗎？",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "Full 即係連候補名額都滿了；要等有人退先有機會。",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Description “Full” under the heading means waitlist full."
+      },
+      {
+        "source": "schedule",
+        "quote": "Description “Y” under the heading means waitlist available."
+      }
+    ]
+  },
+  {
+    "id": "next-mx05",
+    "language": "mixed",
+    "query": "我嘅 CRN 係咩？我 add 咗邊個 section？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "CRN 同你實際註冊咗邊個 section 都係個人註冊紀錄，只喺 AIMS 度睇得到；呢五頁只解釋 CRN 呢個概念，冇任何個人資料。",
+    "caveat": "個人註冊紀錄只可以在 AIMS 睇。"
+  },
+  {
+    "id": "next-mx06",
+    "language": "mixed",
+    "query": "我 defer 咗 graduation，係咪 guarantee 一定可以喺下個 semester 畢業？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "公開頁面唔會、亦都唔可以保證個人幾時畢業；畢業要視乎你喺該學期完結前係咪真的修齊所有要求，頁面只列規則。",
+    "caveat": "畢業申請同延期都要按個別情況由教務處處理。"
+  },
+  {
+    "id": "next-mx07",
+    "language": "mixed",
+    "query": "我 2018 年入學，想按當年嘅 Academic Regulations 覆核我嘅終止學業決定。呢五頁有冇當年全文？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "頁面只有一條標明「Applicable to students admitted in 2019/20 and before」嘅註腳同一個舊版目錄，冇舊版條文全文；頁面版本不能證明當年實際生效嘅條文，亦不能證明現時有效。",
+    "caveat": "舊版全文要另外向教務處索取，唔喺呢五頁。",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "Applicable to students admitted in 2019/20 and before"
+      }
+    ]
+  },
+  {
+    "id": "next-mx08",
+    "language": "mixed",
+    "query": "過咗 add/drop deadline 之後先 drop 科，transcript 會唔會有 X grade？",
+    "expected": [
+      "restrictions"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "只有獲批嘅 late drop 才會有 X grade，而且要在教學期結束前提出。",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "an X grade representing the late drop of the course will be assigned and shown on your academic transcript."
+      }
+    ]
+  },
+  {
+    "id": "next-mx09",
+    "language": "mixed",
+    "query": "條例寫住 Effective from Semester A 2025/26，咁 2026/27 係咪照用同一版？",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "頁面只講自己由 Semester A 2025/26 起生效，冇任何條文可以證明 2026/27 仲用同一版；頁面版本不能證明現時有效。",
+    "caveat": "要確認最新版本，要查教務會公佈嘅現行條例。",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "(Effective from Semester A 2025/26)"
+      }
+    ]
+  },
+  {
+    "id": "next-en01",
+    "language": "en",
+    "query": "What are the University class hours, and do classes start on the hour?",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "This is the general University pattern; individual courses may differ.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "All classes start on the hour and finish at 10 minutes to the hour."
+      }
+    ]
+  },
+  {
+    "id": "next-en02",
+    "language": "en",
+    "query": "How do I view my own personal class schedule?",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "The page only gives the navigation path; the personal schedule itself is behind the portal login.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Portal » Academic & Research » My Courses » Student Schedule, or AIMS [Course Registration > Weekly Schedule]"
+      }
+    ]
+  },
+  {
+    "id": "next-en03",
+    "language": "en",
+    "query": "In the Master Class Schedule, what do Y, N and Full mean under Waitlist Avail?",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "These are the column legends only; real-time waitlist numbers live in the Master Class Schedule itself.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Description “Y” under the heading means waitlist available."
+      },
+      {
+        "source": "schedule",
+        "quote": "Description “N” under the heading means waitlist NOT available."
+      },
+      {
+        "source": "schedule",
+        "quote": "Description “Full” under the heading means waitlist full."
+      }
+    ]
+  },
+  {
+    "id": "next-en04",
+    "language": "en",
+    "query": "What does TBA mean under the Instructors heading?",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "TBA means not yet announced; the page does not say when it will be filled in.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Description “TBA” under the \"Instructors\" heading means the information is not yet available"
+      }
+    ]
+  },
+  {
+    "id": "next-en05",
+    "language": "en",
+    "query": "What do the Part of Term values 1, Y and S mean?",
+    "expected": [
+      "schedule"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "1 = regular term, Y = year-long, S = special term with its own start/end dates.",
+    "evidence": [
+      {
+        "source": "schedule",
+        "quote": "Most courses last for one semester and are classified as \"regular term\"."
+      },
+      {
+        "source": "schedule",
+        "quote": "Description “S” under the heading means the course does not follow the regular term."
+      }
+    ]
+  },
+  {
+    "id": "next-en06",
+    "language": "en",
+    "query": "If a course section is marked \"not for Major AC\", who is allowed to take it?",
+    "expected": [
+      "restrictions"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/wadp_rstr.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "The restriction only makes sense together with the \"only for College: CB\" tag on the same section.",
+    "evidence": [
+      {
+        "source": "restrictions",
+        "quote": "the course can be taken by students in College of Business but except for those from AC (Accountancy) Major."
+      }
+    ]
+  },
+  {
+    "id": "next-en07",
+    "language": "en",
+    "query": "How long do I have to report an illness that affected my examination or in-course assessment?",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "Five working days, with documentary evidence, to your home academic unit.",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "no later than 5 working days of the scheduled date for completing the affected examination or assessment."
+      }
+    ]
+  },
+  {
+    "id": "next-en08",
+    "language": "en",
+    "query": "What is the deadline for a formal request for review of a course grade?",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "22 working days is for the formal route; the informal route to the Course Leader is 5 working days.",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Any request for review of course grades must be made in writing to the Dean of the college/school offering the course"
+      },
+      {
+        "source": "regulations",
+        "quote": "within 22 working days of the announcement of grades by the University"
+      }
+    ]
+  },
+  {
+    "id": "next-en09",
+    "language": "en",
+    "query": "How are \"working days\" counted for these deadlines?",
+    "expected": [
+      "regulations"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": true,
+    "applicable_year": "2025/26",
+    "unanswerable_reason": "",
+    "caveat": "Typhoon and black rainstorm days do not count as working days, so deadlines can shift.",
+    "evidence": [
+      {
+        "source": "regulations",
+        "quote": "Mondays to Fridays, excluding Saturdays, Sundays and public holidays"
+      },
+      {
+        "source": "regulations",
+        "quote": "a black rainstorm warning or Typhoon Signal Number 8 or above is issued by the Hong Kong Observatory"
+      }
+    ]
+  },
+  {
+    "id": "next-en10",
+    "language": "en",
+    "query": "I was admitted with an undeclared major. When do I declare my home major?",
+    "expected": [
+      "faq"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "The declaration window is mid-to-late May; the allocated major takes effect in Semester A of year two.",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "In mid to late May of your first year of study."
+      },
+      {
+        "source": "faq",
+        "quote": "you will be allocated a major, which will take effect from Semester A of your second year of study."
+      }
+    ]
+  },
+  {
+    "id": "next-en11",
+    "language": "en",
+    "query": "Do I have to pay extra tuition if I pursue a double major or a double degree?",
+    "expected": [
+      "faq"
+    ],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": true,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "",
+    "caveat": "Only the credits beyond the limits are self-financed; the page points to Fees and Charges for amounts.",
+    "evidence": [
+      {
+        "source": "faq",
+        "quote": "any extra credits exceeding the maximum credit limit permitted will be charged on a self-financing basis."
+      },
+      {
+        "source": "faq",
+        "quote": "credits taken in the 5th year of study and beyond will be charged on a self-financing basis."
+      }
+    ]
+  },
+  {
+    "id": "next-en12",
+    "language": "en",
+    "query": "Which examination venue and seat number have I been assigned for next semester?",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/schd_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "Seat numbers and examination venues are personal data held in the student record; none of these five pages carries any personal record or a lookup for one.",
+    "caveat": "Personal examination arrangements are only visible through the University's own student systems."
+  },
+  {
+    "id": "next-en13",
+    "language": "en",
+    "query": "If I meet all the entrance requirements, can you guarantee that I will be admitted?",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "The page states the opposite of a guarantee: meeting the entrance requirements does not guarantee admission, and the University's admission decisions are final. So no public page can promise admission.",
+    "caveat": "Admission is competitive and decided by the University, not by the published requirements alone.",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "Meeting the entrance requirements does not guarantee admission."
+      }
+    ]
+  },
+  {
+    "id": "next-en14",
+    "language": "en",
+    "query": "What is the exact add/drop deadline date for Semester A 2026/27?",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/creg/creg_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "The Key Dates section of the registration page survives extraction as event labels only; the actual dates are loaded separately by the page script, so the snapshot cannot prove any exact date.",
+    "caveat": "Consult ARRO's published key dates for the real deadline.",
+    "counter_evidence": [
+      {
+        "source": "registration",
+        "quote": "Key Dates\n\nWeb Add/Drop\n\nTime-Ticket |\nWaitlist |\nGE Course Quota Control |\nRegistration Restriction"
+      }
+    ]
+  },
+  {
+    "id": "next-en15",
+    "language": "en",
+    "query": "Where can I read the full Academic Regulations for the previous 3-year degree curriculum?",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/regu/regu_ugar.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "The page only says these regulations do not apply to the previous 3-year curriculum and lists an old table of contents without any article text, so it cannot prove the old regulations' content nor their present validity.",
+    "caveat": "Old-curriculum regulations are published separately and are not part of this snapshot.",
+    "counter_evidence": [
+      {
+        "source": "regulations",
+        "quote": "These regulations do not apply to undergraduate degrees under the previous 3-year degree curriculum structure."
+      }
+    ]
+  },
+  {
+    "id": "next-en16",
+    "language": "en",
+    "query": "Can you guarantee that I will finish my degree within four years?",
+    "expected": [],
+    "official_url": "https://www.cityu.edu.hk/arro/faqq/faqq_main.htm",
+    "answerable": false,
+    "applicable_year": "unknown",
+    "unanswerable_reason": "No public page can guarantee an individual's graduation timing: the pages only set the maximum period of study (8 years for a normative 4-year degree) and state that students who cannot complete within it must discontinue.",
+    "caveat": "Progress depends on the individual's own registration and grades, not on any page-level promise.",
+    "counter_evidence": [
+      {
+        "source": "faq",
+        "quote": "will be required to discontinue their studies"
+      }
+    ]
+  }
+]

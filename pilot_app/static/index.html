@@ -1,0 +1,2519 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <!-- Must equal THEME_COLORS.paper in app.js and theme_color in the manifest:
+       this is the address bar before the script runs and the colour the install
+       splash uses, so a stale value here is a blue flash over a paper-coloured app. -->
+  <meta name="theme-color" content="#1f1e1b">
+  <meta name="color-scheme" content="light dark">
+  <!-- crossorigin="use-credentials" is load-bearing, not decoration: without it
+       the browser fetches the manifest with credentials omitted, the server
+       cannot tell who is asking, and the install splash is stuck on the default
+       theme no matter what the user picked. (Verified with
+       Page.getAppManifest in tools/shell_check.js.) -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!-- 「加到主屏幕之后是不是独立窗口」取决于**这一页自己**有没有这几样，不只是 manifest。
+       iOS 会把缺 `apple-mobile-web-app-capable` 的主屏图标当成**书签**，在浏览器里打开
+       —— 2026-09-24 用户报的「iOS 装下来还是浏览器的样子」就是这个。
+       状态栏用 `default` 而不是 `black-translucent`：我们的样式没有处理顶部安全区，
+       让内容钻到状态栏下面会被裁掉。
+       **老图标不会自己升级**：改完要「删掉图标 → 重新添加」。 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Mail Pilot">
+  <title>CityU Mail Pilot</title>
+  <script src="/theme-boot.js"></script>
+{{HREFLANG}}
+  <style>
+    *,*::before,*::after{box-sizing:border-box}
+    :root{
+      /* Every colour in this stylesheet resolves to a token declared here, so a
+         theme is one block swap instead of a hunt for hard-coded hex values.
+         The values below are the original palette, unchanged. */
+      --navy:#123b63;--blue:#1769aa;--ink:#172b3a;--muted:#64748b;--line:#dbe3eb;
+      --bg:#f3f6f9;--card:#ffffff;--ok:#087a55;--warn:#8a6100;--bad:#b42318;
+      --ok-bg:#e8f5ef;--warn-bg:#fff8e8;--bad-bg:#fff1f0;--info-bg:#eaf4fc;--info-line:#b9d7ee;
+      /* text that sits on a light surface (--navy is dark, so it doubles as
+         body text on --card/--info-bg; dark themes point this at a light ink) */
+      --navy-ink:var(--navy);
+      --line-soft:#eef2f6;--surface-2:#f8fafc;--surface-3:#f7faff;--panel:#fbfdff;
+      --wizard-bg:#f4faff;--wizard-line:#8fb9d8;
+      --input-line:#b9c6d2;--input-bg:#ffffff;
+      --quiet-bg:#e8eef4;--tab-bg:#e7edf3;--track:#e6ecf2;--danger-line:#f5c4c0;
+      --ok-line:#cbe8d9;--ok-ink:#0a5c42;--warn-line:#f0d9a8;
+      --appbar-bg:var(--navy);--appbar-ink:#ffffff;--appbar-muted:#bcd7ea;
+      --nav-ink:#c9dcec;--nav-hover:rgba(255,255,255,.10);--nav-active-bg:#ffffff;--nav-active-ink:var(--navy);
+      --hero-a:#123b63;--hero-b:#1c5b8f;--hero-ink:#ffffff;--hero-kicker:#bcd7ea;
+      --hero-text:#e3f0fa;--hero-btn-bg:#ffffff;--hero-btn-ink:var(--navy);
+      --hero-done-a:#0a5c42;--hero-done-b:#12805e;
+      --card-shadow:0 3px 12px #123b6308;
+      --scrim:rgba(12,26,40,.42);
+      --on-accent:#ffffff;
+      --radius-control:8px;
+      --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+      --font-head:var(--font);
+      --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+      --page:720px;
+      --radius:12px;
+      --tabbar-h:56px;
+    }
+    html{-webkit-text-size-adjust:100%}
+    body{
+      margin:0;background-color:var(--bg);color:var(--ink);
+      font-family:var(--font);font-size:16px;line-height:1.55;
+      overflow-wrap:anywhere;word-break:break-word;
+    }
+    /* The background lives on its own fixed layer instead of using
+       background-attachment:fixed on <body>. Two reasons: Chromium sizes
+       `cover` against the element's own (very tall) box in that case, which
+       zooms the artwork several times over, and iOS Safari ignores
+       background-attachment entirely. A fixed element is unambiguously
+       viewport-sized on both. */
+    .bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;
+      background-image:var(--bg-image,none);background-repeat:no-repeat;
+      background-position:center top;background-size:cover}
+    h1,h2,h3{font-family:var(--font-head);line-height:1.3;margin:0}
+    p{margin:8px 0}
+    a{color:var(--blue)}
+    header.appbar{
+      background:var(--appbar-bg);color:var(--appbar-ink);padding:16px;
+      display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    }
+    header.appbar .brand{min-width:0}
+    header.appbar h1{font-size:18px}
+    header.appbar small{display:block;color:var(--appbar-muted);font-size:12px;margin-top:2px}
+    main{max-width:var(--page);margin:0 auto;padding:16px;width:100%}
+
+    /* ---- app shell ----
+       One navigation registry (NAV in app.js) is projected into a desktop
+       sidebar, a mobile bottom tab bar, and a drawer. CSS — not JS — decides
+       which surface is on screen, so crossing the breakpoint or rotating the
+       phone cannot leave a stale overlay behind. Before this, the only way to
+       reach any other section was ~2.5 phone screens of scrolling past the
+       dashboard to a tab strip that lived below the content. */
+    /* `100dvh` 优先：iOS Safari 的 `100vh` 把地址栏/工具栏那片也算进去，
+       于是「满屏」的容器比看得见的区域高一截（底部会顶出去）。老浏览器读不到 dvh，
+       留着 100vh 那行兜底 —— 顺序不能反。 */
+    .shell{display:flex;align-items:stretch;min-height:100vh;min-height:100dvh}
+    .shell-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+    .sidebar{display:none;flex:0 0 236px;background:var(--appbar-bg);color:var(--appbar-ink);
+             padding:18px 12px;position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto}
+    .sidebar-brand{margin:0 8px 16px}
+    .sidebar-brand strong{display:block;font-size:16px;line-height:1.3}
+    .sidebar-brand small{display:block;color:var(--appbar-muted);font-size:12px;margin-top:3px}
+    .navlist{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+    .navlist button{display:block;width:100%;text-align:left;background:transparent;border:0;
+                    color:var(--nav-ink);border-radius:9px;padding:11px 12px;font-size:15px;
+                    font-weight:600;min-height:46px;cursor:pointer;font-family:inherit}
+    .navlist button:hover{background:var(--nav-hover);color:var(--appbar-ink)}
+    .navlist button.active{background:var(--nav-active-bg);color:var(--nav-active-ink)}
+    .navlist button[aria-current="page"]{background:var(--nav-active-bg);color:var(--nav-active-ink)}
+    /* Keyboard users must be able to jump past the nav; it is invisible until
+       focused, which is the only reason :focus-only styling is acceptable. */
+    .skip-link{position:absolute;left:16px;top:-100px;z-index:60;background:var(--card);color:var(--ink);
+               border:1px solid var(--line);border-radius:9px;padding:10px 14px;font-weight:700}
+    .skip-link:focus{top:8px}
+    /* A fixed bottom bar must not cover the last row of content, and in an
+       installed iOS app it must also clear the home indicator. */
+    /* --tabbar-h is the *reserved* space as well as the bar's height. Deriving
+       both from one value is what stops the bar from covering the last row of
+       content: measuring the two separately drifts by a couple of pixels the
+       first time a border or a line-height changes, and the bug only shows on
+       the longest page. */
+    .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;
+            height:calc(var(--tabbar-h) + env(safe-area-inset-bottom,0px));
+            background:var(--card);border-top:1px solid var(--line);
+            box-sizing:content-box}
+    .tabbar button{flex:1 1 0;min-width:0;background:transparent;border:0;color:var(--muted);
+                   font-size:11.5px;font-weight:650;font-family:inherit;cursor:pointer;
+                   height:var(--tabbar-h);padding:6px 2px 4px;display:flex;flex-direction:column;
+                   align-items:center;justify-content:center;gap:2px}
+    .tabbar button .tab-icon{font-size:19px;line-height:1}
+    .tabbar button .tab-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+    .tabbar button.active{color:var(--blue)}
+    /* The count of today's still-open action items, on the 首页 destination.
+       Red on purpose -- it is the one nav element that means "you have
+       something to do" -- and it uses the same --bad / --on-accent pair as
+       every other negative chip, which every theme already pairs for
+       legibility (the dark themes use a light red with dark text). */
+    .nav-badge{display:inline-flex;align-items:center;justify-content:center;
+      min-width:17px;height:17px;padding:0 4px;border-radius:9px;
+      background:var(--bad);color:var(--on-accent);font-size:11px;font-weight:700;line-height:1}
+    /* On a phone the badge rides the icon's shoulder, which is where a count is
+       looked for; the sidebar and drawer have room to put it inline instead.
+       The shared .hidden rule already keeps it out of the way at zero. */
+    .tabbar button{position:relative}
+    .tabbar .nav-badge{position:absolute;top:1px;left:50%;margin-left:5px}
+    .navlist .nav-badge{margin-left:6px;vertical-align:middle}
+    .drawer-scrim{position:fixed;inset:0;z-index:50;background:var(--scrim)}
+    .drawer{position:fixed;left:0;right:0;bottom:0;z-index:51;background:var(--card);
+            border-top-left-radius:16px;border-top-right-radius:16px;
+            padding:14px 14px calc(18px + env(safe-area-inset-bottom,0px));
+            max-height:80vh;overflow-y:auto;box-shadow:var(--card-shadow)}
+    .drawer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .drawer .navlist button{color:var(--ink);min-height:50px}
+    .drawer .navlist button:hover{background:var(--surface-2)}
+    .drawer .navlist button.active{background:var(--navy);color:var(--on-accent)}
+    @media (max-width:899px){
+      .shell{padding-bottom:calc(var(--tabbar-h) + 1px + env(safe-area-inset-bottom,0px))}
+      .toasts{bottom:calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom,0px))}
+    }
+    @media (min-width:900px){
+      .sidebar{display:block}
+      .tabbar,.drawer,.drawer-scrim{display:none!important}
+      main{padding:20px 24px}
+      header.appbar{padding:14px 24px}
+    }
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px;box-shadow:var(--card-shadow)}
+    .card.narrow{max-width:440px;margin-left:auto;margin-right:auto}
+    .hidden{display:none!important}
+    /* `hidden` **属性**也是一条「别显示它」的指令，但它只是 UA 样式表里的一条
+       `display:none` —— 任何组件规则（`.actions{display:flex}`、`img{display:block}`）
+       都能盖过它，于是「设了 hidden 却还看得见」。2026-09-17 配图那一格就是这么露的：
+       「移除这张图」按了之后按钮还在（`.actions` 赢），对话框里没有配图时那个空 `<img>`
+       也照画。要让「隐藏」在组件规则面前算数，就得和 `.hidden` 一样带上 !important。 */
+    [hidden]{display:none!important}
+    .muted{color:var(--muted)}
+    .small{font-size:13px}
+    .tiny{font-size:12px;line-height:1.5}
+    .stack{display:grid;gap:10px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .spread{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    label{display:block;font-weight:650;margin-bottom:5px;font-size:14px}
+    input,select,textarea{
+      width:100%;border:1px solid var(--input-line);border-radius:var(--radius-control);padding:11px 12px;font:inherit;
+      background:var(--input-bg);color:inherit;min-width:0;
+    }
+    textarea{min-height:84px;resize:vertical}
+    button{
+      border:0;border-radius:var(--radius-control);padding:11px 16px;font:inherit;font-weight:700;cursor:pointer;
+      background:var(--blue);color:var(--on-accent);min-height:44px;
+    }
+    button.secondary{background:var(--quiet-bg);color:var(--navy-ink)}
+    button.ghost{background:var(--input-bg);color:var(--navy-ink);border:1px solid var(--line)}
+    button.danger{background:var(--bad-bg);color:var(--bad);border:1px solid var(--danger-line)}
+    button:disabled{cursor:not-allowed;opacity:.55}
+    .button-link{display:inline-flex;align-items:center;border-radius:var(--radius-control);padding:11px 16px;font-weight:700;text-decoration:none;background:var(--blue);color:var(--on-accent);min-height:44px}
+    .button-link.secondary{background:var(--quiet-bg);color:var(--navy-ink)}
+    .help{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.5}
+    /* 管理员备注刚保存成功那一句（app.js 里的 adminNoteSavedAt）。muted 灰在
+       「到底有没有反应」这个问题上等于没有信号，所以成功那一刻用 ok 色 ——
+       token，不写死颜色（不变量 6）。8 秒后 app.js 自己把它变回灰/空。 */
+    .adminnote .help.saved{color:var(--ok);font-weight:700}
+    /* 「你的邮件走这条路」：三段链，每段说清"这一段谁决定"。
+       不画图、不外链图片——纯 HTML，所以在任何宽度下都不会溢出，也不用维护二进制资源。 */
+    .mailpath{margin:14px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;
+      background:var(--surface-2)}
+    .mailpath h3{margin:0 0 4px;font-size:14px}
+    /* 编号不再让浏览器画 `<ol>` 的「1.」标记，而是明写成 `<span class="step">Step 1.</span>`
+       ——要的就是字面的「Step 1.」。`list-style:none` 会让 Safari 把列表语义一起丢掉，
+       所以 `<ol>` 上补一个 `role="list"`（读屏软件读到的仍是「列表，3 项」）。 */
+    .mailpath ol{margin:8px 0 0;padding-left:0;list-style:none}
+    .mailpath .step{font-weight:700}
+    .mailpath li{margin:0 0 10px;font-size:13.5px;line-height:1.55}
+    .mailpath li:last-child{margin-bottom:0}
+    /* 标签只有一层意思：**这两段你能改**（转发规则、报告邮件），中间那段是我们的开关。
+       所以"你的"用强调色、"我们的"保持中性——不要用绿色去标"你决定"，那会被读成
+       "这样是好的"。（第一版就是这么写的，截图上一眼就看出来了。） */
+    .mailpath .who{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;
+      font-size:11.5px;font-weight:700;letter-spacing:.02em;border:1px solid var(--line);
+      color:var(--muted);vertical-align:1px}
+    .mailpath .who.mine{color:var(--blue);border-color:var(--info-line);background:var(--info-bg)}
+    .mailpath .foot{margin:8px 0 0;font-size:12.5px;color:var(--muted)}
+    .actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:14px}
+    .status{padding:11px 13px;border-radius:9px;background:var(--info-bg);color:var(--navy-ink);margin:12px 0;font-size:14px}
+    /* Consent at the point of collection: the checkbox and the disclosure it
+       refers to must read as one block, so they share a bordered group and the
+       text stays at body size instead of the dimmer .help size. */
+    .consent{border:1px solid var(--line);border-radius:9px;padding:11px 13px;background:var(--surface-2)}
+    .consent .check,.checkgroup .check{display:flex;gap:9px;align-items:flex-start;font-size:14px;line-height:1.55;cursor:pointer}
+    .consent .check input,.checkgroup .check input{margin-top:3px;flex:0 0 auto;width:auto}
+    /* 手机上勾选框本身只有 13px，真正的手指落点是它的 label —— 而「最想先解决什么」
+       那四行 label 只有 21px 高。给 label 一个 44px 的最小高度（勾选框仍与文字对齐）。
+       `.consent`（同意条款那条）本来就是多行，够高，不动它。 */
+    @media (max-width:600px){
+      .checkgroup .check{min-height:44px;align-items:center}
+      .checkgroup .check input{margin-top:0}
+      .task-pick{min-height:44px;display:inline-flex;align-items:center}
+    }
+    .consent .help,.checkgroup .help{margin-top:7px;font-size:12.5px}
+    /* 注册时那三栏选填资料（2026-09-23 从首页申请表挪进来）。收起时只是一行字：
+       注册**不需要**它们，所以默认不占地方；展开才是三栏。 */
+    .register-extras{margin-top:10px;border:1px solid var(--line);border-radius:9px;
+      padding:10px 13px;background:var(--surface-2)}
+    /* 手机上给到 44px 高：它是「顺便告诉我们你是谁」那个折叠开关，13.5px 的字
+       只有 21px 高，手指点不准（触屏最小尺寸那条）。 */
+    .register-extras summary{cursor:pointer;font-size:13.5px;font-weight:650;display:flex;
+      align-items:center;min-height:44px}
+    .register-extras .aside{font-weight:500;color:var(--muted)}
+    .register-extras .stack{margin-top:10px}
+    #reg-goals .check{font-size:13.5px}
+    .footer-links{margin:22px 0 0;font-size:13px;color:var(--muted);text-align:center;line-height:1.8}
+    .install-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .install-how{margin-top:6px}
+    /* 手机上给到 44px 的可点高度：它是「怎么做」那个折叠开关，13px 的字只有 20px 高。 */
+    .install-how summary{font-size:13px;color:var(--muted);cursor:pointer;display:flex;
+      align-items:center;min-height:44px}
+    .install-how .help{margin-top:6px}
+    .status:empty{display:none}
+    .status.error{background:var(--bad-bg);color:var(--bad)}
+    /* Sits outside .shell on purpose: every view inside it gets hidden and
+       shown, and a warning that a view switch can hide is worth nothing.
+       Colours come from .status.error above, so all four themes get it free. */
+    .boot-warning{display:flex;gap:12px;align-items:center;justify-content:space-between;
+      margin:12px 16px 0;position:relative;z-index:5}
+    .boot-warning.hidden{display:none!important}
+    /* The demo strip on /demo. First child of the content area rather than a
+       fixed bar: a fixed one would need every view's top padding adjusted, and
+       the strip has to be impossible to scroll past by accident. Every colour
+       is a theme token, so all four themes get a readable version free. */
+    .demo-banner{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+      background:var(--warn-bg);color:var(--ink);border:1px solid var(--warn-line);
+      border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:14px;line-height:1.6}
+    .demo-banner strong{color:var(--warn)}
+    .demo-banner-cta{margin-left:auto;font-weight:600;color:var(--blue);white-space:nowrap}
+    .status.ok{background:var(--ok-bg);color:var(--ok)}
+    .status.warn{background:var(--warn-bg);color:var(--warn)}
+    /* Floating result notices for explicit actions (the refresh buttons, and
+       anything else that has no natural place to report back). Deliberately a
+       separate mechanism from .status above: .status is a permanent inline
+       line for a form, whereas a refresh has no inline home and the user is
+       left wondering whether the click did anything. Colours resolve to the
+       same tokens as .status, so every theme gets them for free. */
+    .toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:50;
+      display:flex;flex-direction:column;gap:8px;align-items:stretch;
+      width:calc(100% - 24px);max-width:520px;pointer-events:none}
+    .toast{pointer-events:auto;cursor:pointer;padding:11px 14px;border-radius:9px;
+      font-size:14px;line-height:1.45;background:var(--info-bg);color:var(--navy-ink);
+      border:1px solid var(--info-line);box-shadow:var(--card-shadow)}
+    .toast.ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-line)}
+    .toast.error{background:var(--bad-bg);color:var(--bad);border-color:var(--danger-line)}
+    .toast.warn{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-line)}
+    .progress{height:8px;border-radius:99px;background:var(--track);margin-top:12px;overflow:hidden}
+    .progress span{display:block;height:100%;width:0;background:var(--blue);transition:width .25s}
+    .hero{border-radius:var(--radius);padding:20px;background:linear-gradient(135deg,var(--hero-a),var(--hero-b));color:var(--hero-ink)}
+    .hero .kicker{font-size:12px;letter-spacing:.08em;color:var(--hero-kicker)}
+    .hero h2{font-size:21px;margin:8px 0 6px}
+    .hero p{color:var(--hero-text);margin:0 0 14px;font-size:14px}
+    .hero .button-link,.hero button{background:var(--hero-btn-bg);color:var(--hero-btn-ink)}
+    .hero.done{background:linear-gradient(135deg,var(--hero-done-a),var(--hero-done-b))}
+    .hero.warn{border-left:4px solid var(--warn)}
+    /* 「现在的状态」这块的外壳（默认收起）。`.card` 已经给了内边距，而 <summary>
+       自己也要一块可点的区域（min-height:44px 是手指能稳定点到的最小高度），
+       所以这里让它撑满卡片宽度、由 summary 自己提供内边距。
+
+       写成 `.card.status-panel` 而不是 `.status-panel` 是**必须的**：窄屏那段
+       media query 里还有一条 `.card{padding:15px}`，同权重、位置更靠后，所以
+       单写类名在手机上会被它盖掉——收起时白白多出 30px，而桌面端看不出来
+       （桌面实测 75px 正好等于摘要 + 边框，手机却是 105px）。多一个类名就把
+       权重提上去，且不依赖规则先后。 */
+    .card.status-panel{padding:0}
+    .status-panel > summary{cursor:pointer;list-style:none;min-height:44px;padding:12px 18px;
+      display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .status-panel > summary::-webkit-details-marker{display:none}
+    .status-panel > summary::marker{content:""}
+    .status-panel > summary::before{content:"\25B8";color:var(--muted);font-weight:700;flex:0 0 auto}
+    .status-panel[open] > summary::before{content:"\25BE"}
+    .status-panel[open] > summary{border-bottom:1px solid var(--line-soft)}
+    .status-title{font-size:16px;font-weight:700;flex:0 0 auto}
+    /* 这句话吃掉余下的宽度，于是「刷新」被推到最右边；窄屏上它会换行，
+       顺序仍是标题→结论→按钮。 */
+    .status-summary{flex:1 1 auto;min-width:0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+    .status-summary.ok{color:var(--ok)}
+    .status-summary.warn{color:var(--warn)}
+    .status-summary.bad{color:var(--bad);font-weight:650}
+    .status-panel > .chaingrid,.status-panel > .status{padding:0 18px 18px}
+    .status-panel > .chaingrid{margin-top:14px}
+    .status-panel > .status:empty{padding-bottom:0}
+    .chaingrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px;margin-top:12px}
+    .channel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+    .channel .spread{margin-bottom:6px}
+    .channel strong{font-size:14px}
+    .channel .dot{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--line-soft);color:var(--muted);white-space:nowrap}
+    .channel.ok .dot{background:var(--ok-bg);color:var(--ok)}
+    .channel.error .dot{background:var(--bad-bg);color:var(--bad)}
+    .channel.stale .dot,.channel.unknown .dot{background:var(--warn-bg);color:var(--warn)}
+    .channel.missing .dot{background:var(--line-soft);color:var(--bad)}
+    .channel.optional .dot{background:var(--line-soft);color:var(--muted)}
+    /* The per-account lights on the admin user list. A filled dot is the whole
+       indicator: green only when something actually succeeded for that account,
+       red otherwise -- including "never tried". The word beside it says which
+       red it is, because "没测过" and "测了但失败" need different actions from
+       whoever is reading, and one red word for both is a shrug.
+       The third state is grey, and it is not a softer red: 模型/搜索 on an
+       account that has no key of its own are not about anything its owner can
+       fix -- the instance's key serves it, and that is a supported configuration
+       the user's own dashboard already calls 「平台代付」. Drawn red, the two
+       lights could never be cleared by any click, which is how a status panel
+       teaches its reader to stop looking at it.
+       Colours come from the theme variables, never hard-coded, so all four
+       themes keep working (invariant #6). */
+    .lights{display:flex;flex-wrap:wrap;gap:7px 15px;margin:9px 0 2px}
+    .light{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);min-width:0}
+    .light .dot{width:10px;height:10px;border-radius:50%;flex:none;
+                background:var(--bad);box-shadow:0 0 0 2px var(--bad-bg)}
+    .light.ok .dot{background:var(--ok);box-shadow:0 0 0 2px var(--ok-bg)}
+    .light b{font-weight:600;color:var(--bad)}
+    .light.ok b{color:var(--ok)}
+    .light.shared .dot{background:var(--muted);box-shadow:0 0 0 2px var(--line-soft)}
+    .light.shared b{color:var(--muted)}
+    .light .why{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38ch}
+    /* The operator's private memo. Kept visually plain and set apart: it is the
+       one field on this panel that is *about* the user rather than *for* them. */
+    .adminnote{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
+    .adminnote label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+    .adminnote textarea{width:100%;min-height:52px;padding:9px 11px;font:inherit;font-size:14px;
+                        color:var(--ink);background:var(--input-bg);border:1px solid var(--input-line);
+                        border-radius:var(--radius-control);resize:vertical}
+    .adminnote .row{margin-top:7px}
+    /* 「自己选人发」那一列勾选行：一行一个人，点整行都能勾（label 包着 input）。 */
+    .pick-row{display:flex;align-items:center;gap:9px;padding:6px 0;font-size:13px;
+              border-top:1px solid var(--line-soft);cursor:pointer}
+    .pick-row input{flex:0 0 auto;width:16px;height:16px;accent-color:var(--blue)}
+    .tasklist,.activity{list-style:none;margin:0;padding:0}
+    .tasklist li,.activity li{padding:12px 0;border-top:1px solid var(--line-soft)}
+    .tasklist li:first-child,.activity li:first-child{border-top:0}
+    .task-action{font-weight:650}
+    /* The tick button is the whole point of this card, so it sits on the same
+       line as the badges rather than below them: on a phone it must be reachable
+       with a thumb without scrolling past the text that describes the task. */
+    .task-daybar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .task-daybar .help{margin-top:0}
+    .task-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+    .task-head .task-badges{flex:1 1 auto;min-width:0}
+    .task-item-actions{display:flex;gap:8px;flex:0 0 auto}
+    .task-item-actions button{padding:7px 12px;min-height:36px;font-size:13px}
+    /* 勾选 + 轻重缓急：和任务文字同一行，手机上 36px 起才点得准。 */
+    .task-pick{display:inline-flex;align-items:center;gap:6px;margin-right:2px}
+    .task-pick input{width:20px;height:20px;margin:0}
+    /* `height` 与 `min-height` 都写：**WebKit 对原生 `<select>` 不认 `min-height`，也不认
+       `padding`**（实测 iPhone 那一侧渲染成 21px，够不着），只写 min-height 的话这个
+       「每天要点一次」的控件在 iPhone 上就是颗小按钮。写了 height 两个引擎都听话，
+       又不用 `appearance:none`——那样箭头会没，得自己画一个。 */
+    .task-priority{width:auto;min-width:104px;height:36px;min-height:36px;font-size:13px;padding:6px 8px}
+    .task-export{border-top:1px solid var(--line-soft);padding-top:10px;margin-top:10px}
+    /* 「稍后提醒」：一颗按钮 + 一张贴着它的小菜单（三个预设 + 取消）。
+       菜单在**行内**展开而不是弹窗：手机上弹窗要处理遮挡、滚动与关闭三件事，
+       而这一行本来就是一叠卡片，展开一格是它们已经会做的事。
+       三个预设就是全部选项 —— **不做自定义时长输入框**（少一个能填错的地方，
+       理由见 docs/snooze-2026-09-23.md 的「不做」）。 */
+    .task-snooze{position:relative;display:inline-flex}
+    .task-snooze-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:6;
+                      display:flex;flex-direction:column;gap:6px;padding:9px;min-width:176px;
+                      background:var(--card);border:1px solid var(--line);
+                      border-radius:var(--radius);box-shadow:var(--card-shadow)}
+    .task-snooze-menu button{text-align:left;min-height:34px;font-size:13px}
+    /* 「X 回来」那颗胶囊：与优先级、截止同一排，所以形状跟着 .pill 走。 */
+    .pill.snoozed{background:var(--info-bg);color:var(--navy-ink)}
+    /* Handled tasks stay readable: they are evidence of work done, not noise to
+       be faded out. Only the tick button changes meaning. */
+    .tasklist.done .task-action{font-weight:600;color:var(--muted)}
+    .task-archived{font-size:12px;color:var(--muted);margin-top:4px}
+    /* 清单的筛选与排序。形状跟着主题变量走（不写死颜色），手机上 34px 起才点得准；
+       `aria-pressed` 既是样式钩子，也是给读屏软件的「现在选的是哪一个」。 */
+    .task-tools{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;margin:2px 0 8px}
+    .filters{display:flex;gap:6px;flex-wrap:wrap}
+    /* 筛选胶囊：桌面 34px 够用，手机上抬到 40px（触屏最小尺寸那条的下限是 44，
+       但这一排是密集的次要控件，40 是刻意的折中 —— 与下面 `.task-badges` 一致）。 */
+    .filters .chip{font:inherit;font-size:13px;line-height:1;padding:9px 13px;min-height:34px;
+                   border-radius:99px;border:1px solid var(--line);background:var(--surface-2);
+                   color:var(--muted);cursor:pointer}
+    .filters .chip[aria-pressed="true"]{border-color:var(--blue);background:var(--card);
+                                        color:var(--ink);font-weight:650}
+    /* 模型的一句话结论：它说的是「这封信在讲什么」，不是「你要做什么」（后者是上面那行
+       action）。所以字号小一档、左边一道细线，读起来像注解而不是第二句待办。 */
+    .task-why{border-left:2px solid var(--line);margin:7px 0 0;padding:1px 0 1px 10px;
+              font-size:13.5px;color:var(--muted)}
+    .history-day{display:block;width:100%;text-align:left;margin:6px 0;padding:9px 12px;
+                 background:var(--surface-2);border:1px solid var(--line);border-radius:9px;
+                 font-size:14px;cursor:pointer}
+    .history-day.current{border-color:var(--blue)}
+    .history-day .count{float:right;color:var(--muted)}
+
+    /* 截止日历。格子按**截止日**排，用的是和「导出到手机日历」同一个
+       `deadline_day_and_clock`，所以三处不会把同一条任务放在不同的日子上。
+       格子尺寸用 aspect-ratio 固定下来：有内容的日子会长出圆点，尺寸一变，
+       整片网格就会在刷新时抖动。 */
+    .cal-nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .cal-nav button{padding:6px 10px}
+    .cal-label{font-weight:600;font-size:14px;min-width:104px;text-align:center}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin-top:8px}
+    .cal-head{font-size:12px;color:var(--muted);text-align:center;padding:3px 0}
+    .cal-cell{position:relative;aspect-ratio:1/1;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:3px;padding:2px;min-width:0;
+      border:1px solid transparent;border-radius:10px;background:transparent;
+      font:inherit;font-size:14px;color:inherit;text-align:center}
+    .cal-cell.blank{visibility:hidden}
+    .cal-cell.today{background:var(--surface-2);font-weight:650}
+    .cal-cell.has{cursor:pointer}
+    .cal-cell.has:hover{background:var(--surface-2)}
+    /* 急事日期继续用报告里的红框；普通待办日期只留蓝点。
+       红色和边框粗细共同标出急事；`box-sizing:border-box` 是全局的，所以加粗
+       不改外层尺寸，整片网格不会跟着抖。 */
+    .cal-cell.urgent{border-color:var(--bad);border-width:2px}
+    .cal-cell.current{outline:2px solid var(--blue);outline-offset:1px}
+    /* 选中的急事日同时保留红色急事框和蓝色选中圈：两个状态各有自己的颜色。 */
+    .cal-cell.current.urgent{outline-color:var(--blue)}
+    .cal-dots{display:flex;gap:3px;align-items:center;min-height:6px}
+    .cal-dots i{width:6px;height:6px;border-radius:99px;display:inline-block}
+    .cal-dots .open{background:var(--blue)}
+    /* 急事：用的是报告里「高」同一个语义色 token（--bad），不是日历自己挑的颜色。只换颜色不换尺寸 ——
+       圆点一大，格子里的内容就会跟着上下跳。 */
+    .cal-dots .open.urgent{background:var(--bad)}
+    .cal-dots .done{background:var(--muted)}
+    .cal-meta{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;flex-wrap:wrap;margin-top:8px}
+    .cal-legend{font-size:12px;color:var(--muted)}
+    .cal-legend.warn{color:var(--warn)}
+    .cal-key{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px}
+    .cal-key span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+    .cal-key i{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--blue)}
+    .cal-key .done{background:var(--muted)}
+    .cal-key .urgent{background:var(--bad)}
+    .cal-hint{font-size:12px;color:var(--muted)}
+    .cal-event-form{margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)}
+    .cal-event-form label{display:block;margin-top:8px}
+    .cal-event-form input,.cal-event-form textarea,.cal-event-form select{max-width:100%;width:100%}
+    .cal-event-form input[type=checkbox]{width:auto}
+    .cal-event-form .actions{margin-top:12px;flex-wrap:wrap}
+    .cal-manual-done{margin-top:10px}
+    .cal-day{margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px}
+    .cal-day h3{font-size:14px;margin:0 0 6px}
+    .cal-item{display:flex;gap:10px;align-items:flex-start;padding:9px 0;
+      border-top:1px solid var(--line-soft)}
+    .cal-item:first-of-type{border-top:0}
+    .cal-item .body{flex:1;min-width:0}
+    /* 模型给出的行动里可能带一条很长的链接，而它没有可以断行的空格。`min-width:0`
+       只解决 flex 不肯收缩的问题，不肯断行的长串仍然会把整页撑出横向滚动 ——
+       app 别处（`.tasklist`）为同一个原因写了 `word-break`。 */
+    .cal-item .body > div{overflow-wrap:anywhere}
+    .cal-item .when{color:var(--muted);font-size:13px}
+    .cal-item .cal-complete{flex:0 0 auto;min-height:44px;padding:8px 12px}
+    .cal-item .cal-original{display:block;margin-top:4px;padding:8px 12px;min-height:44px;font-size:13px}
+    .pill{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--line-soft);color:var(--muted);margin-right:6px}
+    .pill.high{background:var(--bad-bg);color:var(--bad)}
+    .pill.medium{background:var(--warn-bg);color:var(--warn)}
+    .pill.low{background:var(--line-soft);color:var(--muted)}
+    .pill.deadline{background:var(--warn-bg);color:var(--warn)}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr));gap:10px}
+    .metrics div{background:var(--surface-2);border:1px solid var(--tab-bg);border-radius:10px;padding:12px}
+    .metrics b{display:block;font-size:19px;margin-top:3px}
+    #model-server-readings{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+    #model-server-readings b{font-size:16px;line-height:1.45;overflow-wrap:anywhere}
+    .metrics small{color:var(--muted);font-size:12px}
+    /* 「多少人是正常的」：这一屏的结论，跨整行、字号大两档（2026-09-24 用户：
+       「显示太多东西……我就想知道多少人是正常的」）。它必须**看起来像结论**，
+       否则又只是第九个小格子。 */
+    .metrics > .health-lead{grid-column:1/-1;padding:14px 16px}
+    .metrics > .health-lead .health-lead-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+    .metrics > .health-lead b{display:inline;font-size:32px;line-height:1.05;margin:0}
+    .metrics > .health-lead .health-lead-unit{font-size:15px;font-weight:650}
+    .metrics > .health-lead .help{margin-top:6px;font-size:12.5px}
+    /* 技术细节折叠块：它自己的 body 不该再套一层卡片（里面的格子才是卡片）。 */
+    .metrics > details.advanced{grid-column:1/-1;margin:0;background:transparent}
+    .metrics > details.advanced .body{background:transparent;border:0;padding:0}
+    details.advanced{border:1px solid var(--line);border-radius:10px;padding:0;margin:14px 0;background:var(--panel)}
+    details.advanced > summary{cursor:pointer;font-weight:650;color:var(--navy-ink);padding:13px 15px;list-style:none;min-height:44px;display:flex;align-items:center}
+    details.advanced > summary::-webkit-details-marker{display:none}
+    details.advanced > summary::after{content:"＋";margin-left:auto;color:var(--muted);font-weight:700}
+    details.advanced[open] > summary::after{content:"－"}
+    details.advanced .body{padding:0 15px 15px}
+    .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px}
+    .howto{margin:14px 0;padding:14px 16px;border-radius:10px;background:var(--surface-3);border:1px solid var(--line)}
+    /* 转发教程的截图。跟着列表走，不超出阅读列；点一下能看原图
+       （手机上截图里的菜单文字很小，放大看是必需的，不是锦上添花）。 */
+    .shot{margin:10px 0 14px;max-width:560px}
+    .shot img{display:block;width:100%;height:auto;border:1px solid var(--line);
+      border-radius:8px;background:var(--surface-3)}
+    .shot figcaption{font-size:12.5px;color:var(--muted);margin-top:5px}
+    .howto h3{font-size:14px;color:var(--navy-ink);margin-bottom:8px}
+    .howto ol{margin:0;padding-left:20px}
+    .howto li{margin:5px 0;font-size:13px}
+    .caution{margin:12px 0;padding:12px 15px;border-radius:10px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn);font-size:13px}
+    /* 死路变出路的那一格。配色沿用 .caution —— 这是个坏消息，不是错误对话框 ——
+       但它带按钮，而且必须把三步说清，所以它是 .caution 加一个动作区。 */
+    .switch-box{margin:12px 0;padding:12px 15px;border-radius:10px;background:var(--warn-bg);
+      border:1px solid var(--warn-line);border-left:3px solid var(--warn);color:var(--warn);font-size:13px}
+    .switch-box b{display:block;margin-bottom:4px}
+    .switch-box ol{margin:8px 0 0;padding-left:20px}
+    .switch-box li{margin:4px 0;color:var(--ink)}
+    .switch-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .switch-actions button{min-height:38px;padding:8px 14px;font-size:13.5px}
+    .switch-done{margin-top:10px;padding:9px 12px;border-radius:8px;
+      background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok-ink)}
+    .note{margin:12px 0;padding:12px 15px;border-radius:10px;background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok-ink);font-size:13px}
+    .jargon dt{font-weight:650;color:var(--navy-ink);margin-top:8px}
+    .jargon dd{margin:2px 0 0;font-size:13px;color:var(--muted)}
+    .forward-wizard{margin:16px 0;padding:16px;border:1px solid var(--info-line);border-radius:11px;background:var(--wizard-bg)}
+    .forward-wizard h3{font-size:16px;color:var(--navy-ink);margin-bottom:6px}
+    .forward-target{display:block;margin:10px 0;padding:11px 13px;border:1px dashed var(--wizard-line);border-radius:9px;background:var(--card);font-weight:700}
+    .forward-wizard ol{margin:12px 0 0;padding-left:22px}
+    .forward-wizard li{margin:7px 0;font-size:14px}
+    .saved{margin:10px 0;padding:10px 13px;border-radius:9px;font-size:13px;background:var(--ok-bg);border:1px solid var(--ok-line);color:var(--ok-ink)}
+    .saved.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}
+    .report{border-top:1px solid var(--line-soft);padding:16px 0}
+    .report:first-child{border-top:0}
+    .report h3{font-size:15px}
+    .report .report-body{margin-top:10px}
+    .report .report-body h4{font-size:13px;color:var(--navy-ink);margin:12px 0 4px}
+    .report .report-body p,.report .report-body li{font-size:14px;margin:5px 0}
+    .report .report-body ul{padding-left:20px}
+    /* The reader's own report list. Deliberately NOT the bordered .panel: at
+       thirty items a stack of cards is heavier than the content deserves, and
+       the whole point of collapsing them is to make the section scannable. */
+    /* 后台的账号卡：默认**全部收起**（用户原话：「一点开全部展开了，显得太杂乱了」）。
+       收起时留着四盏灯 —— 这一页存在的理由就是「谁卡在哪」，藏起来等于要他一一点开找。
+       手风琴（一次只开一个）在 app.js 里，重画后还认得开着的那一个。 */
+    .admin-user{padding:10px 2px;border-top:1px solid var(--line-soft)}
+    .admin-user:first-child{border-top:0}
+    .admin-user-top{display:flex;gap:10px;align-items:flex-start}
+    /* width:auto 是必须的：这个后台给 input 统一设了 width:100%（表单用），
+       勾选框跟着被拉成 758px 宽，把右边的 <details> 挤成了 0 宽 —— 于是整张卡
+       在 Playwright 眼里「不可见」，人眼看到的则是一个空行。 */
+    .admin-user-top > input[type=checkbox]{margin:7px 0 0;flex:0 0 auto;width:auto}
+    .admin-user-box{flex:1 1 auto;min-width:0}
+    .admin-user-box > summary{cursor:pointer;list-style:none;min-height:44px}
+    .admin-user-box > summary::-webkit-details-marker{display:none}
+    .admin-user-box > summary::marker{content:""}
+    .admin-user-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .admin-user-head::before{content:"\25B8";color:var(--muted);font-weight:700;flex:0 0 auto}
+    .admin-user-box[open] .admin-user-head::before{content:"\25BE"}
+    .admin-user-meta{margin-top:2px}
+    .admin-user-body{padding:2px 0 6px 18px}
+    /* 灯只有一份（在 summary 上）：收起时是「点 + 标签」，展开时同一份里
+       多出那半句「为什么」（「没测过」/「尚未配置邮箱」）。 */
+    .lights.compact{margin:0;gap:4px 12px}
+    .lights.compact .light{padding:2px 7px}
+    .admin-user-box:not([open]) .lights.compact .why{display:none}
+
+    .report-item{border-top:1px solid var(--line-soft)}
+    .report-item:first-child{border-top:0}
+    .report-item > summary{cursor:pointer;list-style:none;padding:12px 2px;min-height:46px;
+      display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+    .report-item > summary::-webkit-details-marker{display:none}
+    .report-item > summary::marker{content:""}
+    .report-item > summary::before{content:"\25B8";color:var(--muted);font-weight:700;flex:0 0 auto}
+    .report-item[open] > summary::before{content:"\25BE"}
+    .report-item > summary:hover .report-subject{color:var(--blue)}
+    .report-subject{font-weight:650;font-size:15px;flex:1 1 auto;min-width:0}
+    .report-meta{font-size:12.5px;color:var(--muted);flex:0 0 auto}
+    .report-item .report-body{padding:2px 0 14px}
+    /* One analysis, as the sections it was asked for. The block is a label plus
+       a list, not a paragraph: five run-on paragraphs per alert is what made
+       this panel unreadable. */
+    .analysis-section{margin:0 0 12px}
+    .analysis-head{font-size:12px;font-weight:700;color:var(--navy-ink);
+                   letter-spacing:.02em;margin-bottom:3px}
+    .analysis-items{margin:0;padding-left:20px}
+    .analysis-items li{font-size:14px;line-height:1.6;margin:3px 0}
+    .analysis-raw{font-size:14px;line-height:1.6;white-space:pre-wrap}
+    /* The mailbox wizard. Steps are numbered in the order the user actually has
+       to do them, and the progress strip answers "what is still missing?" --
+       the question four of seven stalled accounts could not answer from this
+       page, which is why they stalled. */
+    .setup-progress{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px}
+    .setup-pill{display:flex;align-items:center;gap:6px;font-size:12.5px;
+      padding:5px 10px;border-radius:999px;border:1px solid var(--line-soft);
+      background:var(--surface-3);color:var(--muted)}
+    .setup-pill.ok{color:var(--ok-ink);border-color:var(--ok-line)}
+    .setup-pill.todo{color:var(--warn);border-color:var(--warn-line)}
+    .setup-step{border-top:1px solid var(--line-soft);margin-top:18px;padding-top:14px}
+    .setup-step:first-of-type{border-top:0;padding-top:0}
+    .setup-step > h3{font-size:15px;margin-bottom:6px}
+    .why-box{margin:10px 0;padding:10px 13px;background:var(--wizard-bg);
+      border:1px solid var(--wizard-line);border-left:3px solid var(--blue);
+      border-radius:0 10px 10px 0}
+    .inline-code{font-weight:600;color:var(--navy-ink)}
+    .report-more{font-size:13px;color:var(--muted);margin-top:10px;display:flex;
+                 align-items:center;gap:10px;flex-wrap:wrap}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    @media (max-width:520px){
+      main{padding:12px}
+      .card{padding:15px;border-radius:10px}
+      .hero{padding:16px}
+      .hero h2{font-size:19px}
+      .hero .button-link,.hero button{width:100%;justify-content:center}
+      .chaingrid{grid-template-columns:1fr}
+      .grid2{grid-template-columns:1fr}
+    }
+    /* ---- responsive layout ----
+       Six tabs ask for a 150px basis each, so they used to wrap onto a second
+       row on every desktop width; below 560px the row scrolls instead of
+       squeezing or ellipsing the labels. On a wide screen the reading column
+       widens to 880px and the two shortest dashboard cards sit side by side, so
+       the page stops looking like a phone screenshot. */
+    /* ---- 外观主题 ----
+       用户可以在「外观」里自己选。每个主题只是把上面 :root 的 token
+       重新赋值一遍，所以新增/调整主题不需要动任何组件规则；两三条结构性规则
+       （毛玻璃、衬线标题、等宽数字）单独列在下面。
+       classic 保持原来的蓝白配色，作为默认值，不在这里重复声明。 */
+    html[data-theme="paper"] {
+      --bg:#f6f4ef; --card:#fffdfa; --ink:#1b1a17; --muted:#7c766c; --line:#e3ded2;
+      --line-soft:#efeae0; --navy:#1f4d3d; --navy-ink:#33312c;
+      --blue:#166b53; --on-accent:#ffffff;
+      --ok:#0f6b4d; --ok-bg:#e9f2ec; --ok-line:#cfe3d6; --ok-ink:#0d5b41;
+      --warn:#8a5a12; --warn-bg:#fbf3e2; --warn-line:#eddcc0;
+      --bad:#a8321f; --bad-bg:#fbeeeb; --danger-line:#eccdc7;
+      --info-bg:#eef2f0; --info-line:#d3ddd8;
+      --surface-2:#f4f1ea; --surface-3:#f8f6f1; --panel:#fbf9f5;
+      --wizard-bg:#f1f5f2; --wizard-line:#9dbfae;
+      --input-line:#cfc8ba; --input-bg:#fffdfa;
+      --quiet-bg:#ece8df; --tab-bg:#eeeae1; --track:#e6e1d6;
+      --appbar-bg:#1f1e1b; --appbar-ink:#f8f6f1; --appbar-muted:#b6ae9e; --nav-ink:#cfc7b8; --nav-hover:rgba(255,255,255,.08); --nav-active-bg:#f8f6f1; --nav-active-ink:#1f1e1b;
+      --hero-a:#1f4d3d; --hero-b:#2f6b54; --hero-ink:#f6f4ef;
+      --hero-kicker:#bcd6c8; --hero-text:#dce9e2;
+      --hero-btn-bg:#fffdfa; --hero-btn-ink:#1f4d3d;
+      --hero-done-a:#0d5b41; --hero-done-b:#157a58;
+      --card-shadow:0 1px 2px rgba(27,26,23,.06);
+      --radius:5px; --radius-control:4px;
+      --font-head:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif;
+      --bg-image:url("/bg-paper.png");
+      color-scheme:light;
+    }
+    html[data-theme="paper"] .hero { border-left:3px solid var(--blue); }
+    html[data-theme="paper"] .hero h2 { font-size:24px; letter-spacing:-.01em; }
+    html[data-theme="paper"] header.appbar strong { font-family:var(--font-head); font-size:19px; }
+    html[data-theme="paper"] .metrics b { font-family:var(--font-head); font-size:22px; }
+    html[data-theme="paper"] .navlist button, html[data-theme="paper"] .tabbar button { letter-spacing:.02em; }
+
+    html[data-theme="dusk"] {
+      --bg:#0a1120; --card:rgba(255,255,255,.055); --ink:#eaf1fa; --muted:#93a7c0;
+      --line:rgba(148,180,220,.20); --line-soft:rgba(148,180,220,.13);
+      --navy:#5ea1ff; --navy-ink:#e6eefb; --blue:#5ea1ff; --on-accent:#08101f;
+      --ok:#5fd0a4; --ok-bg:rgba(95,208,164,.14); --ok-line:rgba(95,208,164,.32); --ok-ink:#a9ecd0;
+      --warn:#f0b45e; --warn-bg:rgba(240,180,94,.14); --warn-line:rgba(240,180,94,.32);
+      --bad:#ff8674; --bad-bg:rgba(255,134,116,.14); --danger-line:rgba(255,134,116,.34);
+      --info-bg:rgba(94,161,255,.12); --info-line:rgba(94,161,255,.30);
+      --surface-2:rgba(255,255,255,.05); --surface-3:rgba(255,255,255,.04);
+      --panel:rgba(255,255,255,.035); --wizard-bg:rgba(94,161,255,.08);
+      --wizard-line:rgba(94,161,255,.34);
+      --input-line:rgba(148,180,220,.28); --input-bg:rgba(255,255,255,.05);
+      --quiet-bg:rgba(255,255,255,.08); --tab-bg:rgba(255,255,255,.06);
+      --track:rgba(255,255,255,.10);
+      --appbar-bg:rgba(9,15,28,.72); --appbar-ink:#eaf1fa; --appbar-muted:#95a9c2; --nav-ink:#a9bcd2; --nav-hover:rgba(255,255,255,.10); --nav-active-bg:rgba(255,255,255,.16); --nav-active-ink:#ffffff;
+      --hero-a:rgba(94,161,255,.26); --hero-b:rgba(94,161,255,.06); --hero-ink:#eef4fb;
+      --hero-kicker:#a8c4e8; --hero-text:#c6d7ea;
+      --hero-btn-bg:#5ea1ff; --hero-btn-ink:#08101f;
+      --hero-done-a:#12805e; --hero-done-b:#1aa377;
+      --card-shadow:0 12px 40px rgba(0,0,0,.35);
+      --radius:16px; --radius-control:10px;
+      --bg-image:url("/bg-dusk.png");
+      color-scheme:dark;
+    }
+    html[data-theme="dusk"] .card, html[data-theme="dusk"] header.appbar {
+      backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    }
+
+    html[data-theme="harbour"] {
+      --bg:#fbf4ea; --card:#fffdf9; --ink:#2a2118; --muted:#8b7c68; --line:#e8ddcb;
+      --line-soft:#f2ebde; --navy:#1f2a2e; --navy-ink:#3a2f24;
+      --blue:#c2410c; --on-accent:#ffffff;
+      --ok:#0f6b4d; --ok-bg:#eaf3ee; --ok-line:#d0e4d8; --ok-ink:#0d5b41;
+      --warn:#a16207; --warn-bg:#fbf0d9; --warn-line:#ecd9b0;
+      --bad:#b3261e; --bad-bg:#fbe9e7; --danger-line:#eec9c4;
+      --info-bg:#eef1f2; --info-line:#d5dcdd;
+      --surface-2:#f7efe3; --surface-3:#fcf7ef; --panel:#fdf9f3;
+      --wizard-bg:#eef3f4; --wizard-line:#9db3b8;
+      --input-line:#d9c9b2; --input-bg:#fffdf9;
+      --quiet-bg:#f1e7d8; --tab-bg:#f2ead9; --track:#eadfcc;
+      --appbar-bg:#243036; --appbar-ink:#f7f0e7; --appbar-muted:#c9b8a4; --nav-ink:#c9b8a4; --nav-hover:rgba(255,255,255,.09); --nav-active-bg:#f7f0e7; --nav-active-ink:#243036;
+      /* The app bar's gradient used to be written straight into the component
+         rule below, which is exactly what "components must not hard-code
+         colours" forbids. Same two values, now addressable. */
+      --appbar-a:#26333a; --appbar-b:#1b242a;
+      --hero-a:#fffdf9; --hero-b:#fffdf9; --hero-ink:#2a2118;
+      --hero-kicker:#c2410c; --hero-text:#5a4c3c;
+      --hero-btn-bg:#c2410c; --hero-btn-ink:#ffffff;
+      --hero-done-a:#0f6b4d; --hero-done-b:#12805e;
+      --card-shadow:none;
+      --radius:3px; --radius-control:2px;
+      --bg-image:url("/bg-harbour.png");
+      color-scheme:light;
+    }
+    html[data-theme="harbour"] header.appbar {
+      background:linear-gradient(180deg,var(--appbar-a),var(--appbar-b)); border-bottom:2px solid var(--blue);
+    }
+    html[data-theme="harbour"] .hero { border-bottom:4px solid var(--blue); }
+    html[data-theme="harbour"] .channel { border-left:3px solid var(--line); }
+    html[data-theme="harbour"] .navlist button, html[data-theme="harbour"] .pill { border-radius:0; }
+
+    html[data-theme="night"] {
+      --bg:#08090a; --card:#0f1113; --ink:#e7ebee; --muted:#6d7883; --line:#23282d;
+      --line-soft:#191d21; --navy:#2dd4bf; --navy-ink:#dfe5e9;
+      --blue:#2dd4bf; --on-accent:#04120f;
+      --ok:#4ade80; --ok-bg:rgba(74,222,128,.12); --ok-line:rgba(74,222,128,.28); --ok-ink:#a7f3c9;
+      --warn:#d6a13d; --warn-bg:rgba(214,161,61,.12); --warn-line:rgba(214,161,61,.30);
+      --bad:#f2604f; --bad-bg:rgba(242,96,79,.12); --danger-line:rgba(242,96,79,.30);
+      --info-bg:rgba(45,212,191,.10); --info-line:rgba(45,212,191,.26);
+      --surface-2:#14171a; --surface-3:#121517; --panel:#101315;
+      --wizard-bg:#0e1a19; --wizard-line:rgba(45,212,191,.30);
+      --input-line:#313840; --input-bg:#0b0d0f;
+      --quiet-bg:#1a1f24; --tab-bg:#15181c; --track:#1c2126;
+      --appbar-bg:#0a0c0e; --appbar-ink:#e7ebee; --appbar-muted:#6d7883; --nav-ink:#8b969f; --nav-hover:rgba(255,255,255,.07); --nav-active-bg:#e7ebee; --nav-active-ink:#0a0c0e;
+      --hero-a:#14171a; --hero-b:#14171a; --hero-ink:#e7ebee;
+      --hero-kicker:#2dd4bf; --hero-text:#a8b2bb;
+      --hero-btn-bg:#2dd4bf; --hero-btn-ink:#04120f;
+      --hero-done-a:#0f766e; --hero-done-b:#14b8a6;
+      --card-shadow:none;
+      --radius:8px; --radius-control:6px;
+      --bg-image:url("/bg-night.png");
+      color-scheme:dark;
+    }
+    html[data-theme="night"] .hero { border-left:3px solid var(--blue); }
+    html[data-theme="night"] .metrics b, html[data-theme="night"] .channel .dot {
+      font-family:var(--font-mono);
+    }
+
+    /* ---- 全体广播（用户首页最上方） ----
+       一个 600px 以内的卡片，只用一个字号；GitHub Primer 的 Banner 指引明确
+       "不要在一页上放两个 banner"、"消息要简短、不要用标题层级堆字号"，
+       所以这里同时只会有一条公告，且管理员撤下即消失。 */
+    .modal-open { overflow:hidden; }
+    .announce { border:1px solid var(--info-line); border-left:5px solid var(--blue);
+      background:var(--info-bg); border-radius:var(--radius); padding:14px 16px; margin-bottom:14px; }
+    .announce.warn { border-color:var(--warn-line); border-left-color:var(--warn); background:var(--warn-bg); }
+    .announce.critical { border-color:var(--danger-line); border-left-color:var(--bad); background:var(--bad-bg); }
+    .announce .tag { font-size:11px; font-weight:700; letter-spacing:.08em; color:var(--muted); }
+    .announce h3 { font-size:15px; margin:4px 0 6px; }
+    .announce p { margin:0 0 8px; font-size:14px; line-height:1.6; white-space:pre-wrap; }
+    .announce .foot { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .announce .foot .help { margin:0; }
+    .announce button { min-height:36px; padding:7px 14px; font-size:13px; }
+
+    /* 全体广播的对话框：盖住整页，直到点「确认收到」。 */
+    .announce-modal { position:fixed; inset:0; z-index:60; display:flex;
+      align-items:center; justify-content:center; padding:18px;
+      background:var(--scrim); }
+    .announce-modal .announce-card { max-width:520px; width:100%; max-height:80vh; overflow:auto;
+      border:1px solid var(--info-line); border-left:5px solid var(--blue);
+      background:var(--panel); border-radius:var(--radius);
+      padding:18px 20px; box-shadow:var(--card-shadow); }
+    .announce-modal .announce-card.warn { border-color:var(--warn-line); border-left-color:var(--warn); background:var(--warn-bg); }
+    .announce-modal .announce-card.critical { border-color:var(--danger-line); border-left-color:var(--bad); background:var(--bad-bg); }
+    .announce-modal .tag { font-size:11px; font-weight:700; letter-spacing:.08em; color:var(--muted); }
+    .announce-modal h3 { font-size:17px; margin:6px 0 8px; }
+    .announce-modal p { margin:0 0 12px; font-size:15px; line-height:1.7; white-space:pre-wrap; }
+    /* 配图：宽度跟着卡片走，高度按比例，绝不把卡片撑出自己的滚动区。
+       卡片自己有 max-height:80vh + overflow:auto，所以一张很高的图会让人滚卡片而不是
+       滚丢按钮 —— 那颗「确认收到」是唯一出口，不能被顶到看不见的地方。 */
+    .announce-modal img#announcement-image { display:block; width:100%; max-width:100%;
+      height:auto; border-radius:10px; margin:0 0 12px; }
+    #broadcast-image-preview { margin:10px 0 0; }
+    #broadcast-image-preview img { display:block; max-width:260px; height:auto;
+      border-radius:8px; border:1px solid var(--line); }
+    .announce-modal .foot { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+
+    /* 「看原信」的阅读面板：借广播对话框那套外壳（同一层、同一个遮罩、同一张卡），
+       但正文**只是纯文本**：原信是别人写的 HTML，把它注进我们的页面等于让陌生人
+       往我们的 DOM 里放东西。服务端已经剥掉了标签，这里再 pre-wrap 显示。 */
+    #original-body { margin:0 0 12px; font-size:14px; line-height:1.65; white-space:pre-wrap;
+      word-break:break-word; max-height:46vh; overflow:auto; padding:10px 12px;
+      border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+    #original-meta { color:var(--muted); font-size:13px; margin:0 0 10px; }
+    /* 翻译/总结的结果：和正文分开一块，标题写明是哪一种、由哪个模型做的。 */
+    #original-assist { margin:0 0 12px; }
+    #original-assist-text { margin:6px 0 0; font-size:14px; line-height:1.7; white-space:pre-wrap;
+      word-break:break-word; max-height:40vh; overflow:auto; padding:10px 12px;
+      border:1px solid var(--info-line); border-left:4px solid var(--blue);
+      border-radius:8px; background:var(--info-bg); }
+    #original-assist-actions { margin:0 0 12px; flex-wrap:wrap; }
+    /* 「这次没翻出来」「可能被截断」：不许长得像正文的一部分，也不许红得像报错。 */
+    #original-assist-note { margin:8px 0 0; font-size:12.5px; color:var(--muted); }
+    #original-look { margin:0 0 10px; padding-left:18px; }
+    #original-look li { margin:0 0 4px; }
+    #original-look a { color:var(--blue); }
+    .announce-modal #original-note { font-size:12.5px; color:var(--muted); }
+    .announce-modal .foot .help { margin:0; }
+    .announce-modal button { min-height:40px; padding:9px 18px; font-size:14px; }
+
+    /* ---- 折叠面板（管理后台） ----
+       原生 <details>/<summary>：默认收起、键盘可用、无 JS 依赖。
+       收起时摘要行仍然带着当前数字，所以折叠藏起来的是细节，不是信号。 */
+    .panel { border:1px solid var(--line); border-radius:var(--radius); margin-top:12px;
+      background:var(--card); overflow:hidden; }
+    .panel > summary { cursor:pointer; list-style:none; padding:13px 15px; min-height:48px;
+      display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+    .panel > summary::-webkit-details-marker { display:none; }
+    .panel > summary::marker { content:""; }
+    .panel > summary::before { content:"▸"; color:var(--muted); font-weight:700; }
+    .panel[open] > summary::before { content:"▾"; }
+    .panel[open] > summary { border-bottom:1px solid var(--line-soft); background:var(--surface-2); }
+    .panel > summary:hover { background:var(--surface-2); }
+    .panel-title { font-size:15px; font-weight:700; }
+    .panel-note { font-size:13px; color:var(--muted); margin-left:auto; text-align:right; }
+    .panel-note.warn { color:var(--warn); font-weight:700; }
+    .panel-note.bad { color:var(--bad); font-weight:700; }
+    .panel-body { padding:14px 15px 16px; }
+
+    /* ---- token 消耗与花费（管理后台） ---- */
+    .userow { border-top:1px solid var(--line-soft); }
+    .userow:first-child { border-top:0; }
+    .userow > summary { cursor:pointer; list-style:none; padding:11px 2px; min-height:44px;
+      display:grid; grid-template-columns:minmax(0,1fr) auto auto auto; gap:12px; align-items:center; }
+    .userow > summary::-webkit-details-marker { display:none; }
+    .userow > summary::marker { content:""; }
+    .userow[open] > summary { background:var(--surface-2); }
+    .userow .who { overflow-wrap:anywhere; }
+    .userow .cost { font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap; }
+    .userow .tokens { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    /* The refresh bar stays put: this console is a long stack of panels, and a
+       page-wide action that scrolls out of reach may as well not exist -- which
+       is how "just reload the app" became the habit this button replaces. */
+    .admin-refresh-bar { position:sticky; top:0; z-index:5; align-items:center; gap:10px;
+      padding:8px 2px; margin:0 0 6px; background:var(--bg);
+      border-bottom:1px solid var(--line-soft); }
+    /* 「需要你处理」那一行。每一项是一个按钮（点开对应面板），所以样式上要看得出来
+       可以点，同时不像危险操作 —— 它不是警告，是一张待办清单。 */
+    .admin-attention { margin:0 0 12px; font-size:14.5px; line-height:1.7; }
+    .admin-attention .calm { color:var(--muted); font-size:14px; }
+    .admin-attention button { font:inherit; font-size:14px; margin:0 6px 4px 0; padding:3px 10px;
+      border:1px solid var(--line); border-radius:999px; background:var(--surface-2);
+      color:var(--ink); cursor:pointer; }
+    .admin-attention button:hover { border-color:var(--navy); }
+    .admin-attention button.warn { border-color:var(--warn-line); background:var(--warn-bg); color:var(--warn); }
+    .admin-attention button.fresh { border-color:var(--navy); font-weight:600; }
+    /* 「上次打开之后」那一句：不是待办，所以不加药丸底色，只用一点强调色，
+       和上面那排按钮区分开。 */
+    .admin-attention .happened { color:var(--navy-ink); font-weight:600; }
+    .usebreak { padding:0 2px 14px; }
+    .usebreak h4 { font-size:13px; color:var(--navy-ink); margin:12px 0 6px; }
+    .usebreak table { width:100%; border-collapse:collapse; font-size:13px; }
+    .usebreak th, .usebreak td { text-align:right; padding:5px 6px; border-bottom:1px solid var(--line-soft);
+      font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .usebreak th:first-child, .usebreak td:first-child { text-align:left; white-space:normal; }
+    .usebreak th { color:var(--muted); font-weight:600; }
+    .pricegrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr)); gap:10px; margin-top:10px; }
+
+    /* ---- 全部邮件列表（管理后台） ---- */
+    .maillist { margin-top:6px; }
+    .mailrow { border-top:1px solid var(--line-soft); }
+    .mailrow:first-child { border-top:0; }
+    .mailrow > summary { cursor:pointer; list-style:none; padding:10px 2px; min-height:44px;
+      display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; }
+    .mailrow > summary::-webkit-details-marker { display:none; }
+    .mailrow > summary::marker { content:""; }
+    .mailrow .when { color:var(--muted); font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .mailrow .who { color:var(--muted); font-size:12px; margin-top:2px; }
+    .mailrow .title { min-width:0; overflow-wrap:anywhere; }
+    .mailrow[open] > summary { background:var(--surface-2); }
+    .mailstate { font-size:12px; font-weight:700; padding:3px 9px; border-radius:99px; white-space:nowrap; }
+    .mailstate.sent { background:var(--ok-bg); color:var(--ok); }
+    .mailstate.failed { background:var(--bad-bg); color:var(--bad); }
+    .mailstate.skipped { background:var(--line-soft); color:var(--muted); }
+    .mailstate.pending, .mailstate.generated { background:var(--warn-bg); color:var(--warn); }
+    .maildetail { padding:0 2px 14px; }
+    .maildetail dl { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; margin:0; font-size:13px; }
+    .maildetail dt { color:var(--muted); }
+    .maildetail dd { margin:0; overflow-wrap:anywhere; }
+
+    /* ---- 服务器实时指标（管理后台） ---- */
+    .metricgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,158px),1fr)); gap:10px; margin-top:12px; }
+    .metriccard { background:var(--surface-2); border:1px solid var(--line);
+      border-radius:var(--radius-control); padding:10px 12px; }
+    .metriccard small { display:block; color:var(--muted); font-size:12px; }
+    .metriccard b { display:block; font-size:19px; margin-top:2px; font-variant-numeric:tabular-nums; }
+    .metriccard .spark { height:26px; margin-top:6px; color:var(--blue); }
+    .metriccard .spark svg { display:block; width:100%; height:26px; }
+    .metriccard.warn .spark { color:var(--warn); }
+    .metriccard.bad .spark { color:var(--bad); }
+    .bar { height:6px; border-radius:99px; background:var(--track); margin-top:8px; overflow:hidden; }
+    .bar i { display:block; height:100%; width:0; background:var(--blue); transition:width .3s; }
+    .metriccard.warn .bar i { background:var(--warn); }
+    .metriccard.bad .bar i { background:var(--bad); }
+
+    /* ---- 外观选择器 ---- */
+    .theme-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr)); gap:10px; margin-top:12px; }
+    .theme-card { text-align:left; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-control);
+      padding:10px; cursor:pointer; min-height:0; font-weight:400; color:var(--ink); }
+    .theme-card:hover { border-color:var(--navy); }
+    .theme-card.on { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
+    .theme-card b { display:block; font-size:13px; font-weight:700; margin-top:8px; }
+    .theme-card small { display:block; font-size:11px; color:var(--muted); line-height:1.45; margin-top:2px; }
+    .swatch { display:flex; height:34px; border-radius:calc(var(--radius-control) - 2px); overflow:hidden; border:1px solid var(--line); }
+    .swatch i { flex:1; }
+    .bg-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .bg-chip { background:var(--surface-2); border:1px solid var(--line); color:var(--ink); border-radius:999px;
+      padding:7px 14px; font-size:13px; font-weight:600; min-height:0; cursor:pointer; }
+    .bg-chip.on { background:var(--navy); color:var(--appbar-ink); border-color:var(--navy); }
+    /* The file input is styled out of the way rather than hidden with
+       display:none: a display:none input cannot be reached by keyboard, and the
+       label that stands in for it has to keep its focus ring. */
+    .file-button { display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+      min-height:38px; padding:0 16px; border-radius:var(--radius-control); font-size:14px; font-weight:600;
+      border:1px solid var(--line); background:var(--surface-2); color:var(--ink); }
+    .file-button:hover { border-color:var(--navy); }
+    .bg-photo-preview { margin:12px 0 4px; }
+    .bg-photo-preview img { display:block; max-width:100%; width:100%; max-height:200px; object-fit:cover;
+      border:1px solid var(--line); border-radius:var(--radius-control); }
+    .bg-photo-preview figcaption { font-size:12.5px; color:var(--muted); margin-top:6px; }
+    @media (min-width:1024px){
+      :root{--page:880px}
+      #dashboard{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}
+      #dashboard > *{grid-column:1 / -1}
+      #dashboard > div:nth-child(3){grid-column:1}
+      #dashboard > div:nth-child(4){grid-column:2}
+    }
+  
+  /* 语言切换器（2026-09-23）。颜色只走 currentColor / 继承，不写死任何色值：
+     组件规则里不许写死颜色（不变量 6），而这一小块要同时活在介绍页（浅底）、
+     应用外壳（深色 appbar 与浅色卡片都有）和法规页三种底色上。 */
+  .lang-switch{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+  .lang-switch-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .lang-switch select{font:inherit;font-size:13px;padding:4px 6px;border-radius:8px;
+    border:1px solid currentColor;background:transparent;color:inherit;opacity:.9}
+  .lang-switch button{font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;
+    border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
+  /* 手机上 ≥16px：低于 16px 的控件在 iOS Safari 里**一聚焦就把整页放大**（那条自动缩放
+     规则只认字号，不认你有什么理由用 13px）。高度同时给到 40px —— 13px 的胶囊只有 28px 高，
+     手指点不准。桌面仍是 13px 的小胶囊。 */
+  @media (max-width:600px){
+    /* `height` 与 `min-height` **两个都写**：Safari（WebKit）不给 `<select>` 认
+       `min-height` —— 只写 min-height 的话它在 iPhone 上仍然是 23px 高（2026-09-23
+       跑 WebKit 那一遍量到的，chromium 上完全看不出来）。 */
+    .lang-switch select{font-size:16px;padding:10px 10px;min-height:44px;height:44px}
+    .lang-switch button{font-size:16px;min-height:44px;height:44px}
+  }
+
+  /* ---------------------------------------------- 手机端可点尺寸（2026-09-23 体检）
+     逐页在 320/360/375/390/414 上量的：这些控件在手机上低于 44px（苹果/谷歌的触屏
+     最小尺寸），而它们都是要手指点的东西。桌面尺寸一概不动 —— 这些只写在 ≤600px。 */
+  @media (max-width:600px){
+    /* 待办每一行的那几颗按钮（处理好了 / 看原信 / 稍后提醒 / 优先级下拉）是**这个
+       应用最主要的手指动作**，桌面 36px 在手机上偏小 —— 抬到 44px。 */
+    .task-item-actions button{min-height:44px}
+    .task-priority{height:44px;min-height:44px}
+    .task-snooze-menu button{min-height:44px}
+    .announce button{min-height:44px}
+    .filters .chip{min-height:44px}
+    /* `<select>` 要 `height` 与 `min-height` 两个都写：Safari（WebKit）不认 min-height，
+       只写 min-height 的话注册那张表单里选身份的下拉在 iPhone 上只有 23px 高
+       （chromium 上完全看不出来 —— 2026-09-23 跑 WebKit 那一遍才量到）。 */
+    select{min-height:44px;height:44px;font-size:16px}
+    /* 下拉同理：13px 的字号在 iOS 上聚焦会放大整页，所以手机上直接给 16px。 */
+    .task-badges select,.task-badges .select{min-height:44px;font-size:16px}
+    .task-priority{font-size:16px}
+    .demo-banner-cta{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}
+    .footer-links a{display:inline-block;padding:10px 2px;min-height:44px;line-height:22px}
+    .tabbar button{min-height:var(--tabbar-h)}
+  }
+
+  /* ---------------------------------------------- 手机端：正文里的行内链接也要点得到
+     2026-09-23 体检的收尾：`《隐私政策》` 这类链接夹在句子里，只有 17–36px 高。
+     行内元素加纵向 `padding` **不会**改变行高（文字位置一个字不动），但会把可点区域
+     撑到 44px —— 这正是手机需要的。桌面不加（鼠标不需要这么大的热区，加了反而容易误触）。 */
+  @media (max-width:600px){
+    p a, li a, td a, dd a, .help a, label a, .check a, summary a{display:inline-block;padding:13px 2px}
+  }
+    /* Admin workspace: theme tokens only; existing panels and permissions stay intact. */
+    #section-admin{position:relative}
+    .admin-workspace-nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;margin:20px 0 14px}
+    .admin-workspace-nav button{background:transparent;color:var(--muted);border:0;box-shadow:none;padding:10px 14px;border-radius:8px;font-size:13px}
+    .admin-workspace-nav button[aria-pressed="true"]{background:var(--info-bg);color:var(--blue);font-weight:700}
+    .admin-workspace-heading{padding:8px 0 16px;border-bottom:1px solid var(--line);margin-bottom:16px}
+    .admin-workspace-heading h3{font-size:22px;margin:0 0 6px;color:var(--ink)}
+    .admin-workspace-heading p{margin:0;color:var(--muted);font-size:13px}
+    #section-admin .admin-page-hidden{display:none!important}
+    #section-admin>details.panel{background:var(--card);border-radius:12px;margin:14px 0}
+    #section-admin>details.panel>summary{padding:17px 18px}
+    @media(max-width:600px){.admin-workspace-nav{flex-wrap:nowrap;overflow-x:auto}.admin-workspace-nav button{flex-shrink:0;padding:10px}.admin-workspace-heading h3{font-size:19px}}
+    /* Reference-style admin surface. Ephemeral, never changes the user's saved theme. */
+    html[data-admin-console="true"]{
+      --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;--font-head:var(--font);
+      --bg:#ffffff;--card:#ffffff;--ink:#25282d;--muted:#85888d;--line:#ededf0;--line-soft:#f1f1f3;
+      --blue:#589edc;--navy:#25282d;--navy-ink:#25282d;--surface-2:#fcfcfd;--surface-3:#f8fafc;--panel:#ffffff;
+      --info-bg:#eaf4fc;--info-line:#dceaf6;--input-bg:#ffffff;--input-line:#ececf0;--quiet-bg:#f7f7f9;
+      --appbar-bg:#ffffff;--appbar-ink:#25282d;--appbar-muted:#85888d;--nav-ink:#41454a;
+      --nav-hover:#f7f8fa;--nav-active-bg:#eaf4fc;--nav-active-ink:#458ccb;--card-shadow:0 1px 3px #00000008;
+      --radius-control:18px;--on-accent:#ffffff;
+    }
+    html[data-admin-console="true"] body{background:var(--bg);background-image:none;font-family:var(--font)}
+    html[data-admin-console="true"] .bg-layer{display:none}
+    html[data-admin-console="true"] .sidebar{flex-basis:208px;padding:20px 16px;border-right:1px solid var(--line);background:var(--card);color:var(--ink)}
+    html[data-admin-console="true"] .sidebar-brand{margin:0 8px 24px}
+    html[data-admin-console="true"] .sidebar-brand strong{font-size:15px;font-family:var(--font)}
+    html[data-admin-console="true"] .sidebar-brand strong::before{content:'◇';color:var(--blue);font-size:20px;vertical-align:middle;margin-right:6px}
+    html[data-admin-console="true"] .sidebar-brand small{font-size:11px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] .navlist{gap:3px}
+    html[data-admin-console="true"] .navlist button{font-family:var(--font);font-size:13px;font-weight:450;min-height:34px;padding:7px 10px;border-radius:12px;letter-spacing:0}
+    html[data-admin-console="true"] header.appbar{background:var(--card);color:var(--ink);border-bottom:1px solid var(--line);padding:10px 20px;box-shadow:none;min-height:56px}
+    html[data-admin-console="true"] header.appbar h1{font-family:var(--font);font-size:15px}
+    html[data-admin-console="true"] header.appbar small{font-size:10px}
+    html[data-admin-console="true"] header.appbar .row{gap:8px}
+    html[data-admin-console="true"] header.appbar button,html[data-admin-console="true"] header.appbar .button-link{font-size:12px;padding:6px 12px;min-height:30px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:16px}
+    html[data-admin-console="true"] main{max-width:none;padding:0 8px 8px 0;margin:0;width:100%}
+    html[data-admin-console="true"] #section-admin{padding:20px 18px;background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:var(--card-shadow);min-height:calc(100dvh - 68px)}
+    html[data-admin-console="true"] #section-admin>h2{display:none}
+    html[data-admin-console="true"] .admin-refresh-bar{float:right;margin:0;gap:10px;position:relative;z-index:1}
+    html[data-admin-console="true"] #admin-refreshed{font-size:10px}
+    html[data-admin-console="true"] #section-admin>p.help{font-size:10px;margin:6px 0 12px}
+    html[data-admin-console="true"] .admin-workspace-heading{padding:0 0 15px;margin:0;border:0;min-height:52px}
+    html[data-admin-console="true"] .admin-workspace-heading h3{font-size:19px;font-family:var(--font);padding-right:210px}
+    html[data-admin-console="true"] .admin-workspace-heading p{font-size:11px;max-width:680px}
+    html[data-admin-console="true"] .admin-attention{font-size:11px;margin:6px 0;padding:8px 10px}
+    html[data-admin-console="true"] .admin-workspace-nav{background:transparent;border:0;padding:0;gap:3px;margin:24px 0;flex-direction:column}
+    html[data-admin-console="true"] .admin-workspace-nav::before{content:'管理员';font-size:11px;color:var(--muted);padding:0 10px 8px}
+    html[data-admin-console="true"] .admin-workspace-nav button{font-size:13px;font-family:var(--font);font-weight:450;text-align:left;padding:8px 10px;border-radius:12px;min-height:34px}
+    html[data-admin-console="true"] .admin-workspace-nav button::before{content:attr(data-icon);display:inline-block;width:22px;font-size:16px}
+    html[data-admin-console="true"] #section-admin>details.panel{border:1px solid var(--line);border-radius:16px;box-shadow:none;margin:12px 0}
+    html[data-admin-console="true"] #section-admin .panel-title{font-size:13px;font-family:var(--font)}
+    html[data-admin-console="true"] #section-admin .panel-note{font-size:11px}
+    html[data-admin-console="true"] #section-admin button{font-family:var(--font);font-size:12px;min-height:30px;padding:6px 12px;border-radius:18px;box-shadow:var(--card-shadow)}
+    html[data-admin-console="true"] #section-admin input:not([type=checkbox]),html[data-admin-console="true"] #section-admin select{font-size:12px;padding:7px 12px;min-height:32px;border:1px solid var(--line);border-radius:18px;background:var(--card)}
+    html[data-admin-console="true"] #section-admin .metrics{gap:12px}
+    html[data-admin-console="true"] #section-admin .metrics>div{border-radius:14px;border:1px solid var(--line);background:var(--card);box-shadow:none}
+    html[data-admin-console="true"] #admin-health>.health-lead>div{border:0;background:transparent;padding:0;border-radius:0}
+    html[data-admin-console="true"] #admin-health>.health-lead b{font:600 28px/1.3 var(--font)}
+    .admin-metric-note{display:block;font-size:11px;color:var(--muted);line-height:1.6;margin-top:8px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics>div{padding:16px;min-width:0}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics small{font-size:11px;line-height:1.5;display:block;min-height:17px}
+    html[data-admin-console="true"] #section-admin .admin-health-metrics b{font:600 26px/1.3 var(--font);margin-top:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+    html[data-admin-console="true"] #panel-users[open]{border:0;margin-top:4px}
+    html[data-admin-console="true"] #panel-users[open]>summary{display:none}
+    html[data-admin-console="true"] #section-admin>#panel-users[open]{border-radius:22px}
+    html[data-admin-console="true"] #panel-users>.panel-body{padding:22px}
+    html[data-admin-console="true"] #admin-users{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin:16px 0}
+    html[data-admin-console="true"] #admin-users .admin-user{border:1px solid var(--line);border-radius:20px;padding:22px;background:var(--card);box-shadow:none;margin:0}
+    html[data-admin-console="true"] .admin-user-head{gap:10px}
+    html[data-admin-console="true"] .admin-user-head strong{font-size:13px;overflow-wrap:anywhere}
+    html[data-admin-console="true"] .admin-user-meta{font-size:10px;line-height:1.7;margin-top:12px}
+    html[data-admin-console="true"] .admin-user-head .lights{flex-basis:100%;font-size:11px}
+    html[data-admin-console="true"] #admin-users.admin-list-view{display:block}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user{border-radius:0;padding:12px 16px;border-bottom:0}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user:last-child{border-bottom:1px solid var(--line);border-radius:0 0 12px 12px}
+    html[data-admin-console="true"] #admin-users.admin-list-view .admin-user-head .lights{flex-basis:auto;margin-left:auto}
+    .admin-user-help{margin:0 0 20px;font-size:11px;color:var(--muted);padding:13px 18px;border:1px solid var(--line);border-radius:18px;line-height:1.6}
+    .admin-user-help>summary{cursor:pointer;list-style:none}
+    .admin-view-controls{display:flex;justify-content:flex-end;gap:4px;margin:8px 0}
+    html[data-admin-console="true"] .admin-view-controls{margin:0 0 0 auto;align-self:end;gap:4px}
+    .admin-users-search{gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0}
+    .admin-search-field{margin:0;flex:1 1 280px;min-width:0}
+    .admin-search-field>span{display:block;font-size:11px;font-weight:500;margin-bottom:6px;color:var(--muted)}
+    #users-search{width:100%;max-width:100%;box-sizing:border-box}
+    .admin-users-count{font-size:11px;margin:10px 0 0}
+    .admin-users-bulk{margin:0;gap:8px;flex-wrap:wrap}
+    .admin-users-cost{font-size:11px;line-height:1.6;margin:0;padding:10px 0 14px;border-bottom:1px solid var(--line)}
+    html[data-admin-console="true"] .admin-users-search button,html[data-admin-console="true"] #users-search{height:40px;min-height:40px;padding:9px 16px;border-radius:20px;box-sizing:border-box}
+    html[data-admin-console="true"] #panel-users>.panel-body>.admin-users-bulk{border:0;padding:12px 0 0}
+    html[data-admin-console="true"] .admin-users-bulk button{min-height:32px}
+    html[data-admin-console="true"] #panel-users>.panel-body>.actions{border-bottom:1px solid var(--line);padding:10px 0;align-items:center}
+    html[data-admin-console="true"] #panel-users label:has(>#users-pick-all){white-space:nowrap;flex-shrink:0}
+    .admin-view-controls button[aria-pressed="true"]{background:var(--blue);color:var(--on-accent)}
+    @media(max-width:899px){html[data-admin-console="true"] main{padding:8px}html[data-admin-console="true"] .admin-workspace-nav{flex-direction:row;overflow:auto;flex-wrap:nowrap;margin:10px 0;padding:6px;border:1px solid var(--line);border-radius:14px}html[data-admin-console="true"] .admin-workspace-nav::before{display:none}html[data-admin-console="true"] .admin-workspace-nav button{flex-shrink:0}html[data-admin-console="true"] #section-admin{min-height:calc(100dvh - 170px);padding:16px}html[data-admin-console="true"] .admin-refresh-bar{float:none;justify-content:flex-end;margin-bottom:12px}html[data-admin-console="true"] .admin-workspace-heading h3{padding-right:0}html[data-admin-console="true"] #admin-users{grid-template-columns:1fr}}
+    @media(max-width:1100px){html[data-admin-console="true"] #section-admin .admin-health-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:599px){.admin-search-field{flex-basis:100%}html[data-admin-console="true"] .admin-view-controls{margin-left:auto}html[data-admin-console="true"] #section-admin .admin-health-metrics>div{padding:12px}html[data-admin-console="true"] #section-admin .admin-health-metrics b{font-size:23px}.admin-users-bulk{gap:6px}html[data-admin-console="true"] .admin-users-bulk button{padding:6px 9px;font-size:11px}}
+    @media(max-width:599px){html[data-admin-console="true"] #panel-users>.panel-body{padding:16px}html[data-admin-console="true"] #admin-users .admin-user{padding:18px}.admin-user-help{padding:12px 14px}html[data-admin-console="true"] #admin-users{grid-template-columns:minmax(0,1fr)}}
+#cal-reminder-dialog { width:min(92vw,420px); max-height:85vh; overflow:auto; border:1px solid var(--line); border-radius:12px; padding:20px; background:var(--card); color:var(--ink); box-shadow:var(--card-shadow); }
+#cal-reminder-dialog::backdrop { background:var(--scrim); }
+#cal-reminder-dialog input[type=checkbox], #cal-notification-settings input[type=checkbox] { width:auto; margin-right:6px; }
+#cal-reminder-dialog label { display:block; margin:12px 0; }
+#cal-reminder-dialog label[hidden] { display:none; }
+#cal-reminder-dialog input:not([type=checkbox]), #cal-notification-settings input:not([type=checkbox]) { max-width:100%; min-width:0; }
+#cal-notification-settings > summary, #cal-notification-settings button, #cal-reminder-dialog button { min-height:44px; }
+#cal-notification-settings { margin:8px 0; }
+#cal-notification-devices .actions { flex-wrap:wrap; margin:8px 0; }
+</style>
+</head>
+<body>
+<!-- Filled in by flagBootFailure() in app.js, and only when app.js did not
+     finish wiring itself up. A thrown error anywhere in that top-level sequence
+     kills every listener after it, and the page then looks completely normal
+     while buttons quietly do nothing -- what the operator saw in v0.63.0, with
+     no way to describe it beyond "没有效果". This says so instead. app.js also
+     builds this element itself when it is missing, because the likeliest cause
+     is a shell older than the script. -->
+<div id="boot-warning" class="status error boot-warning hidden" role="alert"></div>
+<div class="bg-layer" aria-hidden="true"></div>
+<!-- One navigation registry (see NAV in app.js) is projected into four
+     surfaces: this sidebar on wide screens, the top bar, the bottom tab bar,
+     and the drawer. Navigation is data, not markup, so hiding or adding a
+     destination is one edit that shows up everywhere at once. -->
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="主导航">
+    <div class="sidebar-brand">
+      <strong>CityU Mail Pilot</strong>
+      <small id="sidebar-sub">邮件摘要助手</small>
+    </div>
+    <ul class="navlist" id="sidebar-nav"></ul>
+  </nav>
+
+  <div class="shell-body">
+    <a class="skip-link" href="#app-main">跳到主要内容</a>
+    <header class="appbar">
+      <div class="brand">
+        <h1 id="app-title">CityU Mail Pilot</h1>
+        <small id="app-sub">转发邮箱 · 自带 API · 个性化中英双语摘要</small>
+      </div>
+      <div class="row">
+        <!-- The way back to the site, and it belongs here rather than in a
+             footer: this is the app, and somebody who opened /app directly is
+             looking at a login box for a product nobody has explained to them
+             yet. Visible signed in or not, which is why it is not inside the
+             dashboard. -->
+        <!-- The `#top` fragment is load-bearing, not decoration. landing.js
+             forwards an installed app from "/" to "/app" so that home-screen
+             icons created before the site existed still open the mailbox, and
+             it deliberately stands down when the URL carries a hash ("a hash
+             means the visitor followed an in-page link"). Without it, tapping
+             官网 inside the installed app would bounce straight back to the
+             page you are already on -- 「点了没反应」. The fragment also makes
+             the target explicit rather than relying on the browser's special
+             case for the bare name "top". -->
+        {{LANG_SWITCH}}
+        <a id="to-site" class="button-link secondary" href="/#top">官网</a>
+        <button id="logout" class="secondary hidden">退出</button>
+      </div>
+    </header>
+
+    <main id="app-main">
+  <section id="auth" class="card narrow">
+    <h2>登录 / 注册试点</h2>
+    <p class="help">用你的私人邮箱登录。邮件从 CityU 学校邮箱转发到这里，我们只读取，不会删除或改动。</p>
+    <div id="auth-status" class="status"></div>
+    <div class="stack">
+      <div><label for="auth-email">私人邮箱</label><input id="auth-email" type="email" autocomplete="email" inputmode="email"><div class="help">已经注册过？用这个邮箱点下面的「<b>已有账户登录</b>」，<b>不用再注册一次</b>。忘了密码的话，写信给运营者（邮箱见<a href="/privacy" target="_blank" rel="noopener">《隐私政策》</a>第 6 节）请他帮你重设。</div></div>
+      <div><label for="auth-password">密码（至少 12 位）</label><input id="auth-password" type="password" autocomplete="current-password"></div>
+      <!-- 2026-09-22：**原来那一栏「邀请码」整块删掉了** —— 注册完全开放，服务端已经不需要它
+           （`POST /api/auth/register` 的 `invite_code` 现在是选填；带一张历史码仍能认领，
+           见 `web.register` 与 `docs/open-registration-2026-09-22.md`）。
+           **`accept-terms` 那一栏必须留着**：同意必须由服务端校验（铁律 10），浏览器里勾一下不算数。 -->
+      <div id="open-registration" class="help">注册完全开放：<b>任何邮箱填了就能建号</b>，不需要审批，也没有别的门槛。注册只要一个邮箱和一个至少 12 位的密码；注册完在应用里的「邮箱设置」填一次你要转发的私人邮箱和授权码，当天就会收到第一封清单。</div>
+      <!-- 2026-09-23：**原来首页申请表上那三栏挪到了这里**（用户拍板）。申请制取消后
+           它们本来会随表单一起消失，而这三栏是运营者唯一能知道「来的人是谁、想解决
+           什么」的地方。三条都要保住的性质：
+             · **全选填** —— 一个字都不填照样能建号（有测试钉着，这是开放注册的底线）；
+             · 取值白名单在**服务端**（`web.SIGNUP_IDENTITIES` / `SIGNUP_GOALS`），
+               界面这份只是同一份清单的投影，不认识的取值服务端 422；
+             · 落库在 `profiles.signup_*` 三列上，**刻意不在 `upsert_profile` 的允许
+               清单里** —— 否则以后「只改一项」的保存会把它们清零（铁律 4）。 -->
+      <details class="register-extras" id="register-extras">
+        <summary>顺便告诉我们你是谁 <span class="aside">（选填，不填照样能注册）</span></summary>
+        <div class="stack" style="margin-top:10px">
+          <div><label for="reg-nickname">怎么称呼你</label>
+            <input id="reg-nickname" maxlength="40" autocomplete="nickname" placeholder="例如：小明">
+            <div class="help">只给运营者看，用来在回信里称呼你。</div></div>
+          <div><label for="reg-identity">你的身份</label>
+            <!-- `value` 必须显式写出来，**它的中文是存进库的取值**，不能省。
+                 省掉的后果 2026-09-23 实测过：没有 value 的 option，`.value` 就是**它
+                 的文字**；而文字会被 i18n 改写器翻掉 —— 于是英文页上选 "Undergraduate"
+                 提交，服务端 `SIGNUP_IDENTITIES=('本科生','研究生','其他')` 不认，注册
+                 直接 422（繁体因为繁简同形侥幸没露）。属性值不在翻译白名单里，
+                 所以这里是中文没关系；测试 `test_i18n_pages` 钉住「这几个 value 还在」。 -->
+            <select id="reg-identity">
+              <option value="">不填</option>
+              <option value="本科生">本科生</option>
+              <option value="研究生">研究生</option>
+              <option value="其他">其他</option>
+            </select></div>
+          <div class="checkgroup" id="reg-goals">
+            <p class="help" style="margin:0 0 6px"><strong>最想先解决什么</strong>（可多选，也可一个都不选）</p>
+            <label class="check"><input type="checkbox" name="reg-goals" value="错过截止时间"><span>错过截止时间</span></label>
+            <label class="check"><input type="checkbox" name="reg-goals" value="通知太多"><span>通知太多</span></label>
+            <label class="check"><input type="checkbox" name="reg-goals" value="分不清轻重"><span>分不清轻重</span></label>
+            <label class="check"><input type="checkbox" name="reg-goals" value="找不到要办的事"><span>找不到要办的事</span></label>
+          </div>
+        </div>
+      </details>
+      <div id="consent-row" class="consent">
+        <label class="check">
+          <input type="checkbox" id="accept-terms">
+          <span>我已阅读并同意<a href="/terms" target="_blank" rel="noopener">《服务条款》</a>和<a href="/privacy" target="_blank" rel="noopener">《隐私政策》</a>。</span>
+        </label>
+        <div class="help">
+          我明白：报告由 AI 生成、<strong>可能与原邮件不符，以原邮件为准</strong>；生成报告时<strong>邮件正文会发送给我自己选择的大模型服务商</strong>。
+        </div>
+      </div>
+    </div>
+    <div class="actions"><button id="register">注册</button><button id="login" class="secondary">已有账户登录</button></div>
+  </section>
+
+  <!-- data-i18n-skip：**登录之后**的界面这一轮刻意不翻（第一轮只做未登录就能看到
+       的公开面：介绍页 / 隐私 / 条款 / 登录注册）。少了这个属性，抽取工具会把登录后
+       十几个板块的三百多句一起算进「必须翻译」，于是要么整轮拖长，要么翻译表里一半
+       是没人看过的句子。第二轮把 app.js 与这一段一起接上时，**把这一行删掉**——
+       棘轮会立刻要求补齐剩下那些句子（pilot_app/tests/test_i18n.py）。 -->
+  <section id="dashboard" class="hidden" data-i18n-skip>
+    <!-- "首页" is the dashboard. Everything else is a sibling view, so the two
+         never share a scroll position and the nav never sits below the content. -->
+    <div id="view-dashboard" class="view">
+    <!-- Setup progress. Hidden once all four steps are done: a finished
+         checklist is not status, it is clutter, and on a phone it cost a
+         whole card above the fold. -->
+    <div class="card" id="progress-card">
+      <div class="progress"><span id="progress"></span></div>
+      <div class="help" id="progress-note"></div>
+    </div>
+
+    <!-- Install hint. Shown once, dismissible, and never inside an already
+         installed window: the point is to make "put it on your phone" possible
+         without an app store, so it has to say the right steps for the browser
+         the reader is actually holding. -->
+    <div id="install-hint" class="card hidden">
+      <!-- One line by default. The steps stay one tap away rather than on
+           screen: an iOS reader needs them, everyone else has already decided,
+           and a full card above the fold pushed the actual content down. -->
+      <div class="spread">
+        <strong id="install-title"></strong>
+        <div class="install-actions">
+          <span id="install-actions"></span>
+          <button id="install-dismiss" class="ghost">以后再说</button>
+        </div>
+      </div>
+      <details class="install-how">
+        <summary>怎么做</summary>
+        <div class="help" id="install-steps"></div>
+      </details>
+    </div>
+
+    <div id="hero" class="hero card"></div>
+
+    <!-- 默认收起。五张卡在手机上要占大半屏，而这一屏下面还有「今天要处理的事」。
+         收起不等于把信号藏起来：摘要行里写着「谁卡在哪」（`renderChannels` 现算），
+         那正是这一块存在的理由——所以摘要行必须在收起时也看得见，而不是把灯一起折进去。
+         「刷新」留在摘要行里：收起时也要能刷新，否则用户得先展开才能按。
+         开合状态按人记在 localStorage，想一直看细节的人不用每次再点一次。 -->
+    <details class="card status-panel" id="status-panel">
+      <summary class="status-head">
+        <span class="status-title">现在的状态</span>
+        <span class="status-summary" id="status-summary"></span>
+        <button id="refresh" class="ghost">刷新</button>
+      </summary>
+      <div class="chaingrid" id="channels"></div>
+      <div id="status-note" class="status"></div>
+    </details>
+
+    <!-- 截止日历。**不是**一块存储，而是同一批报告的另一个视图：邮件被 worker
+         分析出截止时间之后，它自己就会出现在这里，没有「导入」这一步，也就没有
+         第二份副本可以和报告不一致。
+
+         放在「现在的状态」下面、今天的任务上面：用户先看到接下来什么时候到期，
+         再进入「今天要处理的事」动手，手机上不用先滚过整张任务清单才能找到日历。
+
+         格子按**截止日**排 —— 和「导出到手机日历」同一个
+         `deadline_day_and_clock`。三处对同一条任务必须说同一天，否则用户会看到
+         「app 说周四、手机说周五」，而这种事他根本没法描述清楚。 -->
+    <div class="card" id="calendar-card">
+      <div class="spread">
+        <h2 style="font-size:16px">截止日历</h2>
+        <div class="cal-nav">
+          <button id="cal-add" type="button" class="secondary">添加事项</button>
+          <button id="cal-prev" class="ghost" title="上个月" aria-label="上个月">‹</button>
+          <span id="cal-label" class="cal-label">—</span>
+          <button id="cal-next" class="ghost" title="下个月" aria-label="下个月">›</button>
+          <button id="cal-today" class="secondary hidden">回到本月</button>
+        </div>
+      </div>
+      <details id="cal-notification-settings">
+        <summary>系统通知与提醒设置</summary>
+        <p id="cal-notification-status" class="help" role="status">展开后检查当前设备的通知能力。</p>
+        <button id="cal-notifications-enable" type="button" class="secondary" disabled>开启此设备系统通知</button>
+        <div id="cal-notification-devices"></div>
+        <details><summary>新邮件默认提醒</summary>
+          <label><input id="cal-mail-default" type="checkbox"> 为此后新增的邮件事项设置默认提醒</label>
+          <label>具体时刻前多少分钟 <input id="cal-mail-offset" type="number" min="0" max="10080" value="60"></label>
+          <label>全天事项提醒时刻 <input id="cal-mail-day-time" type="time" value="09:00"></label>
+          <p class="help">不会为历史邮件补发通知；全天时间采用事项的时区。</p>
+          <button id="cal-mail-default-save" type="button" class="secondary">保存默认提醒</button>
+        </details>
+      </details>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div class="cal-meta">
+        <div class="help cal-legend" id="cal-legend" aria-live="polite"></div>
+        <div class="cal-key" aria-label="日期标记说明">
+          <span><i></i>待办</span>
+          <span><i class="done"></i>已处理</span>
+          <span><i class="urgent"></i>急事</span>
+        </div>
+        <span class="cal-hint">点有标记的日期查看待办</span>
+      </div>
+      <div class="cal-day hidden" id="cal-day"></div>
+      <form id="cal-event-form" class="cal-event-form hidden" aria-labelledby="cal-event-heading">
+        <h3 id="cal-event-heading">添加事项</h3>
+        <label for="cal-event-title">标题</label>
+        <input id="cal-event-title" maxlength="200" required>
+        <label for="cal-event-date">日期</label>
+        <input id="cal-event-date" type="date" min="1970-01-01" max="2100-12-31" required>
+        <label><input id="cal-event-all-day" type="checkbox" checked> 全天</label>
+        <div id="cal-event-clock" class="hidden">
+          <label for="cal-event-time">时刻</label><input id="cal-event-time" type="time">
+          <div id="cal-event-fold-row" class="hidden">
+            <label for="cal-event-fold">这个时刻出现两次，请确认</label>
+            <select id="cal-event-fold"><option value="">请选择</option><option value="0">第一次</option><option value="1">第二次</option></select>
+          </div>
+        </div>
+        <label for="cal-event-zone">时区（例如 Asia/Hong_Kong）</label>
+        <input id="cal-event-zone" maxlength="64" required>
+        <label for="cal-event-notes">备注（可选）</label>
+        <textarea id="cal-event-notes" maxlength="2000" rows="3"></textarea>
+        <label><input id="cal-event-done" type="checkbox"> 已完成</label>
+        <div id="cal-event-status" class="status" role="status" aria-live="polite"></div>
+        <div class="actions">
+          <button id="cal-event-save" type="submit">保存事项</button>
+          <button id="cal-event-cancel" type="button" class="secondary">取消</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="spread">
+        <h2 style="font-size:16px">今天要处理的事</h2>
+        <div class="task-daybar">
+          <span class="help" id="task-day-label"></span>
+          <button id="task-back-today" class="secondary hidden">回到今天</button>
+        </div>
+      </div>
+      <div class="metrics" id="metrics" style="margin:12px 0"></div>
+
+      <!-- 默认只露出上面的四个汇总数字。具体邮件、筛选、导出和历史记录放进同一个
+           原生 details，用户点「具体邮件与待办」才展开；这样首页先回答「今天有多少、
+           有多少要行动」，不会被整张邮件清单占满。 -->
+      <details class="panel task-detail-panel" id="panel-tasks-detail">
+        <summary><span class="panel-title">具体邮件与待办</span><span class="panel-note" id="tasks-detail-note">点开查看</span></summary>
+        <div class="panel-body">
+          <!-- 筛选与排序：**只改这一屏显示什么、按什么顺序显示**。勾选按 task_key 记、
+               导出取的是全量清单，所以筛掉几条再筛回来勾不会丢，也不会出现「导出的比看到的少」
+               这种事（细节见 app.js `visibleTasks` 的注释）。
+               「紧急优先」那一档不是浏览器自己发明的顺序：它保持服务器给的顺序（报告里按
+               优先级、有无截止时间排好的），只有「按时间」是这里换的一个看法。 -->
+          <div class="task-tools" id="task-tools">
+            <div class="filters" id="task-filter" role="group" aria-label="筛选今天的清单">
+              <button type="button" class="chip" data-filter="all" aria-pressed="true">全部</button>
+              <button type="button" class="chip" data-filter="high" aria-pressed="false">重要</button>
+              <button type="button" class="chip" data-filter="deadline" aria-pressed="false">有截止时间</button>
+            </div>
+            <div class="filters" id="task-sort" role="group" aria-label="清单排序">
+              <button type="button" class="chip" data-sort="priority" aria-pressed="true">紧急优先</button>
+              <button type="button" class="chip" data-sort="time" aria-pressed="false">按时间</button>
+            </div>
+          </div>
+
+          <ul class="tasklist" id="tasks"></ul>
+
+          <!-- 「稍后提醒」：你主动挪开的那些待办。默认收起，但**必须看得见** ——
+               「东西去哪了」说不清的功能比没有这个功能更糟（同理还有「已处理」那一栏）。
+               到点它们自己回到上面的列表：判断发生在服务器**读**列表的时候，没有定时任务。 -->
+          <details class="panel hidden" id="panel-tasks-snoozed">
+            <summary><span class="panel-title">稍后提醒</span><span class="panel-note" id="tasks-snoozed-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">到点它们自己回到上面的列表，不用你做什么；想提前拿回来点「取消稍后提醒」。</div>
+              <ul class="tasklist" id="tasks-snoozed"></ul>
+            </div>
+          </details>
+
+          <!-- 导出到手机：一条是日历文件，一条是可以粘进「提醒事项 / Google Tasks」的清单。
+               两条路都在这里说清楚各自会发生什么，因为 iOS 的提醒事项**不接受文件导入**
+               （只有 VTODO 的日历文件在 iPhone 上「打开什么也不显示」），而日历能收。 -->
+          <div id="task-export" class="task-export hidden">
+            <div class="actions" style="margin:6px 0 0">
+              <button id="task-export-ics" class="secondary">导出到手机日历（.ics）</button>
+              <button id="task-export-copy" class="ghost">复制成清单</button>
+              <button id="task-export-all" class="ghost">全选</button>
+              <button id="task-export-none" class="ghost">全不选</button>
+              <span class="help" id="task-export-note">—</span>
+            </div>
+            <details class="advanced" id="task-export-help">
+              <summary>这两条路在手机上分别会发生什么？</summary>
+              <div class="body">
+                <div class="help">
+                  <b>导出到手机日历（.ics）</b>：下载一个日历文件。iPhone 上点一下就会交给
+                  「日历」，安卓上会问用哪个应用打开（日历 / Google 日历都认）。
+                  每个任务是一条<b>全天日程</b>，落在它的截止日；没有截止时间的落在来信那天。
+                  <b>重复导出不会产生重复条目</b>——同一条任务的标识是固定的，日历会就地更新。
+                </div>
+                <div class="help">
+                  <b>复制成清单</b>：把勾选的任务复制成多行文本。iOS「提醒事项」里粘贴会一行一条
+                  （提醒事项没有文件导入，这是唯一的路）；安卓可以粘进 Google Tasks / Keep。
+                </div>
+                <div class="help">
+                  两边都<b>只包含你勾选的任务</b>，都只是副本：在这里点「✓ 处理好了」不会同步回手机，
+                  在手机上勾掉也不会同步回来。
+                </div>
+                <div class="help" id="task-export-text-wrap" style="display:none">
+                  <label for="task-export-text">浏览器不允许自动复制，请手动复制下面这段：</label>
+                  <textarea id="task-export-text" rows="5" style="width:100%"></textarea>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <details class="panel" id="panel-tasks-done">
+            <summary><span class="panel-title">已处理</span><span class="panel-note" id="tasks-done-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">点「恢复」就会放回待处理列表。<strong>任务不会被删除</strong>，随时找得回来。</div>
+              <ul class="tasklist done" id="tasks-done"></ul>
+            </div>
+          </details>
+
+          <details class="panel" id="panel-tasks-history">
+            <summary><span class="panel-title">按天回看</span><span class="panel-note" id="tasks-history-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">这是你处理过任务的日期，点进去可以看当天完整清单，也可以把处理过的再放回来。</div>
+              <div id="tasks-history"></div>
+            </div>
+          </details>
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:16px">最近的摘要</h2>
+      <ul class="activity" id="recent"></ul>
+    </div>
+    </div><!-- /view-dashboard -->
+
+    <!-- 全体广播的对话框**必须住在这里，不能住在任何一个板块里面**（2026-09-17 的
+         故障）：它盖住整页、并且锁住 body 的滚动，而板块是会被 `openSection()`
+         加 `hidden` 藏起来的——住在里面时，只要在别的板块（例如后台）刷新一次仪表盘，
+         它就被自己的祖先藏起来了：**屏幕上一个字都没有，整个应用却滚不动**，只能刷新
+         一次才恢复。用户报的就是这个：「每次发完广播软件就不能滑动，一定要重新刷新
+         一遍」——发完广播那一步正好会在后台调一次 `refreshDashboard()`。
+
+         一个「必须盖住一切」的东西不能是可隐藏容器的后代，所以它和 `#toasts` 一样
+         挂在应用外壳这一层。 -->
+    <div id="announcement" class="announce-modal hidden" role="dialog" aria-modal="true"
+         aria-labelledby="announcement-title" aria-describedby="announcement-body">
+      <div class="announce-card" id="announcement-card" tabindex="-1">
+        <div class="tag" id="announcement-tag"></div>
+        <h3 id="announcement-title"></h3>
+        <img id="announcement-image" alt="公告配图" hidden>
+        <p id="announcement-body"></p>
+        <div class="foot">
+          <div class="help" id="announcement-help">这条消息由试点管理员发出。点「确认收到」后不再重复显示。</div>
+          <button id="announcement-ack" type="button">确认收到</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 「看原信」的阅读面板。和广播对话框一样挂在外壳这一层：它是盖住整页的东西，
+         不能是可隐藏容器的后代（v0.63.69 的教训）。正文全是纯文本，不注 HTML。 -->
+    <div id="original" class="announce-modal hidden" role="dialog" aria-modal="true"
+         aria-labelledby="original-title" aria-describedby="original-meta">
+      <div class="announce-card" id="original-card" tabindex="-1">
+        <div class="tag">原信</div>
+        <h3 id="original-title">正在从你的邮箱取回这一封…</h3>
+        <p id="original-meta"></p>
+        <div id="original-body"></div>
+        <!-- 按需的翻译/总结。它们**每次都真的调一次模型**（走平台 key 时是管理员出钱），
+             所以按钮上写清是做什么的，结果只显示在这里、不保存。 -->
+        <div class="actions" id="original-assist-actions">
+          <button id="original-translate" type="button" class="secondary">翻译成中文</button>
+          <button id="original-summary" type="button" class="secondary">AI 总结</button>
+          <button id="original-copy" type="button" class="secondary">复制主题</button>
+        </div>
+        <div id="original-assist" class="hidden">
+          <div class="tag" id="original-assist-label"></div>
+          <div id="original-assist-text"></div>
+          <!-- 「这次没翻出来」「可能被截断」这类实话。服务器说，界面照原话说。 -->
+          <p class="help" id="original-assist-note"></p>
+        </div>
+        <p class="help" id="original-note"></p>
+        <!-- 「还能去哪儿看」：学校邮箱、转发邮箱，Gmail 还能精确到那一封。
+             每条的 detail 会写明精确到什么程度——做不到的事不暗示做得到。 -->
+        <ul class="help" id="original-look"></ul>
+        <div class="foot">
+          <div class="help" id="original-help">这封信是你邮箱里的原件，我们只是当场读了一遍。</div>
+          <div class="actions">
+            <button id="original-close" type="button" class="secondary">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- The old stacked <nav class="tabs"> lived here, below four dashboard
+         cards and ~2.5 phone screens down. It is now the shell's sidebar /
+         tab bar / drawer, all rendered from NAV in app.js. -->
+
+    <section id="section-profile" class="card hidden">
+      <h2 style="font-size:16px">个人资料</h2>
+      <div id="profile-status" class="status"></div>
+
+      <p class="help">这些信息只用来判断邮件与你是否相关，会发送给模型作为背景，不会公开。</p>
+      <div class="stack">
+        <div><label for="school-email">CityU 学校邮箱</label><input id="school-email" type="email" autocomplete="email" inputmode="email" placeholder="student@my.cityu.edu.hk"><div class="help">你的学校邮箱，用来标识和核对转发来源；不是收报告的私人邮箱。</div></div>
+        <div class="grid2">
+          <div><label for="major">专业</label><input id="major" placeholder="通信工程 / INFE"></div>
+          <div><label for="year">年级</label><input id="year" placeholder="大二"></div>
+        </div>
+        <div class="grid2">
+          <div><label for="courses">课程</label><input id="courses" placeholder="密码学, C++, Python"><div class="help">英文逗号分隔。</div></div>
+          <div><label for="interests">兴趣</label><input id="interests" placeholder="网络安全, 嵌入式系统"></div>
+        </div>
+        <div class="grid2">
+          <div><label for="goals">职业目标</label><input id="goals" placeholder="通信工程师"></div>
+          <div><label for="focus">重点主题</label><input id="focus" placeholder="比赛, 实习, 截止日期"></div>
+        </div>
+        <div><label for="less">较少兴趣</label><input id="less" placeholder="广告, 无关推广"></div>
+        <div><label for="custom">自定义要求</label><textarea id="custom" placeholder="例如：优先指出对密码学和编程课程有帮助的机会"></textarea></div>
+      </div>
+      <details class="advanced">
+        <summary>高级：语言、时区与发送时间</summary>
+        <div class="body">
+          <div class="grid2">
+            <div><label for="timezone">时区</label><input id="timezone" value="Asia/Hong_Kong"></div>
+            <div><label>报告语言</label><div class="help" style="margin-top:8px">
+              跟随你在右上角选的语言；最后会再附一句<b>另一种语言</b>的简短小结。
+              <a href="#/appearance" data-nav="appearance">去换语言</a></div></div>
+          </div>
+          <div style="margin-top:12px"><label for="daily-time">每日简报时间</label><input id="daily-time" type="time" value="22:00"><div class="help">默认香港时间 22:00。</div></div>
+        </div>
+      </details>
+      <div class="actions"><button id="save-profile">保存个人资料</button></div>
+    </section>
+
+    <!-- Appearance is its own destination rather than the top of the profile
+         form. It is the one setting people change on a whim, it saves on click
+         with no form to submit, and burying it above the academic fields meant
+         scrolling past a whole form to reach a colour swatch. -->
+    <section id="section-appearance" class="card hidden">
+      <h2 style="font-size:16px">外观</h2>
+      <p class="help">只影响你自己的界面，保存在账户里，换手机或电脑登录也是同一套。别人看不到你的选择。</p>
+      <div class="theme-grid" id="theme-grid"></div>
+      <div class="help" style="margin-top:14px">背景图</div>
+      <div class="bg-row" id="bg-row"></div>
+
+      <div class="card-inner" style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+        <h3 style="font-size:15px">用自己的照片当背景</h3>
+        <div id="bg-photo-status" class="status"></div>
+        <div class="help">
+          照片在浏览器里先缩小并重新编码，<strong>拍摄地点、设备型号这类信息在离开你的设备前就没有了</strong>；
+          服务器不会再解析它。只有你自己看得到，删账号时会一起删掉。JPEG 或 PNG，不超过 1.5 MB。
+        </div>
+        <div id="bg-photo-preview" class="bg-photo-preview" hidden></div>
+        <div class="actions">
+          <label class="file-button" for="bg-photo-input">选择图片</label>
+          <input id="bg-photo-input" type="file" accept="image/jpeg,image/png" class="sr-only">
+          <button id="bg-photo-use" class="secondary" type="button" disabled>用作背景</button>
+          <button id="bg-photo-remove" class="danger" type="button" hidden>删除照片</button>
+        </div>
+      </div>
+
+      <div id="appearance-status" class="saved" style="display:none"></div>
+    </section>
+
+    <!-- Account security is its own destination rather than a block at the
+         bottom of the reports page. Two reasons, same as appearance: it is a
+         thing you go looking for on purpose (a lost phone, a shared laptop),
+         and at the bottom of a list of reports it sat behind however many
+         reports there were that week. -->
+    <section id="section-security" class="card hidden">
+      <h2 style="font-size:16px">账户安全</h2>
+      <div id="security-status" class="status"></div>
+      <div class="help" id="security-sessions"></div>
+      <div class="stack" style="margin-top:10px">
+        <div><label for="cur-password">当前密码</label><input id="cur-password" type="password" autocomplete="current-password"></div>
+        <div><label for="new-password">新密码（至少 12 位）</label><input id="new-password" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="actions">
+        <button id="change-password">修改密码</button>
+        <button id="revoke-sessions" class="danger">退出所有设备</button>
+      </div>
+      <div class="help">修改密码会自动让其它设备上的登录立即失效。如果手机丢失或曾借给别人登录，请用「退出所有设备」。</div>
+    </section>
+
+    <section id="section-mailbox" class="card hidden">
+      <!-- 板块标题不再带编号（2026-09-23 用户：「删」）。原来那套 2/3/4/5 是「设置顺序」，
+           可从 2 开始、**根本没有 1**，看着像漏了一个；而顶部栏写的本来就是不带编号的
+           标题，两处一直不同名。删掉之后它们对上了。 -->
+      <h2 style="font-size:16px">邮箱设置</h2>
+      <div id="mailbox-status" class="status"></div>
+      <p class="help">CityU 邮箱只负责把邮件<b>转发</b>到你的私人邮箱。我们用只读方式取信，再把报告发到你指定的地址，全程不会删除或修改你的邮件。</p>
+
+      <!-- 四步走完没有，一眼看到。这块以前没有，而线上 7 个账号里有 4 个
+           卡在「注册了但一个邮箱都没配」——他们看的那一页说不出还差什么。 -->
+      <div class="setup-progress" id="setup-progress"></div>
+
+      <div class="setup-step" id="step-1">
+        <h3>第 1 步 · 填写这两个邮箱</h3>
+        <div class="help">填完私人邮箱，下面第 3 步会自动换成你这个邮箱服务商的教程。</div>
+        <div class="stack">
+          <div><label for="school-email-mailbox">你的 CityU 学校邮箱</label><input id="school-email-mailbox" type="email" autocomplete="email" inputmode="email" placeholder="student@my.cityu.edu.hk"></div>
+          <div><label for="mail-email">你的私人转发邮箱</label><input id="mail-email" type="email" autocomplete="email" inputmode="email" placeholder="you@qq.com"><div class="help">CityU 的邮件会被转发到这里，报告也从这里读。</div></div>
+          <!-- 「这个服务商已经不能用了」不能只是一段说明。生产上真有人卡在这里：
+               页面告诉他微软个人版不给用授权码了，却没有告诉他下一步做什么，于是
+               他反复重填同一个邮箱。这一格由 app.js 渲染成「换一个邮箱」的三步动作
+               （新邮箱 → 改 CityU 转发规则 → 回来重测），只在真的走到这一步时出现。 -->
+          <div id="mail-switch" class="switch-box hidden"></div>
+          <div><label for="mail-provider">邮箱服务商</label><select id="mail-provider"></select><div class="help" id="mail-provider-help"></div></div>
+          <div><label for="report-to">报告发到哪里（可以留空）</label><input id="report-to" type="email" autocomplete="email" inputmode="email" placeholder="留空 = 发回上面的私人邮箱"></div>
+        </div>
+      </div>
+
+      <div class="setup-step" id="step-2">
+        <h3>第 2 步 · 让 CityU 把邮件转到这里</h3>
+        <!-- 「这一步必须用电脑」来自一个 fork 的 PR（#1，@Bear-qaq），并核对过：
+             微软自己的答复说手机上的 Outlook（App 与浏览器都一样）**没有**规则/转发
+             这两项设置。原 PR 把「电脑端」标成 `--bad`（故障色）—— 这一节刚刚在
+             v0.63.54 把红笔批注全部换成主题色，浏览器套件里还留着「说明里不许再说
+             红字/红圈」那两条断言，所以这里改用 `--warn`（提醒色）并加粗：同一个意思，
+             不和那一节的颜色语言打架。（`test_appearance` 会盯住 token 必须存在。） -->
+        <div class="help">请用<b style="color:var(--warn)">电脑</b>登录学校 Outlook 完成设置
+        （手机上的 Outlook 没有这个开关）；一次设置并保存转发即可，也无需向本应用提供学校密码。</div>
+        <span class="forward-target" id="forward-target">请先在第 1 步填写私人邮箱</span>
+        <div class="actions">
+          <button type="button" id="copy-forward-target" class="secondary" disabled>复制私人邮箱</button>
+          <a class="button-link" id="open-outlook-forwarding" href="https://outlook.office.com/mail/options/mail/forwarding" target="_blank" rel="noopener noreferrer">打开 Outlook 转发设置</a>
+        </div>
+        <ol>
+          <li><b>请在电脑上操作</b>：手机上的 Outlook（App 和网页版都一样）没有「规则 / 转发」
+            这两项设置，手机上照着做会找不到。</li>
+          <li>用你自己的 CityU 账号登录（就是 <span class="inline-code" id="forward-school-hint">你的学校邮箱</span>）。</li>
+          <li>打开「邮件 → 转发」，把开关打开。</li>
+          <li>粘贴上面的私人邮箱，并勾选「<b>保留已转发邮件的副本</b>」。</li>
+          <li>点保存。会弹一个确认框，问你是否确定，选「是」。</li>
+          <li><b>马上验证</b>：从你的学校邮箱给自己发一封测试邮件，等 1 分钟，看私人邮箱里收到没有。</li>
+        </ol>
+        <!-- 「转发规则生效没有」是唯一无法从我们这边测试的一步：唯一的证据是
+             信真的到了。所以这一格由服务器给结论（`dash.setup.forwarding`），
+             而且接通的头一天不能说成故障——安静的几小时不是故障。 -->
+        <div id="forward-check" class="help"></div>
+        <div id="forward-status" class="help"></div>
+        <!-- 桌面版 Outlook（Mac / Windows）的设置里**没有**上面那个「转发」开关，
+             它用的是「规则」。这一步以前只有一行字（「新建规则 → 对所有收到的邮件 →
+             转发到私人邮箱」），而照着这行字点的人会在下拉菜单里找不到「所有邮件」——
+             它在列表最下面，要滚动。所以这里是运营者自己走通之后截的图，
+             四张对应四步。图里的账号与邮箱已打码（见 tools/forward_shots.js）。 -->
+        <details class="advanced">
+          <summary>看不到「转发」开关？桌面版用「规则」转发（图文）</summary>
+          <div class="body">
+            <div class="help">桌面版 Outlook 的「设置 → 邮件」里没有「转发」这个开关，用「<b>规则</b>」
+            能达到同样的效果，四步就够。下面是真实界面截图（Outlook for Mac 中文版）；
+            <b>截图里的账号和邮箱地址已打码</b>。点图可以看大图。</div>
+            <ol class="steps">
+              <li>打开「<b>设置 → 邮件 → 规则</b>」，点蓝色的「<b>+ 添加规则</b>」。
+                规则名称随便填，例如「转发到私人邮箱」。
+                <figure class="shot">
+                  <a href="/forward-rule-1-add.png" target="_blank" rel="noopener noreferrer">
+                    <img src="/forward-rule-1-add.png" loading="lazy"
+                         alt="Outlook「规则」页面：新建规则的表单，绿色标签说明它是「+ 添加规则」打开的"></a>
+                  <figcaption>新建一条规则（图里的绿色标签是提示，不是界面上的字）</figcaption>
+                </figure>
+              </li>
+              <li>点「<b>选择条件</b>」，把列表<b>拉到最下面</b>，选「<b>适用于所有邮件</b>」——
+                它不在最上面，很多人就是卡在这一步找不到。
+                <figure class="shot">
+                  <a href="/forward-rule-2-condition.png" target="_blank" rel="noopener noreferrer">
+                    <img src="/forward-rule-2-condition.png" loading="lazy"
+                         alt="条件下拉菜单，绿框标出列表最下面的「适用于所有邮件」"></a>
+                  <figcaption>条件选「适用于所有邮件」（在列表最下面）</figcaption>
+                </figure>
+              </li>
+              <li>点「<b>选择操作</b>」，在「<b>传送</b>」那一组里选「<b>转发到</b>」，
+                右边的输入框里粘贴上面那个私人邮箱（用上面的「复制私人邮箱」按钮）。
+                <figure class="shot">
+                  <a href="/forward-rule-3-action.png" target="_blank" rel="noopener noreferrer">
+                    <img src="/forward-rule-3-action.png" loading="lazy"
+                         alt="操作下拉菜单，绿框标出「传送」下面的「转发到」"></a>
+                  <figcaption>操作选「传送 → 转发到」</figcaption>
+                </figure>
+              </li>
+              <li>点「<b>保存</b>」。回到规则列表，确认这一条是<b>打开</b>的（开关是蓝色）——
+                灰色等于没生效，而转发是否生效我们这边测不出来，只有信真的到了才算。
+                <figure class="shot">
+                  <a href="/forward-rule-4-done.png" target="_blank" rel="noopener noreferrer">
+                    <img src="/forward-rule-4-done.png" loading="lazy"
+                         alt="规则列表里那一条「转发所有邮件至」是打开状态，转发地址已打码"></a>
+                  <figcaption>保存后：规则列表里那一条，开关要是打开的（图里邮箱做了打码）</figcaption>
+                </figure>
+              </li>
+            </ol>
+            <div class="help">如果连「规则」也打不开、或者保存后没有生效，说明学校管理员禁止了
+            外部自动转发，请联系 IT。</div>
+            <div class="actions">
+              <a class="button-link secondary" href="https://outlook.office.com/mail/options/mail/rules" target="_blank" rel="noopener noreferrer">打开网页版规则</a>
+              <a href="https://support.microsoft.com/en-au/outlook/mail/turn-automatic-forwarding-on-or-off-in-outlook" target="_blank" rel="noopener noreferrer">微软官方说明</a>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="setup-step" id="step-3">
+        <h3>第 3 步 · 拿到授权码（不是登录密码）</h3>
+        <div class="why-box">
+          <div><b>为什么不能用邮箱登录密码？</b></div>
+          <div class="help">邮箱服务商不允许普通程序用你的登录密码取信。授权码（有的邮箱叫「应用专用密码」）是专门发给程序用的<b>另一套密码</b>：它只能用来收信发信，你随时可以在邮箱设置里作废重发，不影响你自己用手机和电脑登录。</div>
+          <div class="help">它通常是一串 16 位字符，<b>只在生成时显示一次</b>——看到就先复制，再关掉那个弹窗。</div>
+        </div>
+        <figure class="shot">
+          <a href="/appcode-two-passwords.png" target="_blank" rel="noopener noreferrer">
+            <img src="/appcode-two-passwords.png" loading="lazy"
+                 alt="示意图：同一个邮箱的两套密码——左边是你在手机、网页上登录用的登录密码，右边是专门发给程序用的授权码"></a>
+          <figcaption>同一个邮箱的两套密码：这里要的是右边那一串（示意图）</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="/appcode-where.png" target="_blank" rel="noopener noreferrer">
+            <img src="/appcode-where.png" loading="lazy"
+                 alt="示意图：QQ 邮箱、163 邮箱、Gmail 各自在设置里的哪一块生成授权码或应用专用密码"></a>
+          <figcaption>三家邮箱分别在哪一块生成它（示意图；菜单改版了就看下面那行的<strong>官方说明</strong>）</figcaption>
+        </figure>
+        <div class="howto" id="mail-howto"></div>
+        <figure class="shot">
+          <a href="/appcode-code-once.png" target="_blank" rel="noopener noreferrer">
+            <img src="/appcode-code-once.png" loading="lazy"
+                 alt="示意图：授权码弹窗——16 位字符只显示一次，先复制再关掉，之后可以重新生成"></a>
+          <figcaption>那一串只显示一次：先复制，再关掉窗口（示意图）</figcaption>
+        </figure>
+        <div class="caution hidden" id="mail-caution"></div>
+        <div class="why-box">
+          <div><b>把授权码填进来，会不会被盗？</b></div>
+          <div class="help">不会。它不是你的邮箱登录密码：改不了你的邮箱密码，也不影响你自己在手机、电脑上登录；它只能用来收信发信。</div>
+          <div class="help">我们只拿它做两件事：<b>只读</b>取信（不删信、不标已读、不改标签），把清单<b>发回给你自己</b>。它在服务器上是<strong>加密保存</strong>的，不进日志；整套代码<strong>开源可查</strong>。</div>
+          <div class="help">最实在的一条：你随时能在生成它的那个页面把它<b>作废</b>——一作废，我们这边立刻收不到信。详见<a href="/privacy" target="_blank" rel="noopener">《隐私政策》</a>。</div>
+        </div>
+        <label for="mail-password">把授权码粘贴到这里</label>
+        <input id="mail-password" type="password" autocomplete="new-password">
+        <div class="help">不是你的邮箱登录密码。<span id="mail-password-help"></span>出于安全考虑，已保存的授权码不会回显，每次保存都要重新填写。</div>
+        <!-- 这一栏是服务端强制的授权确认（《服务条款》第 3 条）。放在「保存」之前、
+             授权码之后：它是开通前的最后一道门，而勾选必须由人做一次。
+             默认不勾选——默认勾上等于替用户作了这个陈述。 -->
+        <div class="consent" id="rights-row">
+          <label class="check">
+            <input type="checkbox" id="accept-rights">
+            <span>我确认：我<strong>有权</strong>把这里登记的邮箱里、属于我本校来信的那部分邮件
+            <strong>转发给本服务并允许它读取与处理</strong>，也有权把内容发送给第三方大模型服务商；
+            学校或他人若有保密要求，我已经取得所需许可。详见<a href="/terms" target="_blank" rel="noopener">《服务条款》</a>第 3 条。</span>
+          </label>
+          <div class="help">
+            本服务<strong>不是城大官方服务</strong>，与学校无隶属或授权关系。没有确认这一点就<strong>不能保存邮箱设置</strong>。
+            不确定自己有没有这个权利时，<strong>请不要开通</strong>，先去问清楚。
+          </div>
+        </div>
+      </div>
+
+      <div class="setup-step" id="step-4">
+        <h3>第 4 步 · 保存并检查</h3>
+        <div class="help">先保存，再点「只读连接测试」。测试只是登录一次看看能不能取信，不会删除或改动你的邮件。</div>
+        <div class="actions">
+          <button id="save-mailbox">加密保存</button>
+          <button id="test-mailbox" class="secondary">只读连接测试</button>
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary id="mail-advanced-summary">服务器地址和端口（通常不用改）</summary>
+        <div class="body">
+          <div class="help">这一块是给「其它邮箱」用的：如果上面的服务商选对了，这里已经自动填好，可以完全不管。</div>
+          <div class="grid2" style="margin-top:10px">
+            <div><label for="imap-host">收件服务器</label><input id="imap-host" placeholder="imap.qq.com"></div>
+            <div><label for="imap-port">端口</label><input id="imap-port" type="number" value="993"></div>
+            <div><label for="smtp-host">发件服务器</label><input id="smtp-host" placeholder="smtp.qq.com"></div>
+            <div><label for="smtp-port">端口</label><input id="smtp-port" type="number" value="465"></div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="section-model" class="card hidden">
+      <h2 style="font-size:16px">AI 模型<span class="help" id="model-skip-note"></span></h2>
+      <div class="saved hidden" id="model-saved"></div>
+      <p class="help">密钥加密保存后不会回显。<strong>在另行通知前，这一步可以留空</strong>，默认用管理员提供的 key、由管理员付费；填上你自己的 key 就会改用它，费用与调用记录都归你——需要注意，留空时服务商是把调用记在管理员账号下的。</p>
+      <div class="stack">
+        <div><label for="model-provider">供应商</label><select id="model-provider"></select><div class="help" id="model-provider-help"></div></div>
+        <div><label for="model-name">模型名称</label><input id="model-name" placeholder="账户里可用的模型 ID"></div>
+        <div><label for="model-key">API key</label><input id="model-key" type="password" autocomplete="new-password"><div class="help">已保存的密钥不会显示；要更换就直接填新的。</div></div>
+      </div>
+      <details class="advanced">
+        <summary>高级：Base URL 与 Azure 版本</summary>
+        <div class="body">
+          <div><label for="model-base">API Base URL</label><input id="model-base" placeholder="https://..."><div class="help">Azure 或自定义接口必填；部分中国供应商按地域覆盖。</div></div>
+          <div style="margin-top:12px"><label for="azure-version">Azure API version</label><input id="azure-version" placeholder="2024-10-21"></div>
+        </div>
+      </details>
+      <div class="actions"><button id="save-model">加密保存</button><button id="test-model" class="secondary">测试模型</button></div>
+    </section>
+
+    <section id="section-search" class="card hidden">
+      <h2 style="font-size:16px">联网搜索（可选）<span class="help" id="search-skip-note"></span></h2>
+      <div class="saved hidden" id="search-saved"></div>
+      <div class="note hidden" id="search-native-note"></div>
+      <p class="help">搜索只使用脱敏后的邮件主题，不会把正文、收件人或邮箱授权码发出去。<strong>在另行通知前，这一步同样可以留空</strong>：默认用管理员提供的搜索 key，但要注意，这些检索词会发给搜索服务商并记在管理员账号下；填上自己的搜索 key 就只记在你名下。模型本身能联网时，这一步整段可以跳过。</p>
+      <div class="stack">
+        <div><label for="search-provider">搜索供应商</label><select id="search-provider"></select><div class="help">独立按次计费，与模型 API 无关。不配置也能出报告，只是没有联网核实。</div></div>
+        <div><label for="search-key">搜索 API key</label><input id="search-key" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="actions"><button id="save-search">加密保存</button><button id="test-search" class="secondary">测试搜索</button></div>
+    </section>
+
+    <section id="section-reports" class="card hidden">
+      <h2 style="font-size:16px">报告与账户</h2>
+      <div id="reports-status" class="status"></div>
+      <!-- 「你的邮件走这条路」（v0.63.86；文案精简 2026-09-23）：用户反复问的其实是同一件事——
+           「为什么两个邮箱都有」「关了会怎样」「提醒到底从哪来」。这三段各有各的主人，
+           而每一段的开关就在本板块里（暂停服务 / 报告邮件），所以不用他到处找。
+           每一句都必须是能兑现的：说"你决定"的那一段，控件真的存在；说"我们改了不"的，
+           就明说改不了。
+           文案精简时砍掉的是补充说明（「转过来的那一封」「就在这个 App 里」「服务公告不受
+           影响」），留下的三样各有理由：三段的归属、「暂停服务」「要不要收到报告邮件」
+           这两个控件名、以及转发要去哪设——最后一条是这张卡存在的理由本身。
+           `data-i18n-include`：整块 `#dashboard` 是 `data-i18n-skip`（登录后的界面第二轮
+           再翻），这张卡单独开口子——它的文案已经译进四门语言，其余仍然保持中文。 -->
+      <div class="mailpath" id="mail-path" data-i18n-include>
+        <h3>你的邮件走这条路</h3>
+        <ol role="list">
+          <li><span class="step">Step 1.</span>
+            <span class="lead"><strong>学校邮箱</strong>（CityU Outlook）——原件在这里。</span>
+            <span class="who mine">这一段由你决定</span>
+            <div class="help">转发规则是<strong>你在 Outlook 里设的</strong>，我们改不了、也读不到它。
+              怎么设：设置向导第 2 步有图文。</div></li>
+          <li><span class="step">Step 2.</span>
+            <span class="lead"><strong>你的私人邮箱</strong>——我们<strong>只读</strong>这一个邮箱。</span>
+            <span class="who ours">这一段由这个 App 决定</span>
+            <div class="help">下面的「<strong>暂停服务</strong>」停的就是它：待办与提醒一起停，
+              随时可恢复。从不删信、不改信。</div></li>
+          <li><span class="step">Step 3.</span>
+            <span class="lead"><strong>报告与待办</strong>——报告照常生成，发不发邮件由你选。</span>
+            <span class="who mine">这一段由你决定</span>
+            <div class="help">下面的「<strong>要不要收到报告邮件</strong>」管的是它：关掉后只在 App 里显示，
+              一封邮件都不发。</div></li>
+        </ol>
+        <p class="foot">提醒只来自<strong>中间那一段</strong>：学校不转发，我们就看不见。
+          想少收邮件，关第三段，别关第二段。</p>
+      </div>
+      <div class="actions">
+        <button id="load-reports">刷新报告</button>
+        <button id="pause" class="secondary">暂停服务</button>
+        <button id="resume" class="secondary">恢复服务</button>
+        <button id="export-data" class="secondary">导出我的数据</button>
+        <button id="delete" class="danger">删除账户和密钥</button>
+      </div>
+      <div class="help">
+        导出会下载一份 JSON，包含你的设置与全部报告（<strong>不含</strong>邮箱授权码和 API key）。
+        删除会移除账户、密钥、报告与邮件记录，<strong>不可恢复</strong>。详见<a href="/privacy" target="_blank" rel="noopener">《隐私政策》</a>。
+      </div>
+
+      <details class="panel" id="panel-usage-mine">
+        <summary><span class="panel-title">我用了多少</span><span class="panel-note" id="myusage-note">点开才加载</span></summary>
+        <div class="panel-body">
+          <div class="help">
+            只统计<strong>你自己账号</strong>的模型调用。在另行通知前，用平台 key 的调用是管理员出钱，
+            所以下面把「平台代付」和「你自己的 key」<strong>分开列</strong>——混成一个数字的话，
+            对这两类人都会是错的。金额按服务商公开价目表<strong>估算</strong>，不是账单。
+          </div>
+          <div class="actions" style="margin:10px 0">
+            <select id="myusage-days" style="width:auto">
+              <option value="7">最近 7 天</option>
+              <option value="30" selected>最近 30 天</option>
+              <option value="90">最近 90 天</option>
+            </select>
+            <button id="myusage-refresh" class="ghost">刷新</button>
+          </div>
+          <div id="myusage-body"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-report-mode">
+        <summary><span class="panel-title">报告的详细程度</span><span class="panel-note" id="reportmode-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">
+            每封来信都会生成一份报告，这里选的是<strong>它写多详细</strong>：
+            <strong>精简</strong>三段（重要程度、必须做的事、要点）；
+            <strong>完整</strong>七段（多出与你的关系、<strong>联网搜索的建议与来源</strong>、风险与未知、英文摘要）。
+            实测完整版约是精简版的 <strong>1.45 倍</strong>（每封多约 ¥0.002）——
+            差别这么小，所以这是<strong>阅读偏好，不是省钱开关</strong>。用平台 key 时由管理员付费（在另行通知前）。
+          </div>
+          <div class="actions" style="margin:10px 0">
+            <select id="reportmode-select" style="width:auto">
+              <option value="">跟随站点设置</option>
+              <option value="brief">总是精简（三段）</option>
+              <option value="full">总是完整（七段）</option>
+            </select>
+            <button id="reportmode-save" class="ghost">保存</button>
+          </div>
+          <div id="reportmode-hint" class="help"></div>
+        </div>
+      </details>
+
+      <!-- 报告邮件（v0.63.85）：一个总开关 + 两个细分选项，**只有这一处**。
+           写在「报告与账户」而不是「编辑资料」里有两个原因：① 那两个勾选原来混在资料
+           表单里，保存资料会顺手把它改回去（两个写入点迟早自相矛盾）；② 关掉它的人
+           需要同时看到三句实话，那三句话在资料表单里放不下。 -->
+      <details class="panel" id="panel-report-mail">
+        <summary><span class="panel-title">要不要收到报告邮件</span><span class="panel-note" id="reportmail-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">
+            关掉之后：<strong>报告照常生成</strong>，「今天要处理的事」、提醒、看原信、
+            翻译与总结都还在这个 App 里，只是<strong>不再往你邮箱里发邮件</strong>。
+          </div>
+          <div style="margin:12px 0">
+            <label><input id="reportmail-receive" type="checkbox" checked style="width:auto"> <strong>接收报告邮件</strong></label>
+            <div class="help" id="reportmail-summary">—</div>
+          </div>
+          <div id="reportmail-detail" style="margin:0 0 10px;padding-left:22px">
+            <label><input id="reportmail-immediate" type="checkbox" checked style="width:auto"> 有新邮件就发一封摘要</label>
+            <label style="display:block;margin-top:8px"><input id="reportmail-daily" type="checkbox" checked style="width:auto"> 每天发一封简报</label>
+          </div>
+          <div class="help" id="reportmail-what">
+            <strong>这个开关管不到的：</strong>
+            ① 学校转来的原信<strong>还是会到你的私人邮箱</strong>——那是你在 CityU Outlook 里
+            设的转发规则，我们停不掉；
+            ② <strong>服务公告</strong>与<strong>「你的账号或邮箱出问题」的通知</strong>照发；
+            ③ 想看原件时，报告列表里点「看原信」可以当场从邮箱取回那一封。
+          </div>
+          <div class="help" id="reportmail-fewer" style="margin-top:8px">
+            <strong>想更少收邮件？</strong>只有两条真路：关掉上面的开关，或者把学校的转发
+            改到一个你不常看的邮箱（报告也可以发到另一个地址）。注意<strong>不转发就等于
+            我们看不见，也就没有提醒</strong>——提醒的唯一来源就是转过来的那封信。
+          </div>
+          <div id="reportmail-status" class="status"></div>
+        </div>
+      </details>
+
+      <div id="reports-list"></div>
+    </section>
+
+    <section id="section-admin" class="card hidden">
+      <h2 style="font-size:16px">管理后台</h2>
+      <div class="actions admin-refresh-bar">
+        <button id="admin-refresh" type="button">刷新全部</button>
+        <span id="admin-refreshed" class="help">还没有刷新过</span>
+      </div>
+      <div id="admin-status" class="status"></div>
+      <!-- 「刷新之后我该看什么」。这些数字本来就散在 17 个**收起**的面板摘要行里，
+          等于没有：有人提交了申请，屏幕上唯一的变化是某一行小字从「0 待处理」变成
+          「1 待处理」。这一行把它们点名写出来，每一项点一下就展开那个面板。
+          v0.63.71，用户原话「我刷新后台界面应该要可以显示新的通知，比如有人申请了
+          邀请码等等」。内容全部来自这一次刷新**已经取回**的数据，不新增任何请求。 -->
+      <div id="admin-attention" class="admin-attention" role="status" aria-live="polite"></div>
+      <!-- 「上次打开之后有什么动静」（v0.63.72）。和上一行分工不同：上一行是「现在要我
+           做什么」，这一行是「我不在的时候发生过什么」—— 已经自己了结的事（有人申请、
+           我批了、他注册了）在上一行里会消失，而运营者恰恰想知道它发生过。时刻由服务端
+           按人记（`admin_seen:<id>`），所以刷新页面、换设备、明天再来都还看得见。 -->
+      <div id="admin-activity" class="admin-attention" role="status" aria-live="polite"></div>
+      <p class="help">只有获授权的管理员能看到这一页（环境变量指定或后台授权）。此页不会显示任何现有密钥或邮箱授权码，只能看到"是否已配置"。</p>
+      <nav id="admin-workspace-nav" class="admin-workspace-nav" aria-label="管理后台分区"></nav>
+      <div class="admin-workspace-heading"><h3 id="admin-workspace-title">运行总览</h3><p id="admin-workspace-description">收信与下发证据、待处理异常与近期变化。</p></div>
+
+      <div class="metrics" id="admin-health" style="margin:12px 0"></div>
+      <!-- 「信有没有到」的证据：每个邮箱最近一次取信、最近一封本校来信、24 小时几封。
+           以前这里只有一个「收信正常 4 / 4」——那是个状态计数，好日子里它一动不动，
+           所以它既证明不了正常，也说明不了异常；真正的证据是学校那一边的信真的到了。 -->
+      <div id="admin-delivery" class="help" style="margin:-4px 0 14px"></div>
+
+      <!-- Every module below is a native <details> that starts collapsed: the
+           page stays short and you open only what you need. The summary line
+           always carries the current numbers, so collapsing hides the detail
+           but never the signal. -->
+      <details class="panel" id="panel-edit">
+        <summary><span class="panel-title">修改用户设置</span><span class="panel-note" id="panel-edit-note">—</span></summary>
+        <div class="panel-body">
+          <p class="help">选一个用户再改。<strong>只保存你真正改动过的字段</strong>；API key 与邮箱授权码可以替换，但永远不会回显。</p>
+          <div class="row" style="gap:8px;margin-bottom:12px">
+            <label for="edit-user" style="margin:0">选择用户</label>
+            <select id="edit-user" style="width:auto;min-width:220px"></select>
+          </div>
+          <div id="admin-editor"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-users">
+        <summary><span class="panel-title">已注册用户</span><span class="panel-note" id="panel-users-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help" style="margin-bottom:10px">
+            四盏灯里，「收信 / 模型 / 搜索」只有在<strong>真的测过一次</strong>之后才会变绿，
+            而唯一不会去点那个按钮的人，正是账号的主人。这里可以替他点：
+            勾选要刷新的账号（或全选），按「刷新勾选的」；只想看一个人，就按那一行自己的「刷新状态」。
+            刷新会<strong>真的连一次邮箱、真的调一次模型和搜索</strong>
+            （没有自己的 key 的账号用平台兜底 key，由平台出钱，每次调用几分钱），
+            <strong>不会</strong>改动或删除任何邮件，也<strong>不会</strong>伪造「出报告」那盏灯——
+            那盏只能由一封真的来信点亮。一次只跑一个账号，慢的那个不会拖住别人，中途可以停。
+            <br>所以点完看到红灯，先别急着再点一次：<strong>「出报告」不在这次测试里</strong>，
+            它要等真的有一封 CityU 来信被分析并寄出去；而<strong>灰色的「走平台兜底 key」不是故障</strong>——
+            那两盏灯证明的是「他自己配的 key 能不能用」，没有自己 key 的账号本来就不适用。
+            红灯上悬停会写出<strong>它是什么时候失败的</strong>，好分辨是刚出的事还是早就修好的旧账。
+            <br>下面<strong>一个账号一张卡，默认都是收起的</strong>（以前一点开就全摊开，找一个人要翻很久）。
+            收起时也留着<strong>那四盏灯</strong>和「未配完」的标记，所以不用点开就能看出谁有事；
+            点开一个，其余会自动收起。要批量刷新就勾左边的框，不用点开。
+          </div>
+          <!-- 搜索框（v1.5.29）。**纯前端过滤**：这一屏的全部账号本来就已经在
+               `adminData.users` 里（上限 300），再要一次网络往返只会让搜索变慢，
+               还会多出一份「服务端也筛了一遍」的第二语义 —— 两份迟早会漂。
+               它**只影响显示**，不参与勾选的清理（`renderAdminUsers` 里那段注释
+               说明了为什么：拿过滤后的名单去清理 `usersPicked`，搜一次就会把
+               没显示出来的人的勾全丢掉，「刷新勾选的」于是静默少刷几个人）。 -->
+          <div class="row admin-users-search">
+            <label class="admin-search-field"><span>搜索用户</span>
+              <input id="users-search" type="search" autocomplete="off" inputmode="search"
+                     placeholder="邮箱 / 称呼 / 学校邮箱 / 转发邮箱 / 备注">
+            </label>
+            <button id="users-search-clear" class="ghost" type="button">清空</button>
+          </div>
+          <div class="help admin-users-count" id="users-search-note">—</div>
+          <div class="actions admin-users-bulk">
+            <label style="margin:0;display:inline-flex;gap:6px;align-items:center">
+              <input type="checkbox" id="users-pick-all"> 全选</label>
+            <button id="users-refresh-picked" class="secondary">刷新勾选的（0）</button>
+            <button id="users-refresh-all" class="ghost">刷新全部（0）</button>
+            <button id="users-refresh-stop" class="ghost" disabled>停止</button>
+          </div>
+          <div class="help admin-users-cost" id="users-refresh-note">—</div>
+          <div id="users-refresh-progress" class="help"></div>
+          <!-- 临时密码只在这里露面一次。它不写进任何持久的地方（不落库、不进日志、
+               连审计行里也没有），所以这一块必须**留在屏幕上直到运营者自己关掉**：
+               弹一个 alert 的话，手一滑点掉就再也找不回来，只剩「再跑一次」这条路。
+               v0.63.98 起后台有「重设密码」按钮，服务端是
+               POST /api/admin/users/{id}/password-reset。 -->
+          <div id="admin-reset-box" class="hidden"></div>
+          <div id="users-refresh-results"></div>
+          <div id="admin-users"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-admins">
+        <summary><span class="panel-title">管理员</span><span class="panel-note" id="panel-admins-note">—</span></summary>
+        <div class="panel-body">
+          <p class="help">
+            服务器环境变量 <code>INFE_PILOT_ADMIN_EMAILS</code> 里列出的账号是<strong>主人</strong>，在这里<strong>不可移除</strong>；
+            在这下面授予的可以随时收回。你授予的是<strong>永久</strong>权限，会一直有效到你收回它为止，
+            所以每次操作都要重新输一次你的登录密码。
+          </p>
+          <div id="admins-status" class="status"></div>
+          <div id="admin-roster"></div>
+          <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:12px">
+            <label style="margin:0">要授予的账号邮箱
+              <input id="admin-grant-email" type="email" autocomplete="email" inputmode="email" placeholder="已经注册过的邮箱" style="width:260px">
+            </label>
+            <label style="margin:0">你的密码
+              <input id="admin-grant-password" type="password" autocomplete="current-password" style="width:180px">
+            </label>
+            <button id="admin-grant">授予管理员</button>
+          </div>
+          <div class="help" style="margin-top:8px">
+            只能授予<strong>已经注册过</strong>的账号。填一个还没注册的地址会变成一句空头承诺：
+            以后用那个地址注册的人会悄悄变成管理员——包括你打错字的情况。
+          </div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-capacity">
+        <summary><span class="panel-title">名额</span><span class="panel-note" id="panel-capacity-note">—</span></summary>
+        <div class="panel-body">
+          <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <label style="margin:0">允许注册的账号数
+              <input id="capacity-input" type="number" min="1" max="1000" step="1" style="width:120px">
+            </label>
+            <button id="capacity-save">保存</button>
+            <button id="capacity-adopt" class="secondary">采用建议值</button>
+            <button id="capacity-reset" class="ghost">恢复环境默认</button>
+          </div>
+          <div class="help" id="capacity-source"></div>
+          <div id="capacity-advice" style="margin-top:14px"></div>
+          <div class="help" id="capacity-explain" style="margin-top:10px"></div>
+          <div class="actions" style="margin-top:6px">
+            <button id="capacity-refresh" class="ghost">重新评估</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-digest">
+        <summary><span class="panel-title">每日简报</span><span class="panel-note" id="panel-digest-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help" style="margin-bottom:10px">
+            每日简报本身是<strong>程序拼出来的清单</strong>——每封处理过的邮件占一行，
+            所以不会有哪封被模型丢掉。打开下面这个开关，会在清单<strong>之外</strong>再附一段
+            模型写的综览（例如「三门课都有作业」），用来看出跨邮件的规律。
+            <strong>它只是附加的一段话</strong>：模型不可用、太慢或写错了，清单照样原样发出。
+            打开后每人每天多一次模型调用。
+          </div>
+          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="digest-toggle">—</button>
+            <span class="help" id="digest-source"></span>
+          </div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-mail">
+        <summary><span class="panel-title">全部邮件与下发情况</span><span class="panel-note" id="panel-mail-note">—</span></summary>
+        <div class="panel-body">
+          <div class="row" style="gap:8px">
+            <select id="mail-filter" style="width:auto">
+              <option value="all">全部</option>
+              <option value="undelivered">没发出去的</option>
+              <option value="failed">失败的</option>
+              <option value="skipped">已跳过（非允许发件人）</option>
+              <option value="sent">已下发的</option>
+              <option value="pending">处理中的</option>
+            </select>
+            <select id="mail-user" style="width:auto"></select>
+            <button id="mail-refresh" class="ghost">刷新</button>
+          </div>
+          <div class="help">每一封收到的信一行，<b>点行展开</b>看细节。这里只显示元数据（发件人、时间、状态、错误）——
+            邮件正文在发出后就已删除，报告正文也不在这里显示，所以你看到的是"有没有被正确处理并下发"，而不是别人的信件内容。</div>
+          <div class="metrics" id="mail-counts" style="margin:12px 0"></div>
+          <div id="admin-messages"></div>
+          <div class="actions" id="mail-more-wrap" style="display:none">
+            <button id="mail-more" class="secondary">加载更多</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-usage">
+        <summary><span class="panel-title">每个用户的 token 消耗与花费</span><span class="panel-note" id="panel-usage-note">—</span></summary>
+        <div class="panel-body">
+          <div class="actions" style="margin:0 0 8px">
+            <select id="usage-days" style="width:auto">
+              <option value="1">今天</option>
+              <option value="7">近 7 天</option>
+              <option value="30" selected>近 30 天</option>
+              <option value="90">近 90 天</option>
+            </select>
+            <button id="usage-refresh" class="ghost">刷新</button>
+          </div>
+          <div class="help">按<b>香港时间</b>分日统计。费用是按供应商公开价目表<b>估算</b>的，仅供参考，实际以账单为准；
+            没有价格记录的模型只统计 token、不计费（不会当成 0 元）。点每一行展开看按天与按模型的明细。</div>
+          <div class="metrics" id="usage-totals" style="margin:12px 0"></div>
+          <div id="admin-usage"></div>
+          <div id="usage-price-editor"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-website-content">
+        <summary><span class="panel-title">网站内容 · 客服群二维码</span><span class="panel-note" id="panel-website-content-note">—</span></summary>
+        <div class="panel-body">
+          <p class="help">修改介绍页的纯文字和客服群二维码；隐私条款不在这里编辑。先预览，再保存，保存后立即生效，无需重启。</p>
+          <label for="website-title-line1">标题第一行（最多 80 字）</label>
+          <input id="website-title-line1" type="text" maxlength="80">
+          <label for="website-title-line2">标题第二行（最多 80 字）</label>
+          <input id="website-title-line2" type="text" maxlength="80">
+          <label for="website-introduction">介绍（最多 1000 字）</label>
+          <textarea id="website-introduction" rows="4" maxlength="1000"></textarea>
+          <label for="website-customer-service">客服说明（最多 500 字）</label>
+          <textarea id="website-customer-service" rows="3" maxlength="500"></textarea>
+          <label for="website-expired-notice">二维码过期提示（最多 500 字）</label>
+          <textarea id="website-expired-notice" rows="3" maxlength="500"></textarea>
+          <label for="website-qr-image">新客服群二维码（JPEG / PNG）</label>
+          <input id="website-qr-image" type="file" accept="image/jpeg,image/png">
+          <p class="help" id="website-qr-note">图片会在浏览器里去掉元数据后上传；上传只是草稿，保存前不会替换网站上的码。</p>
+          <img id="website-qr-preview" alt="客服群二维码预览" hidden style="display:block;max-width:280px;max-height:430px;width:auto;height:auto;margin:12px 0">
+          <button id="website-qr-discard" class="ghost" type="button" hidden>放弃新图，保留当前码</button>
+          <label for="website-qr-expires">失效日期（香港时间当天00:00起）</label>
+          <input id="website-qr-expires" type="date">
+          <p class="help" id="website-qr-state">—</p>
+          <p class="help">按微信显示的实际期限填写；不能仅延长旧二维码的日期来恢复有效状态。文案和二维码会一起保存。</p>
+          <div class="actions">
+            <button id="website-content-preview" class="secondary" type="button">预览修改</button>
+            <button id="website-content-save" type="button" disabled>保存并发布</button>
+            <button id="website-content-reset" class="ghost" type="button">恢复默认文案</button>
+            <button id="website-content-reload" class="ghost" type="button">重新读取</button>
+          </div>
+          <div id="website-content-status" class="saved" role="status" style="display:none"></div>
+          <iframe id="website-content-preview-frame" title="网站内容预览（不执行脚本）" sandbox="" hidden style="width:100%;height:600px;border:1px solid var(--border);margin-top:12px"></iframe>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-reminders">
+        <summary><span class="panel-title">卡住的账号 · 一键提醒</span><span class="panel-note" id="panel-reminders-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help" style="margin-bottom:10px">
+            有些人注册之后就再没动过：没填私人邮箱，或者授权码填错了。
+            他们收不到任何信，也不会知道有这件事要做——<strong>唯一看不见这个问题的人，就是他们自己</strong>。
+            第四种：<strong>邮箱服务商自己不再允许用授权码收信</strong>（微软个人版已强制 OAuth）——
+            这种人换多少次授权码都没用，只能换一个邮箱，所以要发给他的是另一封信。
+            还有第三种：<strong>邮箱明明接通了，却一封 CityU 来信都没到过</strong>——
+            学校那边的转发规则有没有生效，我们这边无法验证，唯一的证据是信真的到了；
+            这种人以前不在任何名单上，也没有人告诉过他（见下面「邮箱通了却收不到信」那一封）。
+            下面是每一个卡住的人、卡在哪一步，以及要发给他的那封信。
+            <strong>每个人只会收到一封</strong>——他卡在哪一步，就收到哪一封；
+            所以「不同的人收到不同的信」不是重复，一次点击也不会把几封信都发一遍。
+            <strong>只想发给某一个人，就按他那行的「只发给他」</strong>：
+            一次点击 = 一个人 + 他那一种情况的那封信。
+            每个账号<strong>只发一次</strong>（发过就记下来，重复按不会重复发）——
+            但如果他后来卡在<strong>另一件事</strong>上（例如邮箱配好了、转发却一直没生效），
+            那么该收到的是另一封信，旧记录不会把它盖住。
+            三个按钮从左到右：只发没提醒过的 · 连提醒过的也再发 · <strong>所有人都发</strong>
+            （<strong>不管注册多久</strong>，含今天刚注册、还没满自动提醒门槛的新账号）。
+            想只发给其中几个人，就在下面名单里<strong>勾选</strong>，再按「只给勾选的发」——
+            勾选<strong>压过上面那两道门槛</strong>（提醒过的、今天刚注册的都能勾着发），
+            但已经配好的人不会再收到「你还没配好」那种信，只会在结果里告诉你跳过了几个。
+            正文可以在下面直接改，改完保存，之后再发的都用你这一份。
+          </div>
+          <div class="actions" style="margin:0 0 10px">
+            <button id="reminders-send">—</button>
+            <button id="reminders-resend" class="ghost">—</button>
+            <button id="reminders-all" class="ghost">—</button>
+            <button id="reminders-refresh" class="ghost">刷新</button>
+          </div>
+          <div id="reminders-status" class="status"></div>
+          <div id="reminders-rows"></div>
+          <div id="reminders-picker" class="usebreak" style="margin-top:12px">
+            <h4>自己选人发</h4>
+            <div class="actions" style="margin:0 0 8px">
+              <button id="reminders-pick-send" class="secondary">只给勾选的发（0）</button>
+              <button id="reminders-pick-none" class="ghost">全不选</button>
+              <span class="help" id="reminders-pick-note">—</span>
+            </div>
+            <div id="reminders-pick-list"></div>
+          </div>
+          <details id="panel-reminder-text" style="margin-top:12px">
+            <summary><span class="panel-title">邮件正文（可编辑）</span>
+              <span class="panel-note" id="reminder-text-note">—</span></summary>
+            <div class="panel-body">
+              <div class="help">这里改的是<strong>之后要发的</strong>那几封信（四种卡住的情况各一封，
+              每个人只会收到他自己那一封），改完按保存。
+              可用的占位符：<code>{link}</code>（<strong>设置向导那一页</strong>的地址，收信人点开就是
+              「邮箱设置」，四格进度在页面顶上，<strong>必须保留</strong>）、
+              <code>{wechat}</code>（联系方式那两行）、<code>{steps}</code>（按对方邮箱自动生成的授权码步骤）、
+              <code>{mailbox}</code>（对方的私人邮箱）。写错的占位符会被拒绝，不会原样发给用户。</div>
+              <h4 class="help">没填过私人邮箱的人收到这封</h4>
+              <textarea id="reminder-text-never" rows="10" style="width:100%"></textarea>
+              <div class="actions"><button id="reminder-text-save-never" class="secondary">保存这一封</button>
+                <button id="reminder-text-reset-never" class="ghost">恢复默认</button>
+                <span id="reminder-text-status-never" class="saved" style="display:none"></span></div>
+              <h4 class="help">授权码被拒的人收到这封</h4>
+              <textarea id="reminder-text-refused" rows="10" style="width:100%"></textarea>
+              <div class="actions"><button id="reminder-text-save-refused" class="secondary">保存这一封</button>
+                <button id="reminder-text-reset-refused" class="ghost">恢复默认</button>
+                <span id="reminder-text-status-refused" class="saved" style="display:none"></span></div>
+              <h4 class="help">邮箱服务商停用了授权码登录的人收到这封</h4>
+              <div class="help">这一封的 <code>{steps}</code> 是<strong>换一个邮箱</strong>的步骤
+                （不是生成授权码——在这个服务商那里生成多少次都不会成功）。</div>
+              <textarea id="reminder-text-provider" rows="12" style="width:100%"></textarea>
+              <div class="actions"><button id="reminder-text-save-provider" class="secondary">保存这一封</button>
+                <button id="reminder-text-reset-provider" class="ghost">恢复默认</button>
+                <span id="reminder-text-status-provider" class="saved" style="display:none"></span></div>
+              <h4 class="help">邮箱通了却收不到信的人收到这封</h4>
+              <div class="help">这一封里的 <code>{steps}</code> 是<strong>学校那边</strong>的转发步骤
+                （CityU 官方 FAQ 的路径），不是私人邮箱的授权码步骤——那一步他已经做完了。</div>
+              <textarea id="reminder-text-no_mail" rows="12" style="width:100%"></textarea>
+              <div class="actions"><button id="reminder-text-save-no_mail" class="secondary">保存这一封</button>
+                <button id="reminder-text-reset-no_mail" class="ghost">恢复默认</button>
+                <span id="reminder-text-status-no_mail" class="saved" style="display:none"></span></div>
+            </div>
+          </details>
+
+          <details id="reminders-preview-box" style="margin-top:12px">
+            <summary class="help">先看一遍要发的四封信（点开）</summary>
+            <div id="reminders-preview"></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-alerts">
+        <summary><span class="panel-title">巡检</span><span class="panel-note" id="panel-alerts-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help" style="margin-bottom:10px">
+            哨兵每 5 分钟查一次，这里是它<strong>最近一次</strong>的结果。每一项分成三档：
+            <strong>立刻发邮件</strong>（会自己变糟、正在影响用户、或除了邮件没人会告诉你）、
+            <strong>每天汇总一封</strong>（当事人不会来问，但晚一点不会更糟）、
+            <strong>只在这里显示</strong>（长期、已知、别处已经看得到）。
+            点「已知晓」就不再为这一条发邮件；<strong>问题清掉之后它会自动恢复提醒</strong>，
+            所以它不会把以后的新问题一起盖住。
+          </div>
+          <div id="admin-alerts"></div>
+        </div>
+      </details>
+      <details class="panel" id="panel-agent">
+        <summary><span class="panel-title">AI 运维助手</span><span class="panel-note" id="panel-agent-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help" style="margin-bottom:10px">
+            出问题时把「哪台机器/哪个账号的什么指标不对劲」交给模型，让它写清楚
+            <strong>看到了什么、可能是什么原因、建议怎么办</strong>，并附在告警邮件里。
+            <strong>它只读</strong>：不会执行任何动作，也不会看到邮件正文、主题或发件人——
+            它拿到的只有计数、状态、时长和错误代码。每次调用都会计入下面的额度。
+            <br>下面是<strong>历史结论</strong>，所以每一条都写着它<strong>现在还成不成立</strong>：
+            「仍在」是还没好，「现在已经不在了」是已经修好的旧账（别再照它去查），
+            「你按过已知晓」是好了不说但你知道，<strong>「详情已经变了」则说明这一条是旧结论</strong>——
+            以巡检面板里的现状为准。发现项一出现就会送去分析（一轮最多三条，剩下的下一轮补上）。
+          </div>
+          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="agent-toggle">—</button>
+            <button id="agent-run" class="secondary">分析现在的问题</button>
+            <button id="agent-refresh" class="ghost">刷新</button>
+          </div>
+          <div class="help" id="agent-state" style="margin-top:8px"></div>
+          <div id="agent-reports" style="margin-top:14px"></div>
+          <div id="agent-actions" style="margin-top:12px"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-model-server">
+        <summary><span class="panel-title">模型服务器</span><span class="panel-note" id="panel-model-server-note">展开查看</span></summary>
+        <div class="panel-body">
+          <p class="help">这里观察本机模型盒子 —— 不是腾讯云网站主机，也不是 Mac 的指标。展开时每 15 秒刷新；轻量探测只验证 TLS / 指纹和代理连通，<b>不代表上游模型能生成</b>，不调用模型。资源读数（CPU / 内存 / 系统盘 / GPU 显存与温度 / 推理槽）是模型机上的只读数字，采集时间过期或读不到时明确标未知，不会用 0 冒充成功；服务重启仍未接入。</p>
+          <div class="actions"><span class="help" id="model-server-stamp">—</span><button id="model-server-refresh" class="ghost">刷新状态</button></div>
+          <div class="metrics" id="model-server-readings" style="margin:12px 0"></div>
+          <p class="help">手动诊断会占用一个推理槽，使用固定虚构内容、仅调用本机主档，<b>失败不走付费兜底</b>。不读取邮件、不显示生成正文、不改变实际报告的健康标记。全站同时限一次，结束后冷却 60 秒；会记录审计。历史未记录的失败时间仍为未知。</p>
+          <div class="stack"><div><label for="model-server-password">诊断前重新输入你的登录密码</label><input id="model-server-password" type="password" autocomplete="current-password"></div></div>
+          <div class="actions"><button id="model-server-diagnose">运行主档合成诊断</button></div>
+          <div class="saved" id="model-server-status" role="status" aria-live="polite"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-metrics">
+        <summary><span class="panel-title">服务器实时指标</span><span class="panel-note" id="panel-metrics-note">—</span></summary>
+        <div class="panel-body">
+          <div class="actions" style="margin:0 0 8px">
+            <span class="help" id="metrics-stamp" style="margin:0">—</span>
+            <button id="metrics-refresh" class="ghost">刷新</button>
+          </div>
+          <div class="help">腾讯云网站主机的指标，不是模型盒子。每 3 秒自动刷新一次，<b>只有这一块展开时才刷新</b>，收起或切走就停（不占服务器）。数值采集自网站主机 <code>/proc</code>，不调用任何外部命令。</div>
+          <div class="metricgrid" id="metrics-host"></div>
+          <div class="metrics" id="metrics-app" style="margin:14px 0"></div>
+          <div id="metrics-note" class="help"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-broadcast">
+        <summary><span class="panel-title">全体广播</span><span class="panel-note" id="panel-broadcast-note">—</span></summary>
+        <div class="panel-body">
+          <p class="help">发出去后，<b>所有用户一打开网页就会在最上方看到</b>；也可以选择同时给每个人的私人邮箱发一封。
+            同一时间只会显示最新的一条公告，撤下即消失。</p>
+          <div class="stack">
+            <div><label for="broadcast-title">标题</label><input id="broadcast-title" maxlength="200" placeholder="例如：本周六 22:00 系统维护"></div>
+            <div><label for="broadcast-body">内容</label><textarea id="broadcast-body" maxlength="4000" placeholder="一到三句话说清楚：发生了什么、需要用户做什么、什么时候。"></textarea></div>
+            <div class="grid2">
+              <div><label for="broadcast-tone">类型</label><select id="broadcast-tone">
+                <option value="info">通知（蓝色）</option>
+                <option value="warn">提醒（橙色）</option>
+                <option value="critical">重要（红色）</option>
+              </select></div>
+              <div><label for="broadcast-delivery">发送范围</label><select id="broadcast-delivery">
+                <option value="banner">仅站内广播（用户登录后看到）</option>
+                <option value="email">站内广播 + 给每个用户发一封邮件</option>
+              </select></div>
+            </div>
+            <div>
+              <label for="broadcast-image">配图（可选）</label>
+              <!-- 用户原话：「我要在广播哪里可以添加图片和文字一起广播」。
+                   图**在浏览器里先重编码**（和背景照片同一条路、同一个函数）：EXIF/GPS
+                   在重编码那一刻就不存在了，所以服务端可以「带元数据就拒收」，而不是
+                   去改写别人的文件。上传是两步里的第一步（预览 → 发布），没发布的草稿
+                   六小时后自动清掉。 -->
+              <input type="file" id="broadcast-image" accept="image/jpeg,image/png">
+              <div class="help" id="broadcast-image-note">选一张 JPEG/PNG：会先在浏览器里压缩到
+                2048 像素以内（去掉拍摄地点等元数据），随广播一起显示。</div>
+              <figure id="broadcast-image-preview" hidden></figure>
+              <div class="actions" id="broadcast-image-actions" hidden>
+                <button type="button" class="ghost" id="broadcast-image-remove">移除这张图</button>
+              </div>
+            </div>
+          </div>
+          <div class="actions"><button id="broadcast-publish">发布广播</button></div>
+          <div id="broadcast-status" class="saved" style="display:none"></div>
+          <div id="admin-announcements"></div>
+        </div>
+      </details>
+
+      <!-- 2026-09-22：**这块只剩历史了**。首页那张申请表单与「发码」按钮一起下线，
+           注册完全开放，所以这里不再有任何动作按钮 —— 打开它只是回看当年那 49 条申请
+           与它们那封码邮件的投递结果（数据一条没删，接口也还在）。 -->
+      <details class="panel" id="panel-signups">
+        <summary><span class="panel-title">注册申请（历史）</span><span class="panel-note" id="panel-signups-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">来自当年那张申请表的记录，<strong>只读</strong>：注册已经完全开放（任何邮箱填了就能建号），
+          不再有「审批」这一步，也不再有新的申请。下面是历史行与它们那封码邮件当年的投递结果。</div>
+          <!-- 申请到了通知谁（v0.63.93）。环境文件里配的管理员**永远**收得到，这里只能**再加**人
+               —— 控制台撤不掉环境里那一份，所以界面上也不假装能撤。 -->
+          <div class="help" style="margin-top:14px"><strong>（历史通道）有申请到了，通知谁：</strong>环境文件里配的管理员<strong>永远</strong>会收到，
+            下面可以再勾几个管理员一起收。两件事写在按钮旁边：勾选<strong>只对管理员有效</strong>；
+            而且每封信都是<strong>借收件人自己的邮箱</strong>发出去的（没有系统信箱），
+            所以还没配好转发邮箱的管理员<strong>勾了也收不到</strong>。</div>
+          <div class="stack" id="signup-notify-list"></div>
+          <div class="row" style="margin-top:10px">
+            <button id="signup-notify-save" class="secondary">保存通知名单</button>
+            <span class="status" id="signup-notify-status"></span>
+          </div>
+          <div id="admin-signups"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-analytics">
+        <summary><span class="panel-title">访问统计</span><span class="panel-note" id="panel-analytics-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">官网与应用有多少人看、从哪儿来。<strong>机器人单独算</strong>，不混进人数里
+          （这台机器在公网地址上，扫描器很多）。<strong>你自己的访问不计入</strong>——运营者看自己的站不是访客；
+          已经被记下的可以用旁边的「删掉我自己的记录」清掉。
+          <strong>访客地址不落盘</strong>：库里只有一把键控摘要，用来数「不同的人」；完整 IP
+          <strong>只存在内存里</strong>（「最近访问」那一栏），重启就没了，也不会进每日备份。
+          国家/城市来自离线库 <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a>（CC BY 4.0）。</div>
+          <div class="row" style="gap:8px;margin:10px 0">
+            <select id="analytics-days" style="width:auto">
+              <option value="1">今天</option>
+              <option value="7" selected>最近 7 天</option>
+              <option value="30">最近 30 天</option>
+              <option value="90">最近 90 天</option>
+            </select>
+            <button id="analytics-refresh" type="button" class="secondary">刷新</button>
+            <button id="analytics-purge" type="button" class="ghost">删掉我自己的记录</button>
+            <span id="analytics-status" class="saved" style="display:none"></span>
+          </div>
+          <div id="admin-analytics"></div>
+        </div>
+      </details>
+
+      <details class="panel" id="panel-guestbook">
+        <summary><span class="panel-title">留言板</span><span class="panel-note" id="panel-guestbook-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">来自官网的留言。<strong>没注册的人也能写</strong>，默认只有你看得到——
+          「刊登」之后会匿名出现在官网首页（只显示昵称与正文，<strong>邮箱永不刊登</strong>）。
+          「驳回」保留记录但不上墙；「删除」把这一行真正删掉。</div>
+          <div class="row" style="gap:8px;margin-bottom:10px">
+            <button id="guestbook-refresh" type="button" class="secondary">刷新</button>
+            <span id="guestbook-status" class="saved" style="display:none"></span>
+          </div>
+          <div id="admin-guestbook"></div>
+        </div>
+      </details>
+
+      <!-- 2026-09-22：**「邀请码」面板整块删掉了**（生成表单 + 可用码列表 + 撤销按钮）。
+           注册不再需要码，界面上也没有任何地方能填它，所以造码这件事不该再从控制台发生。
+           服务端 `POST/DELETE /api/admin/invites` 与 `Database.create_invite/expire_invite`
+           都留着：15 个测试/工具夹具靠它现造码，历史码也还在库里。 -->
+      <details class="panel" id="panel-audit">
+        <summary><span class="panel-title">最近管理操作</span><span class="panel-note" id="panel-audit-note">—</span></summary>
+        <div class="panel-body">
+          <div class="help">按时间倒序，记录操作者、动作与对象。<strong>只能追加，不能修改或删除。</strong></div>
+          <div id="admin-audit"></div>
+        </div>
+      </details>
+    </section>
+  </section>
+    </main>
+
+    <!-- Legal links live in the shell, not in a page-wide footer: under a
+         sidebar layout a full-width footer breaks the column alignment, and on
+         a phone it would sit underneath the tab bar. -->
+    <footer class="footer-links">
+      CityU Mail Pilot · 版权人 余剑篪 · AGPL-3.0 ·
+      <a href="/privacy" target="_blank" rel="noopener">隐私政策</a> ·
+      <a href="/terms" target="_blank" rel="noopener">服务条款</a><span id="source-link"></span>
+    </footer>
+
+    <!-- Mobile primary destinations. Four tabs plus "更多": Material's
+         navigation bar and iOS's tab bar both top out around five, and a sixth
+         item would be squeezed to an unreadable label rather than added. -->
+    <nav class="tabbar" id="tabbar" aria-label="主标签"></nav>
+  </div><!-- /shell-body -->
+</div><!-- /shell -->
+
+<div class="drawer-scrim hidden" id="drawer-scrim"></div>
+<nav class="drawer" id="drawer" aria-label="全部板块" hidden>
+  <div class="drawer-head">
+    <strong>全部板块</strong>
+    <button id="drawer-close" class="ghost" aria-label="关闭">关闭</button>
+  </div>
+  <ul class="navlist" id="drawer-nav"></ul>
+</nav>
+
+<script src="/i18n.js" defer></script>
+<dialog data-i18n-skip id="cal-reminder-dialog" aria-labelledby="cal-reminder-heading">
+  <form id="cal-reminder-form">
+    <h3 id="cal-reminder-heading">设置系统提醒</h3>
+    <p id="cal-reminder-time-label"></p>
+    <label><input id="cal-reminder-enabled" type="checkbox"> 开启此事项提醒</label>
+    <label id="cal-reminder-offset-row">提前分钟数 <input id="cal-reminder-offset" type="number" min="0" max="10080" value="60"></label>
+    <label id="cal-reminder-day-row">当天提醒时刻 <input id="cal-reminder-day" type="time" value="09:00"></label>
+    <p id="cal-reminder-status" class="help" role="status"></p>
+    <div class="actions">
+      <button id="cal-reminder-save" type="submit">保存提醒</button>
+      <button id="cal-reminder-confirm" type="button" class="secondary" hidden>确认当前日期与时区，重新启用提醒</button>
+      <button id="cal-reminder-close" type="button" class="secondary">关闭</button>
+    </div>
+  </form>
+</dialog>
+<script src="/notifications.js" defer></script>
+<script src="/app.js" defer></script>
+</body></html>
