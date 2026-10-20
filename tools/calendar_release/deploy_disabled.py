@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from urllib.request import urlopen
 import shlex
 
@@ -97,11 +98,23 @@ def assert_disabled():
         raise RuntimeError('Database notification gate drift')
 
 
-def check_health():
-    with urlopen('http://127.0.0.1:8787/health', timeout=10) as response:
-        value = json.loads(response.read(4096))
-    if value.get('version') != VERSION or value.get('status') != 'ok':
-        raise RuntimeError('New web health not confirmed; contain and review')
+def check_health(expected_version=VERSION):
+    deadline = time.monotonic() + 20
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError('Web readiness deadline exceeded; preserve deployment phase')
+        try:
+            with urlopen('http://127.0.0.1:8787/health', timeout=min(2, remaining)) as response:
+                value = json.loads(response.read(4096))
+            if isinstance(value, dict) and value.get('version') == expected_version and value.get('status') == 'ok' and time.monotonic() <= deadline:
+                return
+        except (OSError, ValueError):
+            pass  # Only retry this local read; never replay migration or deployment.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError('Web readiness deadline exceeded; preserve deployment phase')
+        time.sleep(min(0.25, remaining))
 
 
 def save(state):
@@ -268,10 +281,9 @@ def rollback_offline():
     state = load()
     if state['phase'] in ('exposed', 'opened', 'contained'):
         raise RuntimeError('User writes may exist; DB restore prohibited; contain and review forward recovery')
-    if state['phase'] == 'rolled_back':
-        print('already rolled back'); return
-    stop_writers()
-    if state['phase'] in ('backed_up',):
+    if state['phase'] not in ('restored', 'rolled_back'):
+        stop_writers()
+    if state['phase'] == 'backed_up':
         if sha(BACKUP / 'pilot.sqlite3') != state['snapshot_sha256']:
             raise RuntimeError('Snapshot hash mismatch')
         if (APP / 'pilot_app').exists(): shutil.rmtree(APP / 'pilot_app')
@@ -288,10 +300,19 @@ def rollback_offline():
         UNIT.unlink(missing_ok=True)
         for dropin in DROPINS: dropin.unlink(missing_ok=True)
         run('systemctl', 'daemon-reload')
-    # stopping/backing_up never changed app/config/DB. No DB restore required.
-    state['phase'] = 'rolled_back'; save(state)
+    # Persist data restoration BEFORE any writer starts. Reentry after a start
+    # failure must only resume services, preserving any newly accepted writes.
+    if state['phase'] not in ('restored', 'rolled_back'):
+        state['phase'] = 'restored'; save(state)
+    if '__version__ = \"1.5.43\"' not in (APP / 'pilot_app/__init__.py').read_text():
+        raise RuntimeError('Restored code changed; refuse service recovery')
     resume(state)
-    print('offline rollback finished; verify old health and services')
+    if not all(active(u) for u in WRITERS[:-1] if u in state['active_before']):
+        raise RuntimeError('Old services not restored; retry service recovery only')
+    if WRITERS[0] in state['active_before']:
+        check_health('1.5.43')
+    state['phase'] = 'rolled_back'; save(state)
+    print('offline rollback finished; old services and health confirmed')
 
 
 def contain():

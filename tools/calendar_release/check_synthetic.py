@@ -1,6 +1,8 @@
 """Focused release orchestration tests: real temp SQLite, fake system commands."""
 import importlib.util
 import json
+import io
+from contextlib import nullcontext
 from pathlib import Path
 import shutil
 import sqlite3
@@ -87,6 +89,36 @@ class ReleaseChecks(unittest.TestCase):
         self.assertEqual(m.load()['phase'],'exposed')
         with self.assertRaisesRegex(RuntimeError,'User writes'):m.rollback_offline()
 
+    def rollback_start_failure(self, nth):
+        self.fail_migration=True
+        with self.assertRaises(RuntimeError):m.apply()
+        original=m.run.side_effect;starts=[]
+        def fail_start(*args,**kwargs):
+            if args[:2]==('systemctl','start'):
+                starts.append(args[2])
+                if len(starts)==nth:raise RuntimeError('injected old-service start failure')
+            return original(*args,**kwargs)
+        m.run.side_effect=fail_start
+        with self.assertRaises(RuntimeError):m.rollback_offline()
+        self.assertEqual(m.load()['phase'],'restored')
+        with sqlite3.connect(m.DB) as c:
+            c.execute("INSERT INTO app_settings VALUES('new_user_write','keep')")
+        m.run.side_effect=original
+        with patch.object(m.shutil,'copy2',wraps=m.shutil.copy2) as copies:
+            m.rollback_offline()
+            self.assertEqual(copies.call_count,0)
+        with sqlite3.connect(m.DB) as c:
+            self.assertEqual(c.execute("SELECT value FROM app_settings WHERE key='new_user_write'").fetchone()[0],'keep')
+        self.assertTrue(all(u in self.active for u in m.WRITERS[:-1]))
+        self.assertEqual(m.load()['phase'],'rolled_back')
+        m.check_health.assert_called_with('1.5.43')
+
+    def test_rollback_first_start_failure_retries_services_without_restoring_db(self):
+        self.rollback_start_failure(1)
+
+    def test_rollback_partial_start_failure_keeps_new_writes(self):
+        self.rollback_start_failure(2)
+
     def test_prepared_runtime_repeat_does_not_reinstall(self):
         m.prepare_runtime();m.prepare_runtime()
         self.assertFalse(any('install' in c for c in self.commands))
@@ -96,6 +128,32 @@ class ReleaseChecks(unittest.TestCase):
         with patch.object(m,'run',side_effect=RuntimeError('runtime unavailable')):
             with self.assertRaises(RuntimeError):m.apply()
         self.assertFalse(m.BACKUP.exists());self.assertTrue(self.active)
+
+
+class HealthChecks(unittest.TestCase):
+    def setUp(self):
+        self.now=0
+        def advance(seconds):self.now+=seconds
+        self.clock=patch.object(m.time,'monotonic',side_effect=lambda:self.now);self.clock.start()
+        self.sleep=patch.object(m.time,'sleep',side_effect=advance);self.sleep.start()
+    def tearDown(self):self.sleep.stop();self.clock.stop()
+    @staticmethod
+    def response(version='1.5.44'):
+        return nullcontext(io.BytesIO(json.dumps({'status':'ok','version':version}).encode()))
+    def test_temporary_cold_start_failure_then_exact_version_success(self):
+        with patch.object(m,'urlopen',side_effect=[ConnectionRefusedError(),self.response()]) as request:
+            m.check_health()
+            self.assertEqual(request.call_count,2)
+        self.assertEqual(self.now,0.25)
+    def test_persistent_failure_stops_at_total_deadline(self):
+        with patch.object(m,'urlopen',side_effect=ConnectionRefusedError()) as request:
+            with self.assertRaisesRegex(RuntimeError,'deadline'):m.check_health()
+            self.assertEqual(request.call_count,80)
+        self.assertEqual(self.now,20)
+    def test_wrong_version_never_passes_until_deadline(self):
+        with patch.object(m,'urlopen',side_effect=lambda *a,**k:self.response('1.5.43')):
+            with self.assertRaisesRegex(RuntimeError,'deadline'):m.check_health()
+        self.assertEqual(self.now,20)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

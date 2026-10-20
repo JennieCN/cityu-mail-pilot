@@ -74,6 +74,10 @@ this script does not relax the parent's permissions or claim the key is readable
 
 The persisted `exposed` phase is written BEFORE starting web/worker. `opened` is
 written only after local /health confirms 1.5.44 and disabled gates are checked.
+The local read-only readiness probe retries transient startup failures and wrong
+versions at 250ms intervals within a 20s deadline (each request timeout at most 2s).
+Only status=ok plus the exact expected version succeeds; deadline failure preserves
+exposed and never replays deployment or migration.
 A crash between phases is conservatively treated as potentially user-writable.
 Repeated apply only returns success after rechecking health and gates for `opened`;
 any incomplete phase refuses blind replay. It never replays a one-shot backup service.
@@ -97,7 +101,13 @@ writers. After backed_up, it validates saved snapshot hash, restores old app/too
 removes only newly introduced config/unit/drop-ins, reloads systemd and resumes prior
 active writers. It does not restore env: apply never changes pilot.env. Snapshot DB
 restore is legal here only because the reviewed window has no writers or real sender.
-All backup material remains for audit. Verify old health and units after rollback.
+The persisted restored phase means old data/source have been restored, but services
+are not yet confirmed. A failed first or partial start, or failed old-version health,
+leaves restored. Repeating rollback-offline then only resumes services and checks
+1.5.43 health; it does not stop writers, copy the DB or overwrite new user writes.
+Only after prior active units and exact old health are confirmed is rolled_back
+saved. Repeating a completed rollback also rechecks services/health. Source-version
+drift refuses automatic recovery. All backup material remains for audit.
 
 At/after `exposed`, including a failed health/start or any later real send:
 
