@@ -1,0 +1,35 @@
+[Unit]
+Description=CityU Mail Pilot bounded Web Push sender
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/cityu-mail-pilot/webpush/sending-approved
+
+[Service]
+Type=simple
+User=cityumail
+Group=cityumail
+WorkingDirectory=/opt/cityu-mail-pilot
+EnvironmentFile=/etc/cityu-mail-pilot/pilot.env
+EnvironmentFile=/etc/cityu-mail-pilot/webpush/webpush.env
+# Deliberate second gate. Future enable requires an independently reviewed change.
+Environment=INFE_PILOT_PUSH_ENABLED=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/cityu-mail-pilot-sender/1.5.44/venv/bin/python -m pilot_app.reminder_worker
+Restart=no
+UMask=0077
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/cityu-mail-pilot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=150M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

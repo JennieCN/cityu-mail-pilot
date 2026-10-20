@@ -1,0 +1,12 @@
+{
+  "version": "1.5.44",
+  "base_product_commit": "88c2946",
+  "reviewed_source": "calendar-reminders-webpush-release-prep-20261021/source",
+  "p4_overlay": "calendar-reminders-p4-implementation-20261020/submitted",
+  "unpublished_local_candidate": true,
+  "removed_inherited_stale_publish_metadata": [
+    "SOURCE-STAMP",
+    "PUBLISH-NOTES.txt",
+    "PUBLISH-MANIFEST.txt"
+  ]
+}
