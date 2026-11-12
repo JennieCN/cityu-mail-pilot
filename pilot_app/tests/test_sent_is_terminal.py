@@ -267,3 +267,77 @@ class StableMessageIdTests(unittest.TestCase):
             mailio.send_report(config, "authcode-16chars", "主题", "正文",
                                message_id="<boss@qq.com>")
         self.assertEqual(sent["id"], "<boss@qq.com>")
+
+
+class AmbiguousDeliveryOrderingTests(unittest.TestCase):
+    """标记必须**先于** SMTP 落库，且不能被任何后续错误擦掉。
+
+    只借 `SentIsTerminalTests` 的夹具，**不继承它的用例**（继承会把父类 12 个测试
+    在这里再跑一遍）。
+    """
+
+    setUp = SentIsTerminalTests.setUp
+    tearDown = SentIsTerminalTests.tearDown
+    _counting_send = SentIsTerminalTests._counting_send
+
+    def test_the_marker_exists_before_smtp_is_called(self):
+        seen = {}
+
+        def fake_send(config, password, subject, markdown, **kwargs):
+            with self.db.connect() as c:
+                row = c.execute("SELECT last_error FROM reports WHERE id=?",
+                                (self.report_id,)).fetchone()
+            seen["marker"] = str(row[0] if row else "")
+            return {"message_id": kwargs.get("message_id") or "x", "refused": {}}
+
+        with mock.patch.object(mailio, "send_report", side_effect=fake_send):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertTrue(seen["marker"].startswith(service_mod.SENDING_MARKER),
+                        "SMTP 被调用的那一刻，标记必须已经在库里")
+
+    def test_a_marker_that_cannot_be_written_means_no_send(self):
+        sends = []
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "mark_report_sending",
+                                  side_effect=RuntimeError("数据库不通")):
+            self.assertFalse(self.service.process_message(self.message))
+        self.assertEqual(sends, [], "标记写不进去就不许发——否则结果不明时没有保护")
+
+    def test_a_failed_report_retry_also_carries_the_marker(self):
+        """从 failed 重试的那一轮同样要落标记：那时报告不是 generated。"""
+        self.db.fail_report(self.report_id, "上一轮 SMTP 失败")
+        self.assertEqual(self.db.report_for_message(self.message_id)["status"], "failed")
+        sends = []
+        seen = {}
+
+        def fake_send(config, password, subject, markdown, **kwargs):
+            with self.db.connect() as c:
+                seen["marker"] = str(c.execute("SELECT last_error FROM reports WHERE id=?",
+                                               (self.report_id,)).fetchone()[0])
+            return self._counting_send(sends)(config, password, subject, markdown, **kwargs)
+
+        with mock.patch.object(mailio, "send_report", side_effect=fake_send), \
+                mock.patch.object(self.db, "mark_report_sent", side_effect=RuntimeError("打个嗝")), \
+                mock.patch.object(self.db, "note_report_error", side_effect=RuntimeError("还是不通")), \
+                mock.patch.object(self.db, "finish_message_unrecorded", side_effect=RuntimeError("还是不通")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(len(sends), 1)
+        self.assertTrue(seen["marker"].startswith(service_mod.SENDING_MARKER))
+
+        self.db.recover_inflight()
+        message = next(row for row in self.db.due_messages(limit=50) if row["id"] == self.message_id)
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)):
+            self.service.process_message(message)
+        self.assertEqual(len(sends), 1, "结果不明时不许再发")
+
+    def test_a_failing_guard_bookkeeping_keeps_the_marker(self):
+        """守卫里的收尾也失败时，标记必须还在，否则下一轮就重发了。"""
+        sends = []
+        self.db.note_report_error(self.report_id, f"{service_mod.SENDING_MARKER} 上一轮结果不明")
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "note_report_error", side_effect=RuntimeError("不通")), \
+                mock.patch.object(self.db, "finish_message_unrecorded", side_effect=RuntimeError("不通")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(sends, [], "带标记的消息一次都不该发")
+        self.assertTrue(self.db.report_for_message(self.message_id)["last_error"]
+                        .startswith(service_mod.SENDING_MARKER), "说明写成普通文本等于擦掉标记")

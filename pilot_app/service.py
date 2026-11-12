@@ -951,11 +951,17 @@ class PilotService:
                 # 上一轮已经调用过 `send_report`，但没等到「记成已发」（进程被杀、数据库
                 # 打个嗝）。SMTP 那一步对方有没有收下，从这一侧**无法证明**；按本项目
                 # 「宁可少发一封、不可重复发一封」的取向，这里不重发，把结论写清楚。
-                note = ("上一轮发送结果不明（SND 标记仍在）：为免重复投递，未自动重发。"
+                # 说明**保留前缀**：守卫靠它认人，写成普通错误文本就等于把标记擦掉。
+                note = (f"{SENDING_MARKER} 上一轮发送结果不明，为免重复投递未自动重发；"
                         "若用户说没收到，请人工核对 SMTP 日志后在后台重新触发。")
-                log_job_failure("ambiguous delivery", message["id"], RuntimeError(note))
-                self.db.note_report_error(existing["id"], note)
-                self.db.finish_message_unrecorded(message["id"], note)
+                log_job_failure("ambiguous delivery", message["id"], RuntimeError(note.strip()))
+                try:
+                    self.db.note_report_error(existing["id"], note)
+                    self.db.finish_message_unrecorded(message["id"], note)
+                except Exception as nested:  # noqa: BLE001 - 收尾失败也不能让标记消失
+                    # 这里绝不能把异常放出去：外层 except 会 fail_report（把标记换成
+                    # 普通错误文本）并把邮件放回队列，下一轮就重发了。
+                    log_job_failure("ambiguous delivery bookkeeping", message["id"], nested)
                 return True
             if existing and not deliver:
                 # 上一轮可能是在开关打开时生成的、还没发出去就走了。现在关掉了，
@@ -1053,13 +1059,15 @@ class PilotService:
                 logging.info("report held for message %s (报告邮件已关闭)", message["id"])
                 return True
             password = self.mailbox_password(mailbox)
+            # **必须在 SMTP 之前**：这一轮如果死在「发出去」和「记成已发」之间，
+            # 下一轮靠的就是这个标记。它不是一次记账，是「允许发送」的前置条件——
+            # 写不进去就干脆别发（异常落到外层，报告还没标记成功，邮件回队列是安全的：
+            # 那一轮 SMTP 一次都没调用）。见开头那条守卫。
+            self.db.mark_report_sending(report_id)
             mailio.send_report(mailbox, password, subject, report,
                                html_body=rendered["html"], text_body=rendered["text"],
                                # 由报告 id 推出来的稳定 Message-ID：重试复用同一个。
                                message_id=mailio.stable_message_id(report_id, mailbox.get("email", "")))
-            # SMTP 之前先落一个标记：这一轮如果死在「发出去」和「记成已发」之间，
-            # 下一轮看到它就知道结果不明，不能再发第二封。见开头那条守卫。
-            self.db.mark_report_sending(report_id)
             try:
                 self.db.mark_report_sent(report_id)
             except Exception as exc:

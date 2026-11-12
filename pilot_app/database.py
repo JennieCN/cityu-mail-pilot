@@ -5004,11 +5004,17 @@ class Database:
         只写 `last_error`，不动 `status`：`reports.status` 的 CHECK 只有
         generated/sent/failed，「不确定」不是能给用户看的状态，是我们自己的记账问题。
         成功的那一轮会被 `mark_report_sent` 清成空串，所以标记在 == 结果不明。
+
+        **必须覆盖所有「即将发送」的状态**：重试曾经失败过的报告时它是 `failed`，
+        只写 `generated` 会让那一轮完全没有保护。写不进去（比如报告已经是 `sent`）
+        就抛异常——调用方因此不会发送，这比「发了但没标记」安全得多。
         """
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE reports SET last_error=? WHERE id=? AND status='generated'",
+            cursor = connection.execute(
+                "UPDATE reports SET last_error=? WHERE id=? AND status IN ('generated','failed')",
                 ("sending:" + utc_now(), report_id))
+        if cursor.rowcount != 1:
+            raise RuntimeError(f"无法为报告 {report_id} 记录发送标记（状态可能已改变）。")
 
     def note_report_error(self, report_id: str, error: str) -> None:
         """只写错误说明，绝不改 status——已经 sent 的报告不许被改回去。"""
