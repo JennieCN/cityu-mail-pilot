@@ -5448,6 +5448,30 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def previous_daily_coverage(self, user_id: str, before_date: str) -> str:
+        """上一封日报覆盖到的最后一封信的到达时间；没有就空串。
+
+        daily 报告的 ``received_at`` 存的就是这个边界（immediate 报告存的是那封来信
+        自己的到达时间，两者语义一致：这一行代表的内容止于何时）。旧库里它是空串，
+        调用方必须把空串当成「不知道」，退回按整天取信。
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT received_at FROM reports
+                    WHERE user_id=? AND kind='daily' AND report_date<? AND received_at!=''
+                    ORDER BY report_date DESC LIMIT 1""",
+                (user_id, before_date),
+            ).fetchone()
+        return str(row["received_at"] or "") if row else ""
+
+    def mark_daily_coverage(self, report_id: str, covered_through_utc: str) -> None:
+        """记下这封日报实际覆盖到哪儿（只动 daily 行，只动 received_at 一列）。"""
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE reports SET received_at=? WHERE id=? AND kind='daily'",
+                (str(covered_through_utc)[:40], report_id),
+            )
+
     def report_for_message(self, message_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
