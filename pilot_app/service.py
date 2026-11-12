@@ -22,6 +22,11 @@ from .security import SecretBox
 # forever, so this is configurable and reported by `migrate-legacy-imap-state`.
 INITIAL_LOOKBACK_HOURS = max(1, int(os.environ.get("INFE_PILOT_INITIAL_LOOKBACK_HOURS", "48")))
 
+# `reports.last_error` 的前缀：SMTP 之前落下，成功记账时被 `mark_report_sent` 清掉。
+# 它在的时候，含义是「这一轮调用过 send_report，但结果未知」——下一轮据此不重发。
+# 只在 reports 那一列上，不新增状态值（那要重建表）。
+SENDING_MARKER = "sending:"
+
 # How many tokens the model may spend on one report. Measured reports land
 # around 2.2k-2.8k characters, so the old hard-coded 4000 was mostly headroom;
 # making it explicit and tunable is what lets the latency work bound the
@@ -942,6 +947,16 @@ class PilotService:
             if existing and existing["status"] == "sent":
                 self.db.finish_message(message["id"])
                 return True
+            if existing and str(existing.get("last_error") or "").startswith(SENDING_MARKER):
+                # 上一轮已经调用过 `send_report`，但没等到「记成已发」（进程被杀、数据库
+                # 打个嗝）。SMTP 那一步对方有没有收下，从这一侧**无法证明**；按本项目
+                # 「宁可少发一封、不可重复发一封」的取向，这里不重发，把结论写清楚。
+                note = ("上一轮发送结果不明（SND 标记仍在）：为免重复投递，未自动重发。"
+                        "若用户说没收到，请人工核对 SMTP 日志后在后台重新触发。")
+                log_job_failure("ambiguous delivery", message["id"], RuntimeError(note))
+                self.db.note_report_error(existing["id"], note)
+                self.db.finish_message_unrecorded(message["id"], note)
+                return True
             if existing and not deliver:
                 # 上一轮可能是在开关打开时生成的、还没发出去就走了。现在关掉了，
                 # 直接收尾成 held，不必再花一次模型钱。
@@ -1042,7 +1057,25 @@ class PilotService:
                                html_body=rendered["html"], text_body=rendered["text"],
                                # 由报告 id 推出来的稳定 Message-ID：重试复用同一个。
                                message_id=mailio.stable_message_id(report_id, mailbox.get("email", "")))
-            self.db.mark_report_sent(report_id)
+            # SMTP 之前先落一个标记：这一轮如果死在「发出去」和「记成已发」之间，
+            # 下一轮看到它就知道结果不明，不能再发第二封。见开头那条守卫。
+            self.db.mark_report_sending(report_id)
+            try:
+                self.db.mark_report_sent(report_id)
+            except Exception as exc:
+                # 与下面收尾失败同一个口径：信已经发出去了。这里失败的是「记账」，
+                # 不是投递；把它并进通用 except 会让报告退回 failed、邮件回队列，
+                # 下一轮再发一封——用户收到两封。
+                log_job_failure("report sent-state", message["id"], exc)
+                # 说明文字带上标记前缀：万一连这两句都写不进去、进程又死了，
+                # 下一轮靠的仍是 `mark_report_sending` 落下的那个标记。
+                note = f"{SENDING_MARKER} 报告已发出，但未能记成 sent：{exc}"
+                try:
+                    self.db.note_report_error(report_id, note)
+                    self.db.finish_message_unrecorded(message["id"], note)
+                except Exception as nested:  # noqa: BLE001 - 记账全挂了也不能触发重发
+                    log_job_failure("report sent-state bookkeeping", message["id"], nested)
+                return True
             try:
                 self.db.finish_message(message["id"])
             except Exception as exc:

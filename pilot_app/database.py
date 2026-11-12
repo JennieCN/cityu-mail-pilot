@@ -4964,13 +4964,13 @@ class Database:
         """
         self._finish_message_with(message_id, "held")
 
-    def _finish_message_with(self, message_id: str, status: str) -> None:
+    def _finish_message_with(self, message_id: str, status: str, note: str = "") -> None:
         if status not in {"sent", "held"}:
             raise ValueError("状态只能是 sent 或 held。")
         with self.connect() as connection:
             connection.execute(
-                "UPDATE messages SET status=?,body='',next_attempt_at=NULL,last_error='' WHERE id=?",
-                (status, message_id),
+                "UPDATE messages SET status=?,body='',next_attempt_at=NULL,last_error=? WHERE id=?",
+                (status, str(note)[:1000], message_id),
             )
 
     def create_report(self, *, user_id: str, message_id: str | None, kind: str, subject: str,
@@ -4997,6 +4997,33 @@ class Database:
     def mark_report_sent(self, report_id: str) -> None:
         with self.connect() as connection:
             connection.execute("UPDATE reports SET status='sent',sent_at=?,last_error='' WHERE id=?", (utc_now(), report_id))
+
+    def mark_report_sending(self, report_id: str) -> None:
+        """SMTP 之前落一个标记：结果不明时靠它判断「可能已经发出去了」。
+
+        只写 `last_error`，不动 `status`：`reports.status` 的 CHECK 只有
+        generated/sent/failed，「不确定」不是能给用户看的状态，是我们自己的记账问题。
+        成功的那一轮会被 `mark_report_sent` 清成空串，所以标记在 == 结果不明。
+        """
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE reports SET last_error=? WHERE id=? AND status='generated'",
+                ("sending:" + utc_now(), report_id))
+
+    def note_report_error(self, report_id: str, error: str) -> None:
+        """只写错误说明，绝不改 status——已经 sent 的报告不许被改回去。"""
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE reports SET last_error=? WHERE id=? AND status!='sent'",
+                (str(error)[:1000], report_id))
+
+    def finish_message_unrecorded(self, message_id: str, note: str) -> None:
+        """信已经发出去了，但「记成已发」没做成：收尾成 sent，说明留在 last_error 上。
+
+        与 `hold_message` 的区别：held 是「什么都没发」，这里**确实发了**，
+        只是我们的记账没跟上。留一行说明是给运维看的，不是给用户看的。
+        """
+        self._finish_message_with(message_id, "sent", note=note)
 
     def fail_report(self, report_id: str, error: str) -> None:
         """把一份报告记成失败——**但不许把已经发出去的那份退回失败**。
