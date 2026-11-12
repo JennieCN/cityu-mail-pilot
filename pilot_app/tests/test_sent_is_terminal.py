@@ -145,6 +145,78 @@ class SentIsTerminalTests(unittest.TestCase):
             status = connection.execute("SELECT status FROM reports WHERE id=?", (other,)).fetchone()[0]
         self.assertEqual(status, "failed", "没发出去的那份照旧记失败")
 
+    # -- 「发出去了但没记成已发」也不许再发一封 ------------------------------
+
+    def _counting_send(self, sends):
+        def fake_send(config, password, subject, markdown, **kwargs):
+            sends.append(kwargs.get("message_id"))
+            return {"message_id": kwargs.get("message_id") or "generated@x", "refused": {}}
+        return fake_send
+
+    def test_a_failed_sent_marking_does_not_send_twice(self):
+        """SMTP 收下了，紧接着写库失败：绝不能退回 failed 再发一封。
+
+        `fail_report` 的 WHERE 是 `status!='sent'`，而此刻报告还是 generated——
+        一旦让异常落进通用 except，报告变 failed、邮件回队列，下一轮就是第二封信。
+        """
+        sends = []
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "mark_report_sent", side_effect=RuntimeError("数据库打了个嗝")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(len(sends), 1, "SMTP 只该被调用一次")
+        report = self.db.report_for_message(self.message_id)
+        self.assertEqual(report["status"], "generated", "不许把它退回 failed（那会触发重发）")
+        self.assertIn("未能记成 sent", report["last_error"])
+        with self.db.connect() as connection:
+            status = connection.execute("SELECT status FROM messages WHERE id=?",
+                                        (self.message_id,)).fetchone()[0]
+        self.assertEqual(status, "sent", "邮件这一行要收尾，否则队列会一直捞它")
+
+    def test_a_crash_between_sending_and_booking_does_not_resend(self):
+        """连记账带收尾全都失败（模拟进程在两句之间被杀），下一轮也不许发第二封。"""
+        sends = []
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "mark_report_sent", side_effect=RuntimeError("数据库打个嗝")), \
+                mock.patch.object(self.db, "note_report_error", side_effect=RuntimeError("数据库还是不通")), \
+                mock.patch.object(self.db, "finish_message_unrecorded", side_effect=RuntimeError("数据库还是不通")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(len(sends), 1)
+        with self.db.connect() as connection:
+            marker = connection.execute("SELECT last_error FROM reports WHERE id=?",
+                                        (self.report_id,)).fetchone()[0]
+        self.assertTrue(str(marker).startswith(service_mod.SENDING_MARKER),
+                        "库不通时那个标记必须还在，它是唯一能说明「可能已发出」的东西")
+
+        # worker 重启：processing → failed，于是这条邮件又会被捞起来。
+        self.db.recover_inflight()
+        message = next(row for row in self.db.due_messages(limit=50)
+                       if row["id"] == self.message_id)
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)):
+            self.assertTrue(self.service.process_message(message))
+        self.assertEqual(len(sends), 1, "结果不明时宁可少发一封，也不能重复发")
+
+    def test_a_real_delivery_failure_is_still_retried(self):
+        """别改过头：SMTP 自己抛错 = 明确没发出去，必须照旧重试。"""
+        sends = []
+        with mock.patch.object(mailio, "send_report",
+                               side_effect=mailio.MailError("535 认证失败")), \
+                mock.patch.object(self.db, "mark_report_sent") as marked:
+            self.assertFalse(self.service.process_message(self.message))
+        marked.assert_not_called()
+        self.assertEqual(self.db.report_for_message(self.message_id)["status"], "failed")
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)):
+            self.service.process_message(self.message)
+        self.assertEqual(len(sends), 1, "失败过一次之后，这一轮才是真正的那一次投递")
+
+    def test_a_successful_send_clears_the_marker(self):
+        sends = []
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(len(sends), 1)
+        report = self.db.report_for_message(self.message_id)
+        self.assertEqual(report["status"], "sent")
+        self.assertEqual(report["last_error"], "", "成功之后标记必须清掉，否则下一轮会误判")
+
 
 class StableMessageIdTests(unittest.TestCase):
     def test_the_same_report_gets_the_same_id(self):
@@ -195,3 +267,77 @@ class StableMessageIdTests(unittest.TestCase):
             mailio.send_report(config, "authcode-16chars", "主题", "正文",
                                message_id="<boss@qq.com>")
         self.assertEqual(sent["id"], "<boss@qq.com>")
+
+
+class AmbiguousDeliveryOrderingTests(unittest.TestCase):
+    """标记必须**先于** SMTP 落库，且不能被任何后续错误擦掉。
+
+    只借 `SentIsTerminalTests` 的夹具，**不继承它的用例**（继承会把父类 12 个测试
+    在这里再跑一遍）。
+    """
+
+    setUp = SentIsTerminalTests.setUp
+    tearDown = SentIsTerminalTests.tearDown
+    _counting_send = SentIsTerminalTests._counting_send
+
+    def test_the_marker_exists_before_smtp_is_called(self):
+        seen = {}
+
+        def fake_send(config, password, subject, markdown, **kwargs):
+            with self.db.connect() as c:
+                row = c.execute("SELECT last_error FROM reports WHERE id=?",
+                                (self.report_id,)).fetchone()
+            seen["marker"] = str(row[0] if row else "")
+            return {"message_id": kwargs.get("message_id") or "x", "refused": {}}
+
+        with mock.patch.object(mailio, "send_report", side_effect=fake_send):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertTrue(seen["marker"].startswith(service_mod.SENDING_MARKER),
+                        "SMTP 被调用的那一刻，标记必须已经在库里")
+
+    def test_a_marker_that_cannot_be_written_means_no_send(self):
+        sends = []
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "mark_report_sending",
+                                  side_effect=RuntimeError("数据库不通")):
+            self.assertFalse(self.service.process_message(self.message))
+        self.assertEqual(sends, [], "标记写不进去就不许发——否则结果不明时没有保护")
+
+    def test_a_failed_report_retry_also_carries_the_marker(self):
+        """从 failed 重试的那一轮同样要落标记：那时报告不是 generated。"""
+        self.db.fail_report(self.report_id, "上一轮 SMTP 失败")
+        self.assertEqual(self.db.report_for_message(self.message_id)["status"], "failed")
+        sends = []
+        seen = {}
+
+        def fake_send(config, password, subject, markdown, **kwargs):
+            with self.db.connect() as c:
+                seen["marker"] = str(c.execute("SELECT last_error FROM reports WHERE id=?",
+                                               (self.report_id,)).fetchone()[0])
+            return self._counting_send(sends)(config, password, subject, markdown, **kwargs)
+
+        with mock.patch.object(mailio, "send_report", side_effect=fake_send), \
+                mock.patch.object(self.db, "mark_report_sent", side_effect=RuntimeError("打个嗝")), \
+                mock.patch.object(self.db, "note_report_error", side_effect=RuntimeError("还是不通")), \
+                mock.patch.object(self.db, "finish_message_unrecorded", side_effect=RuntimeError("还是不通")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(len(sends), 1)
+        self.assertTrue(seen["marker"].startswith(service_mod.SENDING_MARKER))
+
+        self.db.recover_inflight()
+        message = next(row for row in self.db.due_messages(limit=50) if row["id"] == self.message_id)
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)):
+            self.service.process_message(message)
+        self.assertEqual(len(sends), 1, "结果不明时不许再发")
+
+    def test_a_failing_guard_bookkeeping_keeps_the_marker(self):
+        """守卫里的收尾也失败时，标记必须还在，否则下一轮就重发了。"""
+        sends = []
+        self.db.note_report_error(self.report_id, f"{service_mod.SENDING_MARKER} 上一轮结果不明")
+        with mock.patch.object(mailio, "send_report", side_effect=self._counting_send(sends)), \
+                mock.patch.object(self.db, "note_report_error", side_effect=RuntimeError("不通")), \
+                mock.patch.object(self.db, "finish_message_unrecorded", side_effect=RuntimeError("不通")):
+            self.assertTrue(self.service.process_message(self.message))
+        self.assertEqual(sends, [], "带标记的消息一次都不该发")
+        self.assertTrue(self.db.report_for_message(self.message_id)["last_error"]
+                        .startswith(service_mod.SENDING_MARKER), "说明写成普通文本等于擦掉标记")
