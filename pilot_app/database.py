@@ -1699,6 +1699,10 @@ class Database:
                 # 列已经在：可能是正常的，也可能是旧版迁移留下的「有列没回填」。
                 # 这一句幂等，只在真有空洞时才写。
                 self._backfill_reports_received_at(connection)
+                # 回填是 DML，会开隐式事务。后面 `_relax_message_status_check()`
+                # 自己 `BEGIN`（重建 messages 的 CHECK），不在这里收掉事务就会抛
+                # 「cannot start a transaction within a transaction」，升级直接起不来。
+                connection.commit()
             announcement_columns = {row[1] for row in connection.execute(
                 "PRAGMA table_info(announcements)")}
             if "is_public" not in announcement_columns:

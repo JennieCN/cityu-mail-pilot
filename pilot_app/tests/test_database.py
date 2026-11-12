@@ -655,22 +655,21 @@ class ReportsReceivedAtMigrationTests(unittest.TestCase):
         self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"])
 
     def test_an_interrupted_migration_leaves_no_half_state(self):
+        """中断注入在**真实方法内部**：只有生产代码自己丢了 BEGIN，这条才会挂。"""
         self.seed()
         self.drop_received_at()
 
         def interrupted(connection):
-            # What the real method does, up to the UPDATE -- then the process dies.
-            connection.commit()
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
             raise KeyboardInterrupt("模拟进程在回填前被杀")
 
-        with mock.patch.object(Database, "_add_reports_received_at", staticmethod(interrupted)):
+        # 只替换回填那一步，`_add_reports_received_at` 的 BEGIN/COMMIT 仍是生产代码。
+        with mock.patch.object(Database, "_backfill_reports_received_at", staticmethod(interrupted)):
             with self.assertRaises(KeyboardInterrupt):
                 self.db.initialize()
         with self.db.connect() as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(reports)")}
-        self.assertNotIn("received_at", columns, "中断后不能留下「有列没数据」的半套 schema")
+        self.assertNotIn("received_at", columns,
+                         "ALTER 在事务里，中断后必须一起回滚（丢了 BEGIN 就会留下这一列）")
 
         self.db.initialize()
         self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"],
@@ -694,3 +693,33 @@ class ReportsReceivedAtMigrationTests(unittest.TestCase):
         self.assertEqual(self.received_at_values(), [""], "先确认这就是那个半套状态")
         self.db.initialize()
         self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"])
+
+    def test_the_repair_path_does_not_block_the_message_rebuild(self):
+        """「列已存在」的修复分支必须自己收掉事务，否则后面重建 messages 会抛。
+
+        `_relax_message_status_check()` 自己 `BEGIN`；而回填 UPDATE 会开一个隐式
+        事务。两者同时发生（老库：received_at 有列但空 + messages 的 CHECK 还是旧
+        定义）时，启动会以 `cannot start a transaction within a transaction` 失败。
+        """
+        self.seed()
+        with self.db.connect() as connection:
+            connection.execute("UPDATE reports SET received_at=''")
+            # 让 SCHEMA_VERSION 闸门放行重建
+            connection.execute("UPDATE app_settings SET value='0' WHERE key='schema_version'")
+            connection.commit()
+        # 把 messages 的 CHECK 改回「还没有 held」的旧定义，重建才有事可做。
+        raw = sqlite3.connect(self.path)
+        raw.execute("PRAGMA writable_schema=ON")
+        raw.execute("UPDATE sqlite_master SET sql=replace(sql, \"'skipped','held'\", \"'skipped'\") "
+                    "WHERE name='messages'")
+        raw.commit()
+        raw.execute("PRAGMA schema_version=999")
+        raw.close()
+
+        self.db.initialize()          # 修复分支回填 + 消息表重建都在这一步
+
+        self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"])
+        with self.db.connect() as connection:
+            definition = str(connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()[0])
+        self.assertIn("'held'", definition, "重建应该已经完成")
