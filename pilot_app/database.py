@@ -3051,6 +3051,11 @@ class Database:
             return str(task.get(field) or "")[:limit]
 
         with self.connect() as connection:
+            # 读旧状态与写新状态**必须在同一个写事务里**。之前只读不加锁：另一个请求
+            # 可以在这一读之后、写入之前提交（比如把这条标成 done 并取消了提醒），
+            # 于是这一轮拿着过期的 `unchanged` 判断跳过来源与提醒更新，最后留下
+            # 「task=open / source=done / reminder=cancelled_done」这种自相矛盾的状态。
+            connection.execute("BEGIN IMMEDIATE")
             previous = connection.execute(
                 "SELECT state FROM task_states WHERE user_id=? AND task_key=?", (user_id, task_key)
             ).fetchone()

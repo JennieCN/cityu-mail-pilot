@@ -85,6 +85,41 @@ class TaskStateNoopTests(NotificationFixture, unittest.TestCase):
         # ...but the snapshot still has to refresh: the row is what the archive shows.
         self.assertEqual(stored["subject"], "同一件事，重新提交一次")
 
+    def test_a_concurrent_writer_cannot_interleave_between_read_and_write(self):
+        """读旧状态与写新状态共用一个写事务；否则两个请求能交错出矛盾状态。
+
+        做法：主线程先拿住写锁并**改掉**状态，再让 set_task_state 在另一个线程里跑。
+        没有 `BEGIN IMMEDIATE` 时它的 SELECT 在 WAL 下照样能读（读到旧值），随后卡在
+        写锁上；主线程一提交，它就用过期判断写回旧状态、跳过来源与提醒更新。
+        """
+        import threading
+        import time
+
+        source, _, _ = self.open_mail_task()
+        key = source["task_key"]
+        self.assertEqual(self.state(key)[0]["user_state"], "open")
+
+        with self.db.connect() as holder:
+            holder.execute("BEGIN IMMEDIATE")
+            holder.execute("UPDATE task_states SET state='done' WHERE user_id='a' AND task_key=?", (key,))
+            holder.execute("UPDATE calendar_mail_sources SET user_state='done',"
+                           "schedule_revision=schedule_revision+1 WHERE user_id='a' AND task_key=?", (key,))
+            holder.execute("UPDATE calendar_reminders SET status='cancelled_done' WHERE user_id='a'")
+
+            worker = threading.Thread(target=lambda: self.db.set_task_state("a", key, "open"))
+            worker.start()
+            time.sleep(0.2)          # 让工作线程走到它的写操作（有锁时会卡在这里）
+            holder.commit()
+            worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "工作线程应当在持锁方提交后完成")
+
+        after_source, after_reminder, _, stored = self.state(key)
+        self.assertEqual(stored["state"], "open", "最后写回的是 open")
+        self.assertEqual(after_source["user_state"], "open",
+                         "来源必须跟最终决定一致——否则提醒会永远停在 cancelled")
+        self.assertEqual(after_reminder["status"], "pending",
+                         "open 的提醒应该被重新挂起，而不是留在 cancelled_done")
+
     def test_a_real_change_still_cancels_the_delivery(self):
         source, _, _ = self.open_mail_task()
         self.db.set_task_state("a", source["task_key"], "done")
