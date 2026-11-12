@@ -32,6 +32,7 @@ import gzip
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import tempfile
@@ -128,26 +129,57 @@ def safe_url(url: str) -> str:
     return urllib.parse.urlunsplit((parts.scheme, host, parts.path, query, ""))
 
 
-def _discard_stale_staging(destination_dir: Path) -> None:
-    """Drop staging files left behind by a copy that died mid-write.
+def _process_alive(pid: int) -> bool:
+    """Is the process that started this copy still running?
 
-    Only files older than ``STAGING_MAX_AGE_SECONDS``: a copy that is still
-    running looks exactly like a crashed one from here, and deleting a live
-    staging file would fail *that* backup instead of the stale one.
+    A staging file cannot outlive its writer: the name carries the pid, so this is
+    a real check rather than a guess from the clock. An age cutoff alone used to
+    delete the staging file of a backup that had been waiting on a long database
+    lock for an hour -- and failed *that* backup instead of the stale one.
     """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True            # 别人的进程：当一个活着的写者看待
+    except OSError:
+        return True            # 判不出来就别删
+    return True
+
+
+def _staging_name(destination: Path) -> Path:
+    """Per-call staging name: two copies in the same second must not collide.
+
+    ``_stamp()`` has one-second resolution, so a fixed ``<final>.part`` made two
+    concurrent backups share one file -- one of them then failed on ``os.replace``
+    with FileNotFoundError, and either could overwrite the other's bytes.
+    """
+    return destination.with_name(
+        f"{destination.name}.{os.getpid()}-{secrets.token_hex(4)}{STAGING_SUFFIX}")
+
+
+def _discard_stale_staging(destination_dir: Path) -> None:
+    """Drop staging files whose writer is gone (and that are not brand new)."""
     deadline = _utc_now().timestamp() - STAGING_MAX_AGE_SECONDS
-    for path in destination_dir.glob(f"pilot-*.sqlite3{STAGING_SUFFIX}"):
+    for path in destination_dir.glob(f"pilot-*.sqlite3.*{STAGING_SUFFIX}"):
         try:
-            if path.stat().st_mtime < deadline:
-                path.unlink()
-        except OSError:
+            if path.stat().st_mtime >= deadline:
+                continue                     # 可能刚开始写，先别动
+            pid_text = path.name.rsplit(".sqlite3.", 1)[-1].split("-", 1)[0]
+            if _process_alive(int(pid_text)):
+                continue                     # 写它的进程还活着，删了会毁掉那个备份
+            path.unlink()
+        except (OSError, ValueError):
             pass  # Not ours to fail the backup over; the next run tries again.
 
 
 def create_backup(source: Path, destination_dir: Path) -> Path:
     """One consistent copy. Raises if SQLite cannot produce it.
 
-    The bytes go to ``pilot-<stamp>.sqlite3.part`` first and only get the final
+    The bytes go to a per-call ``pilot-<stamp>.sqlite3.<pid>-<random>.part`` first and only get the final
     name once SQLite has finished the copy. SQLite's online backup writes page
     by page, so a kill or a full disk used to leave a **truncated file wearing
     the final name** -- and the three places that decide "is the backup fresh?"
@@ -160,7 +192,10 @@ def create_backup(source: Path, destination_dir: Path) -> Path:
     destination_dir.mkdir(parents=True, exist_ok=True)
     _discard_stale_staging(destination_dir)
     destination = destination_dir / f"pilot-{_stamp()}.sqlite3"
-    staging = destination.with_name(destination.name + STAGING_SUFFIX)
+    if destination.exists():
+        # 同一秒内的第二次备份：给它一个不同的最终名字，否则第二次会覆盖第一份。
+        destination = destination_dir / f"pilot-{_stamp()}-{secrets.token_hex(3)}.sqlite3"
+    staging = _staging_name(destination)
     try:
         with sqlite3.connect(source) as original, sqlite3.connect(staging) as backup:
             original.backup(backup)

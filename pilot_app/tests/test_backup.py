@@ -184,11 +184,11 @@ class BackupPublicationTests(unittest.TestCase):
 
     def test_a_stale_staging_file_is_cleaned_up_but_a_live_one_is_not(self):
         self.copies.mkdir(parents=True, exist_ok=True)
-        stale = self.copies / "pilot-20200101T000000Z.sqlite3.part"
+        stale = self.copies / "pilot-20200101T000000Z.sqlite3.999999-deadbeef.part"
         stale.write_bytes(b"old")
         moment = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).timestamp()
         os.utime(stale, (moment, moment))
-        live = self.copies / "pilot-20990101T000000Z.sqlite3.part"
+        live = self.copies / f"pilot-20990101T000000Z.sqlite3.{os.getpid()}-cafebabe.part"
         live.write_bytes(b"in flight")
         backup.create_backup(self.source, self.copies)
         self.assertFalse(stale.exists(), "一小时前的临时文件应该被清掉")
@@ -903,3 +903,38 @@ class OfflineCopyTests(unittest.TestCase):
         self.assertEqual(backup.read_key_copy_check(self.dir / "nope.sqlite3"), {})
         (self.dir / "garbage.sqlite3").write_bytes(b"not a database")
         self.assertEqual(backup.read_key_copy_check(self.dir / "garbage.sqlite3"), {})
+
+
+class BackupStagingTests(unittest.TestCase):
+    """临时文件必须每次调用独占；回收只能动「写它的进程已经不在了」的文件。"""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.source = self.dir / "pilot.sqlite3"
+        connection = sqlite3.connect(self.source)
+        connection.execute("CREATE TABLE t(x)")
+        connection.execute("INSERT INTO t VALUES(42)")
+        connection.commit()
+        connection.close()
+        self.copies = self.dir / "copies"
+
+    def test_two_copies_in_the_same_second_do_not_collide(self):
+        with mock.patch.object(backup, "_stamp", return_value="20260101T000000Z"):
+            first = backup.create_backup(self.source, self.copies)
+            second = backup.create_backup(self.source, self.copies)
+        self.assertNotEqual(first, second, "两次同一秒的备份不能只留下一份")
+        for path in (first, second):
+            copied = sqlite3.connect(path)
+            self.assertEqual(copied.execute("SELECT x FROM t").fetchone()[0], 42)
+            copied.close()
+        self.assertEqual(list(self.copies.glob("*.part")), [])
+
+    def test_a_staging_file_from_a_live_process_is_never_deleted(self):
+        """躺了两个小时也不删：写它的进程还在，可能就是正在等数据库锁的那一次。"""
+        self.copies.mkdir(parents=True, exist_ok=True)
+        live = self.copies / f"pilot-20200101T000000Z.sqlite3.{os.getpid()}-cafebabe.part"
+        live.write_bytes(b"in flight")
+        moment = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).timestamp()
+        os.utime(live, (moment, moment))
+        backup.create_backup(self.source, self.copies)
+        self.assertTrue(live.exists(), "活着的写者不能被抢删")
