@@ -1666,6 +1666,16 @@ class Database:
                 # UPDATE opens a transaction. The versioned message-table rebuild
                 # below owns an explicit BEGIN, so finish this additive migration first.
                 connection.commit()
+            if "coverage_seq" not in saved_report_columns:
+                # 日报的覆盖进度：**入库序号**（`messages.rowid`）而不是邮件头的 Date。
+                # 延迟轮询/重连补收会让 Date 比入库早得多，拿 Date 当进度就会把
+                # 「后来才收到的旧信」整批跳过；序号只增不减，正好表达「已经看过哪些行」。
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    # 可空：NULL = 从没记过覆盖进度；0 = 记过，且当时一封都还没有。
+                    # 这两种情况对取信窗口的含义不同（0 之后的所有入库都算未覆盖）。
+                    "ALTER TABLE reports ADD COLUMN coverage_seq INTEGER")
+                connection.commit()
             announcement_columns = {row[1] for row in connection.execute(
                 "PRAGMA table_info(announcements)")}
             if "is_public" not in announcement_columns:
@@ -5182,23 +5192,34 @@ class Database:
             ).fetchall()
         return [row["body_markdown"] for row in rows]
 
-    def messages_between(self, user_id: str, start_utc: str, end_utc: str) -> list[dict[str, Any]]:
+    def messages_between(self, user_id: str, start_utc: str, end_utc: str, *,
+                         after_seq: int | None = None) -> list[dict[str, Any]]:
         """Every message received in a window, with its immediate report body.
 
         The daily digest uses this instead of a model re-summary so a mail can
         never disappear from the brief: rows without a report surface as
         failures/unprocessed rather than being skipped.
         """
-        with self.connect() as connection:
-            rows = connection.execute(
-                """SELECT m.id,m.id AS message_id,m.subject,m.sender_name,m.sender_address,
-                          m.received_at,m.importance,m.status,m.last_error,m.attempts,
+        columns = """SELECT m.id,m.id AS message_id,m.subject,m.sender_name,m.sender_address,
+                          m.rowid AS seq,m.received_at,m.importance,m.status,m.last_error,m.attempts,
                           r.id AS report_id, r.body_markdown, r.status AS report_status
                    FROM messages m
-                   LEFT JOIN reports r ON r.message_id=m.id AND r.kind='immediate'
+                   LEFT JOIN reports r ON r.message_id=m.id AND r.kind='immediate'"""
+        if after_seq is not None:
+            # 下界是**入库序号**，不是邮件头里的 Date：Date 可能比入库早得多
+            # （延迟轮询、重连补收），拿它当进度就会把「后来才收到的旧信」整批跳过。
+            sql = (columns + """
+                   WHERE m.user_id=? AND m.received_at<?
+                     AND m.rowid>?
+                   ORDER BY m.rowid""")
+            params: tuple[Any, ...] = (user_id, end_utc, int(after_seq))
+        else:
+            sql = columns + """
                    WHERE m.user_id=? AND m.received_at>=? AND m.received_at<?
-                   ORDER BY m.received_at""", (user_id, start_utc, end_utc)
-            ).fetchall()
+                   ORDER BY m.rowid"""
+            params = (user_id, start_utc, end_utc)
+        with self.connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
     def today_reports(self, user_id: str, start_utc: str, end_utc: str) -> list[dict[str, Any]]:
@@ -5448,29 +5469,38 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
-    def previous_daily_coverage(self, user_id: str, before_date: str) -> str:
-        """上一封日报覆盖到的最后一封信的到达时间；没有就空串。
+    def previous_daily_coverage(self, user_id: str, before_date: str) -> int | None:
+        """上一封日报覆盖到的入库序号（``messages.rowid``）。
 
-        daily 报告的 ``received_at`` 存的就是这个边界（immediate 报告存的是那封来信
-        自己的到达时间，两者语义一致：这一行代表的内容止于何时）。旧库里它是空串，
-        调用方必须把空串当成「不知道」，退回按整天取信。
+        用它而不是邮件头里的 Date：Date 可能比入库早得多（延迟轮询、重连补收），
+        拿它当进度会把「后来才收到的旧信」整批跳过；序号只增不减，正好表达
+        「哪些行已经看过」。0/没有记录都表示「没有历史边界」。
         """
         with self.connect() as connection:
             row = connection.execute(
-                """SELECT received_at FROM reports
-                    WHERE user_id=? AND kind='daily' AND report_date<? AND received_at!=''
+                """SELECT coverage_seq FROM reports
+                    WHERE user_id=? AND kind='daily' AND report_date<?
+                      AND coverage_seq IS NOT NULL
                     ORDER BY report_date DESC LIMIT 1""",
                 (user_id, before_date),
             ).fetchone()
-        return str(row["received_at"] or "") if row else ""
+        return int(row["coverage_seq"]) if row and row["coverage_seq"] is not None else None
 
-    def mark_daily_coverage(self, report_id: str, covered_through_utc: str) -> None:
-        """记下这封日报实际覆盖到哪儿（只动 daily 行，只动 received_at 一列）。"""
+    def mark_daily_coverage(self, report_id: str, covered_seq: int) -> None:
+        """记下这封日报覆盖到的入库序号（只动 daily 行的这一列）。"""
         with self.connect() as connection:
             connection.execute(
-                "UPDATE reports SET received_at=? WHERE id=? AND kind='daily'",
-                (str(covered_through_utc)[:40], report_id),
+                "UPDATE reports SET coverage_seq=? WHERE id=? AND kind='daily'",
+                (int(covered_seq), report_id),
             )
+
+    def max_message_seq(self, user_id: str) -> int:
+        """这个账号眼下最大的入库序号；空日报用它推进边界。"""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(rowid),0) AS seq FROM messages WHERE user_id=?", (user_id,)
+            ).fetchone()
+        return int(row["seq"] or 0)
 
     def report_for_message(self, message_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
