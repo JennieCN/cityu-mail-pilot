@@ -1156,6 +1156,30 @@ class PilotService:
         report_date = local.date().isoformat()
         return (local.hour, local.minute) >= (hour, minute) and not self.db.daily_report_exists(user["id"], report_date), report_date
 
+    # 超过这个天数就记一条 warning：不钳、不丢，只是让人知道这次补得有点多。
+    DIGEST_CARRY_WARN_DAYS = 7
+
+    def _digest_window(self, user_id: str, report_date: str,
+                       start_utc: str) -> tuple[int | None, str]:
+        """本封日报的取信窗口：``(after_seq, fallback_start_utc)``。
+
+        ``after_seq`` 是上一封日报覆盖到的入库序号（``messages.rowid``），
+        作为**不含**的下界；没有历史边界时退回「本地日 00:00」。
+
+        为什么不是「上一封最后一封信的到达时间 + 1 秒」、也不是「今天 00:00」：
+        日报在 daily_time（默认 22:00）发出，那一封只装得下发出之前到达的信；22:00 到
+        午夜之间进来的信属于同一天，而这一天已经「发过了」，第二天那封又只取第二天。
+        用「那一条的键」做不含下界，既把它排除掉（不重复），又把之后进来的一切都算进来。
+        边界再老也照用——漏掉中间那段比多列几行糟得多。
+        """
+        try:
+            seq = self.db.previous_daily_coverage(user_id, report_date)
+        except (AttributeError, TypeError):
+            seq = None
+        if seq is None:
+            return None, start_utc
+        return int(seq), start_utc
+
     def send_daily(self, user: dict, report_date: str) -> bool:
         """Build and send the student-brief digest for one local day.
 
@@ -1176,7 +1200,15 @@ class PilotService:
         start_utc = local_start.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
         end_utc = (local_start + dt.timedelta(days=1)).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
-        rows = self.db.messages_between(user["id"], start_utc, end_utc)
+        # 取信的下界不是「今天 00:00」，而是**上一封日报实际覆盖到哪儿**。
+        # 日报在 daily_time（默认 22:00）发出，那一封只装得下发出之前到达的信；
+        # 22:00 到午夜之间进来的信属于同一天，但这一天已经「发过了」，第二天那封
+        # 又只取第二天——它们会永远不出现在任何一封日报里。入库比到达更晚的信同理。
+        # 所以边界从上一封日报上读回来（`reports.received_at`），而本封发出去之后
+        # 再把它推进到本封真正包含的最后一封信。
+        after_seq, fallback_start = self._digest_window(user["id"], report_date, start_utc)
+
+        rows = self.db.messages_between(user["id"], fallback_start, end_utc, after_seq=after_seq)
         reports_by_id = {}
         messages = []
         for row in rows:
@@ -1216,11 +1248,25 @@ class PilotService:
         if not mailbox:
             raise mailio.MailError("邮箱配置不存在。")
         rendered = reports.render_digest(digest, subject=subject, locale=locale)
+        # 这一封实际覆盖到的最后一封信。发出去之后把它记在报告行上，
+        # 下一封日报从这里往后取——22:00 之后进来的信就是这样被补上的。
+        covered_seq = max((int(row.get("seq") or 0) for row in rows), default=0)
         try:
             mailio.send_report(mailbox, self.mailbox_password(mailbox), subject,
                                reports.digest_markdown(digest, locale=locale),
                                html_body=rendered["html"], text_body=rendered["text"])
             self.db.mark_report_sent(report_id)
+            if not covered_seq:
+                # 空日报：这一批信里一封都没有，边界推进到「眼下最大的入库序号」
+                # （可能是 0，表示库里还一封信都没有），否则 22:00 之后进来的信会被跳过。
+                covered_seq = self.db.max_message_seq(user["id"])
+            if True:
+                # 记账失败不能让这封信变成「失败」：它已经发出去了。代价只是下一封
+                # 会把这一段再装一次（多一行），比漏掉一行好。
+                try:
+                    self.db.mark_daily_coverage(report_id, covered_seq)
+                except Exception as exc:  # noqa: BLE001 - 见上面那句注释
+                    logging.warning("daily coverage not recorded for report %s: %s", report_id, exc)
             return True
         except Exception as exc:
             self.db.fail_report(report_id, str(exc))
