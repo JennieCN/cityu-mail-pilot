@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from pilot_app.database import LAST_SEEN_SINCE_KEY, Database
@@ -595,3 +596,101 @@ class SchemaVersionGateTests(unittest.TestCase):
                 "SELECT value FROM app_settings WHERE key='schema_version'").fetchone()
         self.assertIn("on_platform", columns, "盖过章的库也必须能补上缺的列")
         self.assertEqual(int(row[0]), self.RECORDED)
+
+
+class ReportsReceivedAtMigrationTests(unittest.TestCase):
+    """加列与回填必须一起生效。
+
+    `sqlite3` 只在 DML 上开隐式事务，DDL 自动提交。所以「加完列、还没回填」时被
+    杀掉，重启会看到列已存在、直接跳过整段迁移，那批历史报告的到达时间就永久空着
+    —— 而这一列存在的意义，正是邮箱重连把 `messages` 行删掉之后还能留着到达时间。
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.path = Path(self.temporary.name) / "pilot.sqlite3"
+        self.db = Database(self.path)
+        self.db.initialize()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def seed(self) -> None:
+        now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        with self.db.connect() as connection:
+            connection.execute(
+                "INSERT INTO users(id,email,password_hash,status,created_at) VALUES(?,?,?,?,?)",
+                ("u1", "u1@example.com", "x", "active", now))
+            connection.execute(
+                """INSERT INTO mailboxes(id,user_id,email,report_to,imap_host,imap_port,
+                                         smtp_host,smtp_port,encrypted_password,updated_at)
+                   VALUES('mb1','u1','u1@example.com','u1@example.com','imap.example.com',993,
+                          'smtp.example.com',465,X'00',?)""", (now,))
+            connection.execute(
+                """INSERT INTO messages(id,user_id,mailbox_id,uid_validity,imap_uid,subject,
+                                        received_at,body,created_at)
+                   VALUES('m1','u1','mb1','1',7,'主题','2026-09-01T03:04:05+00:00',X'00',?)""",
+                (now,))
+            connection.execute(
+                """INSERT INTO reports(id,user_id,message_id,kind,subject,body_markdown,status,
+                                       sent_to,report_date,created_at)
+                   VALUES('r1','u1','m1','immediate','主题',X'00','sent','u1@example.com','',?)""",
+                (now,))
+
+    def drop_received_at(self) -> None:
+        """把库退回「这一列还没有」的老样子，模拟生产库升级前的状态。"""
+        with self.db.connect() as connection:
+            connection.execute("ALTER TABLE reports DROP COLUMN received_at")
+            connection.commit()
+
+    def received_at_values(self) -> list:
+        with self.db.connect() as connection:
+            return [row[0] for row in connection.execute(
+                "SELECT received_at FROM reports ORDER BY id").fetchall()]
+
+    def test_a_new_column_is_backfilled_from_the_message(self):
+        self.seed()
+        self.drop_received_at()
+        self.db.initialize()
+        self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"])
+
+    def test_an_interrupted_migration_leaves_no_half_state(self):
+        self.seed()
+        self.drop_received_at()
+
+        def interrupted(connection):
+            # What the real method does, up to the UPDATE -- then the process dies.
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
+            raise KeyboardInterrupt("模拟进程在回填前被杀")
+
+        with mock.patch.object(Database, "_add_reports_received_at", staticmethod(interrupted)):
+            with self.assertRaises(KeyboardInterrupt):
+                self.db.initialize()
+        with self.db.connect() as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(reports)")}
+        self.assertNotIn("received_at", columns, "中断后不能留下「有列没数据」的半套 schema")
+
+        self.db.initialize()
+        self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"],
+                         "重启后要重新加列并回填")
+
+    def test_a_second_start_changes_nothing(self):
+        self.seed()
+        self.db.initialize()
+        first = self.received_at_values()
+        self.db.initialize()
+        self.assertEqual(self.received_at_values(), first)
+
+    def test_a_half_migrated_database_is_repaired_on_the_next_start(self):
+        """旧版迁移真的可能已经留下这种库：列在、值全空。重启必须能修。"""
+        self.seed()
+        with self.db.connect() as connection:
+            # 旧版迁移被打断后的样子：列在，值全空。先退回无列，再加回来。
+            connection.execute("ALTER TABLE reports DROP COLUMN received_at")
+            connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
+            connection.commit()
+        self.assertEqual(self.received_at_values(), [""], "先确认这就是那个半套状态")
+        self.db.initialize()
+        self.assertEqual(self.received_at_values(), ["2026-09-01T03:04:05+00:00"])

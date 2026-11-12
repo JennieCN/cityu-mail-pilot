@@ -1527,6 +1527,44 @@ class Database:
         return connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
+    def _backfill_reports_received_at(self, connection: sqlite3.Connection) -> None:
+        """把 `reports.received_at` 的空洞补上——幂等，只在真有空洞时才写。
+
+        旧版的迁移把「加列」和这段回填写在两句里，中间被打断就会留下「列在、值为空」，
+        而重启时列已存在就再也不会回填。这一句同时也是那种半套 schema 的**修复**入口，
+        所以它不只在加列那一次跑。
+        """
+        if not connection.execute(
+                "SELECT 1 FROM reports WHERE received_at='' AND message_id IS NOT NULL LIMIT 1"
+        ).fetchone():
+            return
+        # Preserve arrival time when mailbox reconnection removes messages.
+        connection.execute(
+            """UPDATE reports SET received_at=(
+                   SELECT received_at FROM messages WHERE messages.id=reports.message_id)
+               WHERE received_at='' AND message_id IS NOT NULL"""
+        )
+
+    def _add_reports_received_at(self, connection: sqlite3.Connection) -> None:
+        """加列并回填到达时间——两句在**一个事务**里，中断就整段作废。
+
+        不能只写 ALTER 就完事：`sqlite3` 只在 DML 上开隐式事务，DDL 是自动提交的。
+        在「加完列、还没回填」之间被杀（restart、OOM、断电），重启时这一列已经存在，
+        `"received_at" not in saved_report_columns` 为假，回填**再也不会跑**，
+        这批历史报告的到达时间就永久空着——而 `received_at` 存在的意义正是
+        「邮箱重连把 messages 行删掉之后，到达时间还能从 reports 上保留」。
+
+        事务包起来之后，要么列和回填都生效，要么都没发生，重启会重来一遍。
+        """
+        # 前面的逐列 ALTER / DML 可能已经开了一个隐式事务；`BEGIN` 不能在事务里再开。
+        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
+        self._backfill_reports_received_at(connection)
+        # The versioned message-table rebuild below owns an explicit BEGIN of its
+        # own, so this transaction ends here.
+        connection.commit()
+
     def migrate(self) -> None:
         """Create what is missing, add the columns, build the late indexes.
 
@@ -1656,16 +1694,11 @@ class Database:
                 connection.execute("ALTER TABLE agent_reports ADD COLUMN action TEXT NOT NULL DEFAULT ''")
             saved_report_columns = {row[1] for row in connection.execute("PRAGMA table_info(reports)")}
             if "received_at" not in saved_report_columns:
-                connection.execute("ALTER TABLE reports ADD COLUMN received_at TEXT NOT NULL DEFAULT ''")
-                # Preserve arrival time when mailbox reconnection removes messages.
-                connection.execute(
-                    """UPDATE reports SET received_at=(
-                           SELECT received_at FROM messages WHERE messages.id=reports.message_id)
-                       WHERE received_at='' AND message_id IS NOT NULL"""
-                )
-                # UPDATE opens a transaction. The versioned message-table rebuild
-                # below owns an explicit BEGIN, so finish this additive migration first.
-                connection.commit()
+                self._add_reports_received_at(connection)
+            else:
+                # 列已经在：可能是正常的，也可能是旧版迁移留下的「有列没回填」。
+                # 这一句幂等，只在真有空洞时才写。
+                self._backfill_reports_received_at(connection)
             announcement_columns = {row[1] for row in connection.execute(
                 "PRAGMA table_info(announcements)")}
             if "is_public" not in announcement_columns:
