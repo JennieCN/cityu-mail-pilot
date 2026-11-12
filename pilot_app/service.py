@@ -1162,9 +1162,8 @@ class PilotService:
         # 取信的下界不是「今天 00:00」，而是**上一封日报实际覆盖到哪儿**。
         # 日报在 daily_time（默认 22:00）发出，那一封只装得下发出之前到达的信；
         # 22:00 到午夜之间进来的信属于同一天，但这一天已经「发过了」，第二天那封
-        # 又只取第二天——它们会永远不出现在任何一封日报里。入库比到达更晚的信同理。
-        # 所以边界从上一封日报上读回来（`reports.received_at`），而本封发出去之后
-        # 再把它推进到本封真正包含的最后一封信。
+        # 又只取第二天——它们会永远不出现在任何一封日报里。所以边界从上一封日报上
+        # 读回来（`reports.coverage_seq`，入库序号），发出去之后推进到本封看到的最大序号。
         after_seq, fallback_start = self._digest_window(user["id"], report_date, start_utc)
 
         rows = self.db.messages_between(user["id"], fallback_start, end_utc, after_seq=after_seq)
