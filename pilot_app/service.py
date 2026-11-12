@@ -1235,6 +1235,17 @@ class PilotService:
                 self._record_usage(user["id"], "digest", connection, usage)
 
         existing = self.db.daily_report_for_date(user["id"], report_date)
+        if existing and str(existing.get("last_error") or "").startswith(SENDING_MARKER):
+            # 与即时报告同一套约定（005）：标记还在 = 上一轮调用过 SMTP 但结果不明。
+            # 这里重发整封日报的代价比少发一封大得多，所以不再发，把结论写清楚。
+            note = (f"{SENDING_MARKER} 上一轮日报发送结果不明，为免重复投递未自动重发；"
+                    "若用户说没收到，请人工核对 SMTP 日志后在后台重新触发。")
+            log_job_failure("daily ambiguous delivery", user["id"], RuntimeError(note.strip()))
+            try:
+                self.db.note_report_error(existing["id"], note)   # 说明保留前缀
+            except Exception as exc:  # noqa: BLE001 - 记账失败也不能让标记消失
+                log_job_failure("daily ambiguous bookkeeping", user["id"], exc)
+            return True
         if existing:
             subject, report_id = existing["subject"], existing["id"]
         else:
@@ -1248,29 +1259,39 @@ class PilotService:
         if not mailbox:
             raise mailio.MailError("邮箱配置不存在。")
         rendered = reports.render_digest(digest, subject=subject, locale=locale)
-        # 这一封实际覆盖到的最后一封信。发出去之后把它记在报告行上，
-        # 下一封日报从这里往后取——22:00 之后进来的信就是这样被补上的。
         covered_seq = max((int(row.get("seq") or 0) for row in rows), default=0)
+
+        # 与即时报告同一形状：**先落标记再发**（写不进就不发），成功后清掉；
+        # 记账失败不许把报告退回 failed —— 那会让 run_daily_due 按退避再发一整封。
+        self.db.mark_report_sending(report_id)
         try:
             mailio.send_report(mailbox, self.mailbox_password(mailbox), subject,
                                reports.digest_markdown(digest, locale=locale),
                                html_body=rendered["html"], text_body=rendered["text"])
-            self.db.mark_report_sent(report_id)
-            if not covered_seq:
-                # 空日报：这一批信里一封都没有，边界推进到「眼下最大的入库序号」
-                # （可能是 0，表示库里还一封信都没有），否则 22:00 之后进来的信会被跳过。
-                covered_seq = self.db.max_message_seq(user["id"])
-            if True:
-                # 记账失败不能让这封信变成「失败」：它已经发出去了。代价只是下一封
-                # 会把这一段再装一次（多一行），比漏掉一行好。
-                try:
-                    self.db.mark_daily_coverage(report_id, covered_seq)
-                except Exception as exc:  # noqa: BLE001 - 见上面那句注释
-                    logging.warning("daily coverage not recorded for report %s: %s", report_id, exc)
-            return True
         except Exception as exc:
+            # 明确没发出去：把标记换成错误文本（`fail_report` 的 WHERE 是 status!='sent'），
+            # 下一轮才有重试的许可。吞掉它会让日报永远发不出去。
             self.db.fail_report(report_id, str(exc))
             raise
+        try:
+            self.db.mark_report_sent(report_id)
+        except Exception as exc:
+            note = f"{SENDING_MARKER} 日报已发出，但未能记成 sent：{exc}"
+            log_job_failure("daily report sent-state", user["id"], exc)
+            try:
+                self.db.note_report_error(report_id, note)
+            except Exception as nested:  # noqa: BLE001 - 见上面那句注释
+                log_job_failure("daily report sent-state bookkeeping", user["id"], nested)
+            return True
+        if not covered_seq:
+            # 空日报：边界推进到「眼下最大的入库序号」（可能是 0），
+            # 否则 22:00 之后进来的信会被永久跳过。
+            covered_seq = self.db.max_message_seq(user["id"])
+        try:
+            self.db.mark_daily_coverage(report_id, covered_seq)
+        except Exception as exc:  # noqa: BLE001 - 记账失败只是下一封多列一行
+            logging.warning("daily coverage not recorded for report %s: %s", report_id, exc)
+        return True
 
     def run_daily_due(self) -> tuple[int, list[str]]:
         """Send the digests that are due this pass -- with a retry budget per day.
