@@ -77,6 +77,12 @@ WEBDAV_USER_ENV = "INFE_PILOT_BACKUP_WEBDAV_USER"
 WEBDAV_PASSWORD_ENV = "INFE_PILOT_BACKUP_WEBDAV_PASSWORD"
 OFFSITE_STATE_FILE = "offsite-state.json"
 
+# Backups are written under a staging name and renamed when complete; see
+# ``create_backup``. Nothing that looks for "the newest backup" may match this.
+STAGING_SUFFIX = ".part"
+# A staging file untouched for this long is a leftover from a dead copy.
+STAGING_MAX_AGE_SECONDS = 3600
+
 
 def _utc_now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -122,13 +128,54 @@ def safe_url(url: str) -> str:
     return urllib.parse.urlunsplit((parts.scheme, host, parts.path, query, ""))
 
 
+def _discard_stale_staging(destination_dir: Path) -> None:
+    """Drop staging files left behind by a copy that died mid-write.
+
+    Only files older than ``STAGING_MAX_AGE_SECONDS``: a copy that is still
+    running looks exactly like a crashed one from here, and deleting a live
+    staging file would fail *that* backup instead of the stale one.
+    """
+    deadline = _utc_now().timestamp() - STAGING_MAX_AGE_SECONDS
+    for path in destination_dir.glob(f"pilot-*.sqlite3{STAGING_SUFFIX}"):
+        try:
+            if path.stat().st_mtime < deadline:
+                path.unlink()
+        except OSError:
+            pass  # Not ours to fail the backup over; the next run tries again.
+
+
 def create_backup(source: Path, destination_dir: Path) -> Path:
-    """One consistent copy. Raises if SQLite cannot produce it."""
+    """One consistent copy. Raises if SQLite cannot produce it.
+
+    The bytes go to ``pilot-<stamp>.sqlite3.part`` first and only get the final
+    name once SQLite has finished the copy. SQLite's online backup writes page
+    by page, so a kill or a full disk used to leave a **truncated file wearing
+    the final name** -- and the three places that decide "is the backup fresh?"
+    and "which copy do we restore?" all pick the newest ``pilot-*.sqlite3`` by
+    name. A half copy would therefore satisfy the sentinel and win the restore
+    drill, exactly on the day the real backup mattered. The staging name is
+    invisible to those globs, and ``os.replace`` in the same directory is
+    atomic, so the final name only ever appears on a complete file.
+    """
     destination_dir.mkdir(parents=True, exist_ok=True)
+    _discard_stale_staging(destination_dir)
     destination = destination_dir / f"pilot-{_stamp()}.sqlite3"
-    with sqlite3.connect(source) as original, sqlite3.connect(destination) as backup:
-        original.backup(backup)
-    os.chmod(destination, 0o600)
+    staging = destination.with_name(destination.name + STAGING_SUFFIX)
+    try:
+        with sqlite3.connect(source) as original, sqlite3.connect(staging) as backup:
+            original.backup(backup)
+        os.chmod(staging, 0o600)
+        os.replace(staging, destination)
+    except BaseException:
+        # KeyboardInterrupt and SystemExit included: an operator pressing Ctrl-C
+        # is the same event as a crash from this file's point of view. Clean up,
+        # then let the caller see the original exception -- `run_backup` decides
+        # what a failed copy means.
+        try:
+            staging.unlink()
+        except OSError:
+            pass
+        raise
     return destination
 
 

@@ -103,6 +103,98 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(mode, 0o600, oct(mode))
 
 
+class BackupPublicationTests(unittest.TestCase):
+    """A copy must never wear its final name until it is complete.
+
+    SQLite's online backup writes page by page, so a kill or a full disk used to
+    leave a truncated file already named ``pilot-<stamp>.sqlite3`` -- while the
+    freshness check, the local summary and the restore drill all pick the newest
+    ``pilot-*.sqlite3`` by name. A half copy would pass for a good one until the
+    day it was actually restored.
+    """
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.source = self.dir / "pilot.sqlite3"
+        connection = sqlite3.connect(self.source)
+        connection.execute("CREATE TABLE t(x)")
+        connection.execute("INSERT INTO t VALUES(42)")
+        connection.commit()
+        connection.close()
+        self.copies = self.dir / "copies"
+
+    def test_a_finished_copy_leaves_no_staging_file(self):
+        destination = backup.create_backup(self.source, self.copies)
+        self.assertTrue(destination.is_file(), "最终名字下应该有一份完整备份")
+        self.assertEqual(list(self.copies.glob("*.part")), [], "写完了不该留下临时文件")
+        copied = sqlite3.connect(destination)
+        self.assertEqual(copied.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        copied.close()
+
+    def test_an_interrupted_copy_leaves_no_final_name(self):
+        # `sqlite3.Connection.backup` is a C method on an immutable type, so the
+        # failure has to be simulated with stand-in connections. This one drains
+        # a few bytes into whatever file the copy opened and then fails — which
+        # is what a full disk does part-way through SQLite's page loop. On the
+        # old code that file already wore the FINAL name; that is the bug.
+        written = {}
+
+        class _PartialSource:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def backup(self, target):
+                written["path"].write_bytes(b"sqlite format 3\x00" + b"\x00" * 64)
+                raise OSError("磁盘满")
+
+        class _NullConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+        def fake_connect(path, *args, **kwargs):
+            target = pathlib.Path(path)
+            if str(target) == str(self.source):
+                return _PartialSource()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"")  # sqlite3.connect() creates the file too
+            written["path"] = target
+            return _NullConnection()
+
+        with mock.patch.object(backup.sqlite3, "connect", fake_connect):
+            with self.assertRaises(OSError):
+                backup.create_backup(self.source, self.copies)
+        self.assertEqual(sorted(self.copies.glob("pilot-*.sqlite3")), [], "半截文件不许用最终名字")
+        self.assertEqual(list(self.copies.glob("*.part")), [], "失败时临时文件也该清掉")
+
+    def test_a_staging_file_is_not_mistaken_for_a_backup(self):
+        self.copies.mkdir(parents=True, exist_ok=True)
+        staging = self.copies / "pilot-20990101T000000Z.sqlite3.part"
+        staging.write_bytes(b"half-written")
+        self.assertEqual(sorted(self.copies.glob("pilot-*.sqlite3")), [])
+        self.assertIsNone(
+            backup.newest_backup_age_hours(self.copies),
+            "临时文件不能让哨兵以为刚备份过",
+        )
+
+    def test_a_stale_staging_file_is_cleaned_up_but_a_live_one_is_not(self):
+        self.copies.mkdir(parents=True, exist_ok=True)
+        stale = self.copies / "pilot-20200101T000000Z.sqlite3.part"
+        stale.write_bytes(b"old")
+        moment = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).timestamp()
+        os.utime(stale, (moment, moment))
+        live = self.copies / "pilot-20990101T000000Z.sqlite3.part"
+        live.write_bytes(b"in flight")
+        backup.create_backup(self.source, self.copies)
+        self.assertFalse(stale.exists(), "一小时前的临时文件应该被清掉")
+        self.assertTrue(live.exists(), "正在写的临时文件不能被抢删")
+
+
 class StubWebDAV:
     """A real HTTP server that accepts PUT, so the request is actually encoded."""
 
