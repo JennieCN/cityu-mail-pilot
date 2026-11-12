@@ -1007,16 +1007,24 @@ class PilotService:
                             # 两段式里完整版随后就来 —— 这句话是真的。
                             full_follows=True,
                         )
-                        try:
-                            if deliver:
+                        if not deliver:
+                            logging.info("brief report held for message %s (报告邮件已关闭)", message["id"])
+                        elif self.db.brief_already_sent(message["id"]):
+                            # 上一轮精简版已经发出去了，只是完整版那一步失败了。再发一次
+                            # 就是同一封信的第二封（用户收到两封「精简版」），所以跳过。
+                            logging.info("brief report already sent for message %s", message["id"])
+                        else:
+                            try:
                                 mailio.send_report(mailbox, self.mailbox_password(mailbox), brief_subject, brief,
                                                    html_body=brief_rendered["html"], text_body=brief_rendered["text"])
-                                logging.info("brief report sent for message %s", message["id"])
+                            except Exception as exc:
+                                # A failed brief send must not stop the full report.
+                                logging.warning("brief report failed for message %s: %s", message["id"], exc)
                             else:
-                                logging.info("brief report held for message %s (报告邮件已关闭)", message["id"])
-                        except Exception as exc:
-                            # A failed brief send must not stop the full report.
-                            logging.warning("brief report failed for message %s: %s", message["id"], exc)
+                                # 只有真的发出去了才记；记账失败要让这一轮失败（宁可重试时
+                                # 再判断一次，也不要「发了却没记上」）。
+                                self.db.mark_brief_sent(message["id"])
+                                logging.info("brief report sent for message %s", message["id"])
                         # Stage 2: the full seven-section analysis, sent below.
                         report = self._analyse(message["user_id"], payload, guard=guard)
                         brief_mode = False

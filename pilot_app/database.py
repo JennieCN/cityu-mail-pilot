@@ -1703,6 +1703,12 @@ class Database:
                 # 自己 `BEGIN`（重建 messages 的 CHECK），不在这里收掉事务就会抛
                 # 「cannot start a transaction within a transaction」，升级直接起不来。
                 connection.commit()
+            message_brief_columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+            if "brief_sent_at" not in message_brief_columns:
+                # 两段式的精简版发出去过没有。可空：NULL = 没发过；有值 = 那一刻发的。
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("ALTER TABLE messages ADD COLUMN brief_sent_at TEXT")
+                connection.commit()
             if "coverage_seq" not in saved_report_columns:
                 # 日报的覆盖进度：**入库序号**（`messages.rowid`）而不是邮件头的 Date。
                 # 延迟轮询/重连补收会让 Date 比入库早得多，拿 Date 当进度就会把
@@ -5011,6 +5017,22 @@ class Database:
         # Raw body is no longer needed after delivery. Keeping metadata and the
         # derived report allows daily summaries without retaining full mail.
         self._finish_message_with(message_id, "sent")
+
+    def mark_brief_sent(self, message_id: str) -> None:
+        """记下这封来信的精简版已经发出过（重试时据此跳过它）。
+
+        只记「成功」，不记「尝试」：发送失败要能重试，最坏结果是多试一次，
+        而不是把没发出去的精简版当成已发。
+        """
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE messages SET brief_sent_at=? WHERE id=?", (utc_now(), message_id))
+
+    def brief_already_sent(self, message_id: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT brief_sent_at FROM messages WHERE id=?", (message_id,)).fetchone()
+        return bool(row and row["brief_sent_at"])
 
     def hold_message(self, message_id: str) -> None:
         """The mail is done -- report generated -- but nothing was sent.

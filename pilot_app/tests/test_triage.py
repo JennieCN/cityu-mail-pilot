@@ -243,6 +243,9 @@ class BriefFirstModeTests(unittest.TestCase):
         self.db.get_profile.return_value = {"timezone": "Asia/Hong_Kong"}
         self.db.report_for_message.return_value = None
         self.db.create_report.return_value = "rpt_1"
+        # 两段式现在会先问「这封的精简版发过没有」；MagicMock 默认返回真值，
+        # 那会让精简版永远发不出去。
+        self.db.brief_already_sent.return_value = False
 
     def test_brief_then_full_in_order(self):
         order = []
@@ -335,6 +338,9 @@ class BriefOnlyModeTests(unittest.TestCase):
         self.db.get_profile.return_value = {"timezone": "Asia/Hong_Kong"}
         self.db.report_for_message.return_value = None
         self.db.create_report.return_value = "rpt_1"
+        # 两段式现在会先问「这封的精简版发过没有」；MagicMock 默认返回真值，
+        # 那会让精简版永远发不出去。
+        self.db.brief_already_sent.return_value = False
 
     def _patches(self):
         return [
@@ -428,6 +434,9 @@ class PerUserReportModeTests(unittest.TestCase):
         }
         self.db.report_for_message.return_value = None
         self.db.create_report.return_value = "rpt_1"
+        # 两段式现在会先问「这封的精简版发过没有」；MagicMock 默认返回真值，
+        # 那会让精简版永远发不出去。
+        self.db.brief_already_sent.return_value = False
 
     def _run(self, report_mode, *, brief_first, full_report):
         self.db.get_profile.return_value = {"timezone": "Asia/Hong_Kong", "report_mode": report_mode}
