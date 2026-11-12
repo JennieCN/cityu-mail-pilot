@@ -3088,6 +3088,19 @@ class Database:
             return str(task.get(field) or "")[:limit]
 
         with self.connect() as connection:
+            # 读旧状态与写新状态**必须在同一个写事务里**。之前只读不加锁：另一个请求
+            # 可以在这一读之后、写入之前提交（比如把这条标成 done 并取消了提醒），
+            # 于是这一轮拿着过期的 `unchanged` 判断跳过来源与提醒更新，最后留下
+            # 「task=open / source=done / reminder=cancelled_done」这种自相矛盾的状态。
+            connection.execute("BEGIN IMMEDIATE")
+            previous = connection.execute(
+                "SELECT state FROM task_states WHERE user_id=? AND task_key=?", (user_id, task_key)
+            ).fetchone()
+            # 状态没变就只刷新快照。否则下面那句「revision + 1」会让正在重试的推送
+            # 投递行（`reminder_deliveries.source_schedule_revision` 与提醒对不上）
+            # 被 `cancel_ineligible` 判成过期并改成 cancelled —— 而 cancelled 回不来。
+            # 前端重复提交、或用户再点一次「未处理」，就足够把一条提醒弄丢。
+            unchanged = bool(previous) and str(previous["state"]) == state
             connection.execute(
                 """INSERT INTO task_states(user_id,task_key,state,task_day,subject,action,deadline,
                                            priority,sender,message_id,done_at,updated_at)
@@ -3107,20 +3120,21 @@ class Database:
                  keep("action", 2000), keep("deadline", 100), keep("priority", 20),
                  keep("sender", 200), keep("message_id", 64), done_at, now),
             )
-            sources = connection.execute("""SELECT ms.id,ms.schedule_revision,cr.id AS reminder_id,cr.enabled,cr.confirmation_required
-                FROM calendar_mail_sources ms LEFT JOIN calendar_reminders cr ON cr.mail_source_id=ms.id AND cr.user_id=ms.user_id
-                WHERE ms.user_id=? AND ms.task_key=? AND ms.state!='removed'""", (user_id, task_key)).fetchall()
-            for source in sources:
-                next_status = "cancelled_done" if state == "done" else (
-                    "cancelled_user" if source["enabled"] == 0 else
-                    "needs_confirmation" if source["confirmation_required"] else "pending")
-                connection.execute("""UPDATE calendar_mail_sources SET user_state=?,schedule_revision=schedule_revision+1,updated_at=? WHERE id=? AND user_id=?""",
-                                   (state, now, source["id"], user_id))
-                if source["reminder_id"]:
-                    connection.execute("""UPDATE calendar_reminders SET source_schedule_revision=source_schedule_revision+1,
-                        status=?,revision=revision+1,terminal_at=CASE WHEN ?='cancelled_done' THEN ? ELSE terminal_at END,updated_at=?
-                        WHERE id=? AND user_id=?""", (next_status, next_status, now, now, source["reminder_id"], user_id))
-            push.cancel_ineligible(connection, user=user_id, reason="done" if state == "done" else "source_changed", now=now)
+            if not unchanged:
+                sources = connection.execute("""SELECT ms.id,ms.schedule_revision,cr.id AS reminder_id,cr.enabled,cr.confirmation_required
+                    FROM calendar_mail_sources ms LEFT JOIN calendar_reminders cr ON cr.mail_source_id=ms.id AND cr.user_id=ms.user_id
+                    WHERE ms.user_id=? AND ms.task_key=? AND ms.state!='removed'""", (user_id, task_key)).fetchall()
+                for source in sources:
+                    next_status = "cancelled_done" if state == "done" else (
+                        "cancelled_user" if source["enabled"] == 0 else
+                        "needs_confirmation" if source["confirmation_required"] else "pending")
+                    connection.execute("""UPDATE calendar_mail_sources SET user_state=?,schedule_revision=schedule_revision+1,updated_at=? WHERE id=? AND user_id=?""",
+                                       (state, now, source["id"], user_id))
+                    if source["reminder_id"]:
+                        connection.execute("""UPDATE calendar_reminders SET source_schedule_revision=source_schedule_revision+1,
+                            status=?,revision=revision+1,terminal_at=CASE WHEN ?='cancelled_done' THEN ? ELSE terminal_at END,updated_at=?
+                            WHERE id=? AND user_id=?""", (next_status, next_status, now, now, source["reminder_id"], user_id))
+                push.cancel_ineligible(connection, user=user_id, reason="done" if state == "done" else "source_changed", now=now)
             row = connection.execute(
                 "SELECT * FROM task_states WHERE user_id=? AND task_key=?", (user_id, task_key)
             ).fetchone()
